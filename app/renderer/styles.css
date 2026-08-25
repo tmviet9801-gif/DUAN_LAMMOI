@@ -259,6 +259,10 @@ button.danger { background: var(--danger); color: #0f172a; font-weight: 600; }
   justify-content: center;
 }
 
+.modal-overlay.hidden {
+  display: none;
+}
+
 .modal {
   background: var(--panel);
   border: 1px solid var(--border);

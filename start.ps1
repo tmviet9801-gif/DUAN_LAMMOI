@@ -6,8 +6,11 @@ $Venv = Join-Path $Backend ".venv"
 $VenvPython = Join-Path $Venv "Scripts\python.exe"
 $VenvPip = Join-Path $Venv "Scripts\pip.exe"
 
+Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+Remove-Item Env:ELECTRON_OVERRIDE_DIST_PATH -ErrorAction SilentlyContinue
+
 Write-Host ""
-Write-Host "=== TAB MANAGER ===" -ForegroundColor Cyan
+Write-Host "=== AUTO TOOL ===" -ForegroundColor Cyan
 
 if (-not (Test-Path $VenvPython)) {
     Write-Host "[1/4] Tao Python venv..." -ForegroundColor Yellow
