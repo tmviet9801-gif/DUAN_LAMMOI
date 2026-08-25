@@ -1,0 +1,6 @@
+fastapi>=0.111
+uvicorn[standard]>=0.30
+camoufox>=0.5
+playwright>=1.44
+pywin32>=306
+psutil>=5.9

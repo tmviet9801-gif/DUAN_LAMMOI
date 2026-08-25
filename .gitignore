@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+backend/build/
+backend/dist/
+backend/data/
+
+# Node / Electron
+app/node_modules/
+app/release/
+app/dist/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log

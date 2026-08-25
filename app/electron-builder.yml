@@ -1,0 +1,41 @@
+appId: com.tabmanager.app
+productName: Tab Manager
+copyright: Copyright © 2026 TabManager
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - main.js
+  - preload.js
+  - package.json
+  - renderer/**
+
+extraResources:
+  - from: ../backend/dist/tab-manager-backend.exe
+    to: backend/tab-manager-backend.exe
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-Setup-${version}.${ext}
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Tab Manager
+  uninstallDisplayName: Tab Manager
+  deleteAppDataOnUninstall: false
+
+publish:
+  provider: github
+  owner: tmviet9801-gif
+  repo: DUAN_LAMMOI

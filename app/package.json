@@ -1,0 +1,17 @@
+{
+  "name": "tab-manager",
+  "version": "1.0.0",
+  "description": "Quản lý tài khoản, mở nhiều cửa sổ Camoufox xếp lưới trên màn hình",
+  "author": "TabManager",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --publish never",
+    "publish": "electron-builder --win --publish always"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-updater": "^6.2.1"
+  }
+}

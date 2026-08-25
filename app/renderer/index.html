@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src http://127.0.0.1:8000 ws://127.0.0.1:8000" />
+  <title>Tab Manager</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Tab Manager</div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="home">Trang chủ</button>
+      <button class="tab" data-tab="config">Cấu hình</button>
+    </nav>
+    <div class="status"><span id="backendDot" class="dot"></span><span id="backendText">Đang kết nối…</span></div>
+  </header>
+
+  <div id="updateBanner" class="update-banner hidden">
+    <span id="updateText">Đang kiểm tra bản cập nhật…</span>
+    <div id="updateProgressWrap" class="update-progress hidden">
+      <div id="updateProgressBar" class="update-progress-bar"></div>
+    </div>
+    <div class="update-actions">
+      <button id="btnUpdateInstall" class="primary hidden">Cài đặt & khởi động lại</button>
+      <button id="btnUpdateDownload" class="primary hidden">Tải bản cập nhật</button>
+      <button id="btnUpdateDismiss" class="hidden">Đóng</button>
+    </div>
+  </div>
+
+  <main class="layout">
+
+    <section id="tab-home" class="tab-panel">
+      <div class="panel">
+        <h2>Thao tác nhanh</h2>
+        <div class="actions">
+          <button id="btnOpenCount" class="primary">Mở tab</button>
+          <button id="btnOpenAll" class="primary">Mở tất cả tài khoản</button>
+          <button id="btnLayout">Xếp lưới ngay</button>
+          <button id="btnCloseAll" class="danger">Đóng tất cả</button>
+        </div>
+        <p class="hint">
+          <b>Mở tất cả tài khoản:</b> chỉ mở đúng số profile hiện có (không tạo tab trống).<br />
+          <b>Mở tab:</b> mở đúng số tab nhập ở Cấu hình; nếu ít profile hơn, phần dư là tab trống.<br />
+          Tên profile sẽ hiển thị ngay trên tab trình duyệt để dễ nhận biết.
+        </p>
+      </div>
+
+      <div class="panel">
+        <h2>Tài khoản / Profile</h2>
+        <form id="accountForm" class="account-form">
+          <input id="accName" placeholder="Tên profile (vd: FB Tài khoản 1)" required />
+          <input id="accUrl" placeholder="URL (vd: https://example.com/login)" />
+          <input id="accUa" placeholder="User-Agent (để trống = ngẫu nhiên)" />
+          <label class="check">
+            <input id="accSaveSession" type="checkbox" checked /> Lưu session riêng (đăng nhập 1 lần, lần sau mở lại vẫn còn login)
+          </label>
+          <button type="submit" class="primary">Thêm profile</button>
+        </form>
+        <ul id="accountList" class="account-list"></ul>
+      </div>
+
+      <div class="panel wide">
+        <h2>Trạng thái cửa sổ (<span id="sessionCount">0</span>)</h2>
+        <div id="sessionGrid" class="session-grid"></div>
+      </div>
+    </section>
+
+    <section id="tab-config" class="tab-panel hidden">
+      <div class="panel">
+        <h2>Lưới cửa sổ</h2>
+        <div class="field">
+          <label for="cfgCols">Số cột</label>
+          <input id="cfgCols" type="number" min="1" max="12" />
+        </div>
+        <div class="field">
+          <label for="cfgGap">Khoảng cách (px)</label>
+          <input id="cfgGap" type="number" min="0" max="200" />
+        </div>
+        <div class="field">
+          <label for="cfgMargin">Lề màn hình (px)</label>
+          <input id="cfgMargin" type="number" min="0" max="200" />
+        </div>
+        <div class="field">
+          <label for="cfgDirection">Hướng sắp xếp</label>
+          <select id="cfgDirection">
+            <option value="row">Theo hàng (trái → phải)</option>
+            <option value="col">Theo cột (trên → xuống)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Kích thước cửa sổ</h2>
+        <p class="hint">Để 0 = tự động chia đều màn hình theo lưới.</p>
+        <div class="field">
+          <label for="cfgWinW">Chiều rộng (px)</label>
+          <input id="cfgWinW" type="number" min="0" max="4000" />
+        </div>
+        <div class="field">
+          <label for="cfgWinH">Chiều cao (px)</label>
+          <input id="cfgWinH" type="number" min="0" max="4000" />
+        </div>
+        <div class="field">
+          <label for="cfgCount">Số tab mặc định</label>
+          <input id="cfgCount" type="number" min="1" max="100" />
+        </div>
+        <label class="check">
+          <input id="cfgAutoLayout" type="checkbox" /> Tự động xếp lưới
+        </label>
+      </div>
+
+      <div class="panel">
+        <h2>Antidetect / Fingerprint</h2>
+        <div class="field">
+          <label for="cfgOs">Hệ điều hành giả lập</label>
+          <select id="cfgOs"></select>
+        </div>
+        <div class="field">
+          <label for="cfgLocale">Locale (ngôn ngữ trình duyệt)</label>
+          <select id="cfgLocale"></select>
+        </div>
+        <p class="hint">Mỗi cửa sổ mới được sinh fingerprint riêng (UA, WebGL, canvas, screen…). Bạn có thể ghi đè UA theo từng tài khoản ở tab Trang chủ.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Thông tin</h2>
+        <div class="field">
+          <label>Phiên bản ứng dụng</label>
+          <code class="path" id="infoVersion">…</code>
+        </div>
+        <div class="field">
+          <label>Nơi lưu profile (cookies, đăng nhập)</label>
+          <code class="path" id="infoProfilesDir">…</code>
+        </div>
+        <div class="field">
+          <label>Nơi lưu dữ liệu app</label>
+          <code class="path" id="infoDataDir">…</code>
+        </div>
+        <p class="hint">Mỗi profile là 1 thư mục riêng chứa cookies.sqlite, logins.db, localStorage — sao lưu thư mục này để giữ đăng nhập.</p>
+        <div class="actions">
+          <button id="btnCheckUpdate">Kiểm tra cập nhật</button>
+        </div>
+      </div>
+
+      <div class="panel actions-panel">
+        <div class="actions">
+          <button id="btnSaveConfig" class="primary">Lưu cấu hình</button>
+          <button id="btnLayout2">Xếp lưới ngay</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
