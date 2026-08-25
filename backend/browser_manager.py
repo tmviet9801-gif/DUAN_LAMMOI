@@ -116,7 +116,7 @@ def _install_browser_with_progress(on_progress=None):
         total = int(resp.headers.get("content-length") or 0)
         done = 0
         with open(tmp_path, "wb") as fh:
-            for chunk in resp.iter_content(chunk_size=1 << 20):
+            for chunk in resp.iter_content(chunk_size=256 * 1024):
                 fh.write(chunk)
                 done += len(chunk)
                 if total and on_progress:
@@ -167,12 +167,23 @@ class BrowserManager:
             return True
         except Exception:
             pass
+        try:
+            from camoufox.multiversion import BROWSERS_DIR, set_active
+            ver_paths = sorted(BROWSERS_DIR.rglob("version.json"))
+            if ver_paths:
+                rel = str(ver_paths[0].parent.relative_to(BROWSERS_DIR))
+                set_active(f"browsers/{rel}")
+                return True
+        except Exception:
+            pass
         loop = asyncio.get_running_loop()
         self._emit("browser_installing", percent=0)
         try:
             def _install():
                 _install_browser_with_progress(
-                    lambda p: loop.call_soon_threadsafe(self._emit, "browser_installing", percent=p)
+                    lambda p: loop.call_soon_threadsafe(
+                        lambda: self._emit("browser_installing", percent=int(p))
+                    )
                 )
             await loop.run_in_executor(None, _install)
         except Exception as e:

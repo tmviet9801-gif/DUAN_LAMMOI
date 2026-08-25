@@ -143,6 +143,25 @@ if (Test-Path $latestYml) {
     Upload-Asset $release.id $latestYml "latest.yml"
 }
 
+Write-Host "  Xoa cac release cu (chi giu ban moi nhat $tag)..." -ForegroundColor Yellow
+$allReleases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Owner/$Repo/releases" -Headers $headers
+foreach ($old in $allReleases) {
+    if ($old.tag_name -ne $tag) {
+        Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$Owner/$Repo/releases/$($old.id)" -Headers $headers
+        Write-Host "  Da xoa release cu: $($old.tag_name)" -ForegroundColor Green
+    }
+}
+# Xoa tag cu di kem
+$tags = Invoke-RestMethod -Uri "https://api.github.com/repos/$Owner/$Repo/tags" -Headers $headers
+foreach ($t in $tags) {
+    if ($t.name -ne $tag -and $t.name -match "^v\d") {
+        try {
+            Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$Owner/$Repo/git/refs/tags/$($t.name)" -Headers $headers
+            Write-Host "  Da xoa tag cu: $($t.name)" -ForegroundColor Green
+        } catch { }
+    }
+}
+
 Write-Host ""
 Write-Host "HOAN TAT! Nguoi dung o cac may da cai se nhan thong bao update tu dong." -ForegroundColor Green
 Write-Host "Release: https://github.com/$Owner/$Repo/releases/tag/$tag" -ForegroundColor Cyan
