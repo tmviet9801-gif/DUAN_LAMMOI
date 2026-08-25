@@ -6,8 +6,8 @@ import unicodedata
 import uuid
 from pathlib import Path
 
-APP_NAME = "TabManager"
-APP_VERSION = "1.0.0"
+APP_NAME = "AutoTool"
+APP_VERSION = "1.0.1"
 
 
 def get_data_dir() -> Path:

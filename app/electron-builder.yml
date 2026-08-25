@@ -1,6 +1,6 @@
 appId: com.tabmanager.app
-productName: Tab Manager
-copyright: Copyright © 2026 TabManager
+productName: Auto Tool
+copyright: Copyright © 2026 AutoTool
 
 directories:
   output: release
@@ -31,8 +31,8 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Tab Manager
-  uninstallDisplayName: Tab Manager
+  shortcutName: Auto Tool
+  uninstallDisplayName: Auto Tool
   deleteAppDataOnUninstall: false
 
 publish:
