@@ -73,6 +73,37 @@ async function backendAlreadyRunning() {
   }
 }
 
+async function getBackendVersion() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${PORT}/api/version`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.version || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function killPortOwner(port) {
+  try {
+    const out = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, {
+      encoding: "utf8",
+    });
+    for (const line of out.trim().split("\n")) {
+      const parts = line.trim().split(/\s+/);
+      const pid = parts[parts.length - 1];
+      if (pid && pid !== String(process.pid)) {
+        try {
+          execSync(`taskkill /pid ${pid} /t /f`, { stdio: "ignore" });
+          console.log("[backend] da kill process cu giu port", pid);
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+
 function setupAutoUpdater() {
   if (!isPackaged) return;
   const { autoUpdater } = require("electron-updater");
@@ -112,9 +143,15 @@ function setupAutoUpdater() {
 }
 
 app.whenReady().then(async () => {
-  if (await backendAlreadyRunning()) {
-    console.log("[backend] da chay san, khong spawn lai");
+  const appVersion = app.getVersion();
+  const runningVersion = await getBackendVersion();
+  if (runningVersion === appVersion) {
+    console.log("[backend] da chay san, version khop, dung chung");
   } else {
+    if (await backendAlreadyRunning()) {
+      console.log("[backend] version khac (app=%s backend=%s), kill + spawn lai", appVersion, runningVersion);
+      killPortOwner(PORT);
+    }
     startBackend();
   }
   const ok = await waitForBackend();

@@ -125,13 +125,23 @@ function Upload-Asset($releaseId, $filePath, $assetName) {
         "User-Agent" = "AutoTool"
         "Content-Type" = "application/octet-stream"
     }
+    # Xoa asset cu trung ten truoc khi upload de tranh loi 422
+    try {
+        $assets = Invoke-RestMethod -Uri "https://api.github.com/repos/$Owner/$Repo/releases/$releaseId/assets" -Headers $headers
+        foreach ($a in $assets) {
+            if ($a.name -eq $assetName) {
+                Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$Owner/$Repo/releases/assets/$($a.id)" -Headers $headers
+                Write-Host "  Xoa asset cu: $assetName" -ForegroundColor Yellow
+            }
+        }
+    } catch { }
     try {
         $resp = Invoke-RestMethod -Method Post `
             -Uri "https://uploads.github.com/repos/$Owner/$Repo/releases/$releaseId/assets?name=$assetName" `
             -Headers $uploadHeaders -InFile $filePath
         Write-Host "  Uploaded: $assetName ($([Math]::Round((Get-Item $filePath).Length / 1MB, 1)) MB)" -ForegroundColor Green
     } catch {
-        Write-Host "  Upload $assetName that bai (co the da ton tai): $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "  Upload $assetName that bai: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 
