@@ -1,6 +1,6 @@
 {
   "name": "tab-manager",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Quản lý tài khoản, mở nhiều cửa sổ Camoufox xếp lưới trên màn hình",
   "author": "TabManager",
   "main": "main.js",

@@ -23,7 +23,7 @@ win:
     - target: nsis
       arch:
         - x64
-  artifactName: ${productName}-Setup-${version}.${ext}
+  artifactName: Auto-Tool-Setup-${version}.${ext}
   icon: build/icon.ico
 
 nsis:

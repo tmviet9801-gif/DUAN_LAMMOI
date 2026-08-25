@@ -8,25 +8,23 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Auto Tool</div>
+    <div class="brand">Auto Tool <span class="brand-version" id="brandVersion">v…</span></div>
     <nav class="tabs">
       <button class="tab active" data-tab="home">Trang chủ</button>
       <button class="tab" data-tab="config">Cấu hình</button>
     </nav>
-    <div class="status"><span id="backendDot" class="dot"></span><span id="backendText">Đang kết nối…</span></div>
+    <div class="topbar-right">
+      <div id="updateWidget" class="update-widget">
+        <span id="updateText" class="update-text">Đang kiểm tra cập nhật…</span>
+        <div id="updateProgressWrap" class="update-progress hidden">
+          <div id="updateProgressBar" class="update-progress-bar"></div>
+        </div>
+        <button id="btnUpdateDownload" class="update-btn primary hidden">Cài đặt bản mới</button>
+        <button id="btnUpdateInstall" class="update-btn primary hidden">Cài đặt & khởi động lại</button>
+      </div>
+      <div class="status"><span id="backendDot" class="dot"></span><span id="backendText">Đang kết nối…</span></div>
+    </div>
   </header>
-
-  <div id="updateBanner" class="update-banner hidden">
-    <span id="updateText">Đang kiểm tra bản cập nhật…</span>
-    <div id="updateProgressWrap" class="update-progress hidden">
-      <div id="updateProgressBar" class="update-progress-bar"></div>
-    </div>
-    <div class="update-actions">
-      <button id="btnUpdateInstall" class="primary hidden">Cài đặt & khởi động lại</button>
-      <button id="btnUpdateDownload" class="primary hidden">Tải bản cập nhật</button>
-      <button id="btnUpdateDismiss" class="hidden">Đóng</button>
-    </div>
-  </div>
 
   <main class="layout">
 
@@ -152,6 +150,16 @@
     </section>
 
   </main>
+
+  <div id="installModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Đang cập nhật</h3>
+      <div class="install-progress">
+        <div id="installProgressBar" class="install-progress-bar"></div>
+      </div>
+      <p class="install-percent" id="installPercent">0%</p>
+    </div>
+  </div>
 
   <div id="toastContainer" class="toast-container"></div>
 

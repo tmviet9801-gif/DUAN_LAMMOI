@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 APP_NAME = "AutoTool"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 
 def get_data_dir() -> Path:

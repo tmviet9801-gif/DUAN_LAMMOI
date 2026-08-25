@@ -70,6 +70,81 @@ class TabSession:
         }
 
 
+def _install_browser_with_progress(on_progress=None):
+    import os
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    import orjson
+    import requests
+
+    from camoufox.pkgman import CamoufoxFetcher, unzip
+    from camoufox.multiversion import (
+        BROWSERS_DIR,
+        COMPAT_FLAG,
+        get_repo_name,
+        set_active,
+        version_folder_name,
+    )
+
+    fetcher = CamoufoxFetcher()
+    fetcher.fetch_latest()
+    if fetcher._selected_version and fetcher._selected_version.sha256:
+        sha8 = fetcher._selected_version.sha8
+    else:
+        sha8 = getattr(fetcher, "installed_sha8", "")
+    repo_name = get_repo_name(fetcher.github_repo)
+    version_folder = version_folder_name(fetcher.version, fetcher.build, sha8)
+    install_path = BROWSERS_DIR / repo_name / version_folder
+
+    if install_path.exists() and (install_path / "version.json").exists():
+        set_active(f"browsers/{repo_name}/{version_folder}")
+        return
+
+    if install_path.exists():
+        shutil.rmtree(install_path)
+    install_path.mkdir(parents=True, exist_ok=True)
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        resp = requests.get(fetcher.url, stream=True, timeout=60)
+        resp.raise_for_status()
+        total = int(resp.headers.get("content-length") or 0)
+        done = 0
+        with open(tmp_path, "wb") as fh:
+            for chunk in resp.iter_content(chunk_size=1 << 20):
+                fh.write(chunk)
+                done += len(chunk)
+                if total and on_progress:
+                    on_progress(int(done * 100 / total))
+
+        unzip(tmp_path, str(install_path))
+        if fetcher._selected_version:
+            metadata = fetcher._selected_version.to_metadata()
+        else:
+            metadata = {
+                "version": fetcher.version,
+                "build": fetcher.build,
+                "prerelease": fetcher.is_prerelease,
+                "sha256": getattr(fetcher, "installed_sha256", None),
+                "created_at": getattr(fetcher, "installed_created_at", None),
+            }
+        with open(install_path / "version.json", "wb") as fh:
+            fh.write(orjson.dumps(metadata))
+        set_active(f"browsers/{repo_name}/{version_folder}")
+        COMPAT_FLAG.touch()
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 class BrowserManager:
     def __init__(self, config, on_event=None):
         self.config = config
@@ -85,7 +160,31 @@ class BrowserManager:
     def states(self):
         return [s.to_dict() for s in self.sessions.values()]
 
+    async def ensure_browser(self):
+        try:
+            from camoufox.pkgman import installed_verstr
+            installed_verstr()
+            return True
+        except Exception:
+            pass
+        loop = asyncio.get_running_loop()
+        self._emit("browser_installing", percent=0)
+        try:
+            def _install():
+                _install_browser_with_progress(
+                    lambda p: loop.call_soon_threadsafe(self._emit, "browser_installing", percent=p)
+                )
+            await loop.run_in_executor(None, _install)
+        except Exception as e:
+            log.exception("install browser failed")
+            self._emit("browser_install_error", error=str(e))
+            return False
+        self._emit("browser_installed")
+        return True
+
     async def open_sessions(self, count=None, account_ids=None, accounts=None):
+        if not await self.ensure_browser():
+            return []
         accounts = accounts or []
         for i, a in enumerate(accounts, 1):
             a["index"] = i
@@ -192,7 +291,14 @@ class BrowserManager:
                 except Exception:
                     pass
             log.exception("open %s failed", session_id)
-            self._emit("error", session_id=session_id, error=str(e))
+            session = TabSession(
+                session_id, account, None, None, None, None, None,
+                ua=ua if ua else "", fp_os=real_os,
+            )
+            session.state = "error"
+            session.error = str(e)
+            self.sessions[session_id] = session
+            self._emit("opened", session_id=session_id)
 
     async def _wait_new_window(self, before, timeout=25):
         deadline = time.monotonic() + timeout
@@ -240,10 +346,11 @@ class BrowserManager:
         session = self.sessions.pop(session_id, None)
         if not session:
             return False
-        try:
-            await session.browser_ctx.__aexit__(None, None, None)
-        except Exception as e:
-            log.warning("close %s error: %s", session_id, e)
+        if session.browser_ctx is not None:
+            try:
+                await session.browser_ctx.__aexit__(None, None, None)
+            except Exception as e:
+                log.warning("close %s error: %s", session_id, e)
         self._emit("closed", session_id=session_id)
         return True
 

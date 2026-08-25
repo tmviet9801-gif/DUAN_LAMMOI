@@ -90,9 +90,10 @@ function renderInfo() {
   if (!state.info) return;
   $("infoProfilesDir").textContent = state.info.profiles_dir;
   $("infoDataDir").textContent = state.info.data_dir;
-  $("infoVersion").textContent = state.version
-    ? `${state.version.app} v${state.version.version}`
-    : "…";
+  if (state.version) {
+    $("brandVersion").textContent = `v${state.version.version}`;
+    $("infoVersion").textContent = `${state.version.app} v${state.version.version}`;
+  }
 }
 
 function fillSelect(sel, options, value, labelFn) {
@@ -200,6 +201,7 @@ function renderSessions() {
         <div class="t">${accountIdx}${esc(accountName)}</div>
         <div class="u">${esc(s.url)}</div>
         <div class="fp">Fingerprint: OS ${esc(fpOs)} · UA ${esc(s.ua ? s.ua.slice(0, 90) + "…" : "đang tạo…")}</div>
+        ${s.error ? `<div class="err">Lỗi: ${esc(s.error)}</div>` : ""}
       </div>
       <button class="close" title="Đóng">×</button>
     `;
@@ -227,6 +229,23 @@ function connectWs() {
   ws.onopen = () => setBackend(true);
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
+    if (ev.type === "browser_installing") {
+      const pct = ev.percent || 0;
+      $("installModal").classList.remove("hidden");
+      $("installProgressBar").style.width = pct + "%";
+      $("installPercent").textContent = pct + "%";
+      return;
+    }
+    if (ev.type === "browser_installed") {
+      $("installModal").classList.add("hidden");
+      toast("Trình duyệt đã sẵn sàng", "success");
+      return;
+    }
+    if (ev.type === "browser_install_error") {
+      $("installModal").classList.add("hidden");
+      toast("Cập nhật trình duyệt thất bại: " + (ev.error || "lỗi"), "error");
+      return;
+    }
     if (ev.sessions) {
       state.sessions = ev.sessions;
       renderSessions();
@@ -341,54 +360,53 @@ connectWs();
 
 function setupUpdater() {
   if (!window.updater) return;
-  const banner = $("updateBanner");
   const text = $("updateText");
   const progWrap = $("updateProgressWrap");
   const progBar = $("updateProgressBar");
   const btnInstall = $("btnUpdateInstall");
   const btnDownload = $("btnUpdateDownload");
-  const btnDismiss = $("btnUpdateDismiss");
 
-  const show = (stateName, message) => {
-    banner.classList.remove("hidden");
+  const show = (stateName, message, cls) => {
     text.textContent = message;
+    text.className = "update-text" + (cls ? " " + cls : "");
     progWrap.classList.toggle("hidden", stateName !== "downloading");
     btnInstall.classList.toggle("hidden", stateName !== "ready");
     btnDownload.classList.toggle("hidden", stateName !== "available");
-    btnDismiss.classList.toggle("hidden", stateName === "up-to-date" || stateName === "error");
+    if (stateName === "available") {
+      btnDownload.textContent = "Cài đặt bản mới";
+    }
   };
 
   window.updater.onStatus((s) => {
     switch (s.state) {
       case "checking":
-        show("checking", "Đang kiểm tra bản cập nhật…");
+        show("checking", "Đang kiểm tra cập nhật…");
         break;
       case "available":
-        show("available", `Có phiên bản mới v${s.version}!`);
+        show("available", `Bản mới v${s.version} có sẵn!`, "new-version");
         break;
       case "up-to-date":
-        show("up-to-date", "Bạn đang dùng phiên bản mới nhất.");
-        setTimeout(() => banner.classList.add("hidden"), 3000);
+        show("up-to-date", "Bạn đang dùng bản mới nhất", "latest");
         break;
       case "downloading":
         progBar.style.width = s.percent + "%";
-        show("downloading", `Đang tải bản cập nhật… ${s.percent}%`);
+        show("downloading", `Đang tải… ${s.percent}%`, "downloading");
         break;
       case "ready":
-        show("ready", "Bản cập nhật đã tải xong.");
+        show("ready", "Đã tải xong bản cập nhật", "new-version");
+        btnInstall.textContent = "Cài đặt & khởi động lại";
         break;
       case "error":
-        show("error", "Không thể kiểm tra cập nhật: " + (s.message || "lỗi"));
+        show("error", "");
         break;
     }
   });
 
   btnDownload.onclick = () => window.updater.downloadUpdate();
   btnInstall.onclick = () => window.updater.installUpdate();
-  btnDismiss.onclick = () => banner.classList.add("hidden");
   $("btnCheckUpdate").onclick = () => {
-    banner.classList.remove("hidden");
-    text.textContent = "Đang kiểm tra bản cập nhật…";
+    text.textContent = "Đang kiểm tra cập nhật…";
+    text.className = "update-text";
     window.updater.checkForUpdate();
   };
 
