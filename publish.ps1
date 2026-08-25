@@ -96,6 +96,11 @@ $latestYml = Join-Path $Release "latest.yml"
 $assetName = "Auto-Tool-Setup-$new.exe"
 $assetBlockmap = "Auto-Tool-Setup-$new.exe.blockmap"
 
+# Don dep cac file release cu (chi giu ban moi nhat)
+Get-ChildItem -Path $Release -File -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -notlike "*$new*" -and $_.Name -ne "latest.yml"
+} | Remove-Item -Force -ErrorAction SilentlyContinue
+
 Write-Host "[3/3] Tao GitHub Release v$new + upload assets..." -ForegroundColor Yellow
 
 $tag = "v$new"
