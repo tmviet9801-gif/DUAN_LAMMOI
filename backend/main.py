@@ -20,7 +20,7 @@ from config import (
     save_accounts,
     save_config,
 )
-from fingerprint import random_chrome_ua, random_desktop_os
+from fingerprint import diverse_os, random_chrome_ua
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("main")
@@ -175,7 +175,7 @@ def _ensure_account_fingerprints(accounts):
     changed = False
     for a in accounts:
         if a.get("save_session") and not a.get("profile_ua") and not a.get("user_agent"):
-            os_name = random_desktop_os()
+            os_name = diverse_os(a.get("profile_os") for a in accounts)
             a["profile_os"] = os_name
             a["profile_ua"] = random_chrome_ua(os_name)
             changed = True
@@ -192,7 +192,7 @@ async def add_account(a: AccountIn):
     if record.get("save_session"):
         record["profile_dir"] = make_profile_dir(record["name"], account_id)
         if not record.get("user_agent"):
-            os_name = random_desktop_os()
+            os_name = diverse_os(a.get("profile_os") for a in accounts)
             record["profile_os"] = os_name
             record["profile_ua"] = random_chrome_ua(os_name)
     else:
