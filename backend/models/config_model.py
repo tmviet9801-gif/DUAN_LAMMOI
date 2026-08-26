@@ -14,7 +14,7 @@ from core.utils import slugify
 from platform_config import PLATFORM_ID, PLATFORM_NAME
 
 APP_NAME = PLATFORM_NAME
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.1.0"
 
 
 def get_data_dir() -> Path:

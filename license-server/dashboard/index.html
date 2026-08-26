@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AutoTool License Admin</title>
+<link rel="stylesheet" href="/assets/css/styles.css" />
+</head>
+<body>
+  <!-- LOGIN -->
+  <div id="loginView" class="login-wrap hidden">
+    <form class="login-card" id="loginForm">
+      <div class="login-logo">AutoTool License</div>
+      <p class="login-sub">Quản lý license cho thuê</p>
+      <input id="loginPass" type="password" placeholder="Mật khẩu quản trị" autocomplete="current-password" />
+      <button type="submit" class="btn primary block">Dang nhap</button>
+      <p class="login-msg" id="loginMsg"></p>
+    </form>
+  </div>
+
+  <!-- APP -->
+  <div id="appView" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand">AutoTool<br /><span>License Admin</span></div>
+      <nav class="nav">
+        <a class="nav-item active" data-view="dashboard">Dashboard</a>
+        <a class="nav-item" data-view="licenses">Licenses</a>
+        <a class="nav-item" data-view="issue">Cap license</a>
+        <a class="nav-item" data-view="plans">Goi thue</a>
+      </nav>
+      <div class="sidebar-foot">
+        <button class="btn ghost block" id="logoutBtn">Dang xuat</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <h1 id="pageTitle">Dashboard</h1>
+      </header>
+
+      <!-- DASHBOARD -->
+      <section id="view-dashboard" class="page">
+        <div class="cards" id="statCards"></div>
+        <div class="grid-2">
+          <div class="panel"><h3>License theo goi</h3><canvas id="chartPlans" height="220"></canvas></div>
+          <div class="panel"><h3>Cap license 30 ngay</h3><canvas id="chartIssued" height="220"></canvas></div>
+        </div>
+        <div class="grid-2">
+          <div class="panel"><h3>Doanh thu 6 thang (VND)</h3><canvas id="chartRevenue" height="220"></canvas></div>
+          <div class="panel"><h3>Khach thue nhieu nhat</h3><table id="topCustomers" class="table"></table></div>
+        </div>
+        <div class="panel"><h3>Sap het han (7 ngay toi)</h3><table id="expiringTable" class="table"></table></div>
+      </section>
+
+      <!-- LICENSES -->
+      <section id="view-licenses" class="page hidden">
+        <div class="toolbar">
+          <input id="licSearch" placeholder="Tim key / ma may / khach..." />
+          <select id="licStatusFilter">
+            <option value="all">Tat ca trang thai</option>
+            <option value="active">Active</option>
+            <option value="expired">Expired</option>
+            <option value="revoked">Revoked</option>
+            <option value="suspended">Suspended</option>
+          </select>
+        </div>
+        <div class="panel">
+          <table class="table" id="licTable">
+            <thead><tr><th>Khach</th><th>Key</th><th>Goi</th><th>Tab</th><th>Ngay het han</th><th>Trang thai</th><th></th></tr></thead>
+            <tbody id="licTbody"></tbody>
+          </table>
+          <p class="muted" id="licEmpty" style="display:none">Khong co license</p>
+        </div>
+      </section>
+
+      <!-- ISSUE -->
+      <section id="view-issue" class="page hidden">
+        <div class="panel">
+          <h3>Cap license moi</h3>
+          <form id="issueForm" class="form-grid">
+            <div class="field">
+              <label>Chon goi</label>
+              <select id="issPlan"><option value="">--- Goi tuy chinh ---</option></select>
+            </div>
+            <div class="field">
+              <label>Ma may (MachineGuid) *</label>
+              <input id="issMachine" placeholder="06b5a950-xxxx-..." required />
+            </div>
+            <div class="field">
+              <label>Ten khach</label>
+              <input id="issName" placeholder="Ten / Zalo / Phone" />
+            </div>
+            <div class="field">
+              <label>So ngay</label>
+              <input id="issDays" type="number" min="1" max="3650" value="30" />
+            </div>
+            <div class="field">
+              <label>So tab toi da</label>
+              <input id="issTabs" type="number" min="1" max="50" value="10" />
+            </div>
+            <div class="field">
+              <label>Ghi chu</label>
+              <input id="issNote" placeholder="Ghi chu" />
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn primary">Sinh key</button>
+            </div>
+          </form>
+          <div class="result" id="issueResult" style="display:none">
+            <h4>Key da cap</h4>
+            <div class="keybox" id="issueKey"></div>
+            <button type="button" class="btn" id="issueCopy">Copy key</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- PLANS -->
+      <section id="view-plans" class="page hidden">
+        <div class="toolbar">
+          <button class="btn primary" id="addPlanBtn">+ Goi moi</button>
+        </div>
+        <div class="panel">
+          <table class="table" id="planTable">
+            <thead><tr><th>Ten goi</th><th>Tab toi da</th><th>Gia/thang</th><th>Ngay mac dinh</th><th>Features</th><th>Kich hoat</th><th></th></tr></thead>
+            <tbody id="planTbody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- MODALS -->
+  <div id="modalRoot"></div>
+  <div id="toastWrap"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="/assets/js/api.js"></script>
+  <script src="/assets/js/ui.js"></script>
+  <script src="/assets/js/auth.js"></script>
+  <script src="/assets/js/dashboard.js"></script>
+  <script src="/assets/js/licenses.js"></script>
+  <script src="/assets/js/plans.js"></script>
+  <script src="/assets/js/app.js"></script>
+</body>
+</html>

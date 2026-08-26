@@ -2,7 +2,7 @@
 
 Ứng dụng desktop (Electron + FastAPI + Camoufox) quản lý nhiều profile/tài khoản game, mỗi profile có **fingerprint chống phát hiện riêng**, **proxy riêng**, **session đăng nhập riêng**. Cốt lõi là **Auto-flow tìm nhau & xả bài** cho các cổng game bài (HITCLUB, B52…) với hệ thống **license cho thuê** và **giới hạn tab**.
 
-> Phiên bản hiện tại: **v1.0.3** — bản HITCLUB (`platform_config.py`).
+> Phiên bản hiện tại: **v1.1.0** — bản HITCLUB (`platform_config.py`).
 
 ---
 
@@ -38,7 +38,7 @@
 
 ---
 
-## 2. Những gì đã làm (v1.0.3)
+## 2. Những gì đã làm (v1.1.0)
 
 ### 2.1. Quản lý profile / tài khoản
 - Bảng profile: STT, Tên, User-Agent, Proxy + nút **Mở / Sửa / Xóa**
@@ -104,6 +104,18 @@ Panel **"Auto xả bài — tìm nhau"** trong Game view:
 | `build.bat` | build installer |
 | `publish.ps1 -Version x.y.z` | bump version + build + upload GitHub Release |
 | `make_license.bat` | sinh license key (owner) |
+| `license-server\start.bat` | chạy License Server (Supabase) + admin dashboard |
+
+### 2.9. License Server — quản lý license cho thuê (mới, v1.1.0)
+
+Hệ thống server quản lý thuê license tập trung, **không cần sửa app** (offline HMAC — server sinh key, app tự xác thực bằng chữ ký):
+
+- **DB**: Supabase (Postgres) — bảng `plans` (gói thuê: tab/giá/ngày), `licenses` (key, machine, khách, hạn, trạng thái), `license_events` (audit log)
+- **Admin dashboard SPA** (Chart.js): thống kê doanh thu, license theo gói, cấp phát 30 ngày, danh sách sắp hết hạn
+- **Cấp license**: chọn gói + nhập MachineGuid khách → sinh key ngay (giống hệt scheme `backend/license.py`, SECRET phải khớp)
+- **Gia hạn / Reset / Thu hồi / Treo**: gia hạn + ngày, reset cấp lại key (đổi máy/tab), thu hồi đẩy `expires_at` về hiện tại để key chết ngay
+- **Quản lý gói thuê**: tên gói, số tab tối đa (mặc định 10), giá/tháng, số ngày
+- Chi tiết: `license-server/README.md`
 
 ---
 
@@ -217,7 +229,7 @@ python backend\tools\make_license.py --machine-id <guid> --days 30 --max-tabs 10
 
 ### 6.3. 🟠 Product hóa
 - **Đổi SECRET license** + quy trình sinh/cấp key cho khách thuê
-- Quản lý license online (nếu cần): server xác thực key, revoke, gia hạn từ xa
+- ✔ **Đã có License Server** (`license-server/`): cấp/gia hạn/reset/thu hồi online + admin dashboard (Supabase). Tùy chọn: cho app gọi `/api/public/verify` để revoke ngay từ xa
 - **Bản B52**: tách `platform_config.py` riêng + brand + logo
 - Thống kê sử dụng (số ván xả, tỷ lệ thành công) gửi về owner (tùy chọn)
 
