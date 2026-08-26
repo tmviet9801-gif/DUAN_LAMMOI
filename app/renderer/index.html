@@ -58,6 +58,7 @@
           <button class="mroot" data-menu="mm-sys">Hệ thống</button>
           <div class="mmenu hidden" id="mm-sys">
             <button class="menu-item" data-action="license-info">Thông tin giấy phép</button>
+            <button class="menu-item" data-action="make-license">Sinh license cho khách</button>
             <div class="menu-sep"></div>
             <button class="menu-item" data-action="check-update">Kiểm tra cập nhật</button>
             <button class="menu-item" data-action="toggle-theme">Giao diện sáng / tối</button>
@@ -424,6 +425,38 @@
         <button id="licActivate" class="primary">Kích hoạt</button>
       </div>
       <p class="hint" id="licMsg"></p>
+    </div>
+  </div>
+
+  <div id="makeLicenseModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Sinh license cho khách</h3>
+      <div class="field">
+        <label for="mkOwnerToken">Token chủ (owner)</label>
+        <input id="mkOwnerToken" type="password" placeholder="Nhập token owner" />
+      </div>
+      <div class="field">
+        <label for="mkMachineId">Mã máy khách (MachineGuid)</label>
+        <input id="mkMachineId" placeholder="06b5a950-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+      </div>
+      <div class="field">
+        <label for="mkDays">Số ngày</label>
+        <input id="mkDays" type="number" min="1" max="3650" value="30" />
+      </div>
+      <div class="field">
+        <label for="mkTabs">Số tab tối đa</label>
+        <input id="mkTabs" type="number" min="1" max="50" value="10" />
+      </div>
+      <div class="actions">
+        <button id="mkCancel" class="ghost">Hủy</button>
+        <button id="mkGenerate" class="primary">Sinh key</button>
+      </div>
+      <p class="hint" id="mkResult"></p>
+      <div id="mkKeyResult" style="display:none">
+        <label>License key (gửi cho khách)</label>
+        <code class="path" id="mkKey" style="word-break:break-all;user-select:all"></code>
+        <button id="mkCopy" class="ghost">📋 Copy</button>
+      </div>
     </div>
   </div>
 

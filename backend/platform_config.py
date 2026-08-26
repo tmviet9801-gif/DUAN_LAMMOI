@@ -18,6 +18,10 @@ PLATFORM_ADAPTER = "hitclub"
 PLATFORM_MAX_TABS = 10
 PLATFORM_OWNER_EMAIL = ""  # hiển thị trong phần trợ giúp license
 
+# Token chủ sở hữu — dùng để mở khóa panel sinh license trong app.
+# CHỈ owner biết; đổi trước khi build. Nếu để trống, panel sinh license tắt.
+OWNER_TOKEN = "AutoToolOwner@2026"
+
 
 def data_dir() -> Path:
     """Thư mục dữ liệu — tách riêng theo platform để 2 bản không dùng chung."""

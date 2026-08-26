@@ -79,6 +79,9 @@
         case "license-info":
           if (window.App.licenseRefresh) window.App.licenseRefresh();
           break;
+        case "make-license":
+          if (window.App.openMakeLicense) window.App.openMakeLicense();
+          break;
         case "toggle-theme":
           if (window.App.toggleTheme) window.App.toggleTheme();
           break;
