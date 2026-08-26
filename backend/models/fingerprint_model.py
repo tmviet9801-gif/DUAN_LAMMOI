@@ -1,3 +1,4 @@
+"""Model sinh fingerprint (UA, OS giả lập) cho profile."""
 import random
 
 UA_TEMPLATES = {

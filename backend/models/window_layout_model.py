@@ -1,3 +1,4 @@
+"""Model tính toán lưới cửa sổ trên màn hình."""
 import ctypes
 from ctypes import wintypes
 
@@ -12,6 +13,8 @@ def get_work_area():
 
 
 def compute_grid(n, cols, gap, margin, work_area, window_size=(0, 0), direction="row"):
+    if n <= 0:
+        return []
     x0, y0, sw, sh = work_area
     cols = max(1, int(cols))
     gap = max(0, int(gap))

@@ -41,7 +41,7 @@ function Set-Version($v) {
     $pkg.version = $v
     $pkg | ConvertTo-Json -Depth 5 | Set-Content $pkgPath -Encoding UTF8
 
-    $cfgPath = Join-Path $Backend "config.py"
+    $cfgPath = Join-Path $Backend "models\config_model.py"
     $cfg = Get-Content $cfgPath -Raw
     $cfg = [regex]::Replace($cfg, 'APP_VERSION = "[\d.]+"', "APP_VERSION = `"$v`"")
     Set-Content $cfgPath $cfg -Encoding UTF8

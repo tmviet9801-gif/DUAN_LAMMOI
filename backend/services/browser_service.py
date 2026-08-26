@@ -9,10 +9,11 @@ import psutil
 from camoufox import AsyncCamoufox
 from camoufox.async_api import AsyncNewContext
 
-from window_layout import compute_grid, get_work_area
-from fingerprint import random_chrome_ua, random_desktop_os
+from models.fingerprint_model import random_chrome_ua, random_desktop_os
+from models.proxy_model import parse_proxy
+from models.window_layout_model import compute_grid, get_work_area
 
-log = logging.getLogger("browser_manager")
+log = logging.getLogger("browser_service")
 
 user32 = ctypes.windll.user32
 SWP_NOZORDER = 0x0004
@@ -176,8 +177,21 @@ class BrowserManager:
                 return True
         except Exception:
             pass
+        try:
+            from models.bundled_model import get_bundled_browser_dir, install_bundled_browser
+            bundled = get_bundled_browser_dir()
+            if bundled:
+                self._emit("browser_installing", percent=0, source="bundled")
+                ok = await asyncio.get_running_loop().run_in_executor(
+                    None, install_bundled_browser, bundled
+                )
+                if ok:
+                    self._emit("browser_installed", source="bundled")
+                    return True
+        except Exception as e:
+            log.warning("install bundled browser failed: %s", e)
         loop = asyncio.get_running_loop()
-        self._emit("browser_installing", percent=0)
+        self._emit("browser_installing", percent=0, source="download")
         try:
             def _install():
                 _install_browser_with_progress(
@@ -243,6 +257,7 @@ class BrowserManager:
             tab_title = "Tab trống"
         before = _camoufox_pids()
         browser_ctx = None
+        proxy_dict = parse_proxy(account.get("proxy") or "") if account else None
         try:
             launch_kwargs = {}
             if profile_dir:
@@ -252,6 +267,8 @@ class BrowserManager:
                     launch_kwargs["user_agent"] = ua
                 if locale and locale != "random":
                     launch_kwargs["locale"] = locale
+            if proxy_dict:
+                launch_kwargs["proxy"] = proxy_dict
             browser_ctx = AsyncCamoufox(headless=False, **launch_kwargs)
             browser = await browser_ctx.__aenter__()
             if profile_dir:
@@ -271,6 +288,8 @@ class BrowserManager:
                     context_kwargs["os"] = fp_os
                 if locale and locale != "random":
                     context_kwargs["locale"] = locale
+                if proxy_dict:
+                    context_kwargs["proxy"] = proxy_dict
                 context = await AsyncNewContext(browser, **context_kwargs)
                 page = await context.new_page()
                 ua_actual = await self._read_ua(page)

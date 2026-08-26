@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { spawn, execSync } = require("child_process");
 const path = require("path");
 const http = require("http");
@@ -44,9 +44,17 @@ function waitForBackend(timeoutMs = 60000) {
 function startBackend() {
   const python = findBackend();
   const args = backendArgs();
+  const env = { ...process.env };
+  if (isPackaged) {
+    const bundledBrowser = path.join(path.dirname(python), "browser");
+    if (fs.existsSync(bundledBrowser)) {
+      env.TABMANAGER_BUNDLED_BROWSER = bundledBrowser;
+    }
+  }
   backend = spawn(python, args, {
     cwd: isPackaged ? path.dirname(python) : BACKEND_DIR,
     stdio: "pipe",
+    env,
   });
   backend.stdout.on("data", (d) => console.log("[backend]", d.toString().trim()));
   backend.stderr.on("data", (d) => console.error("[backend]", d.toString().trim()));
@@ -142,6 +150,28 @@ function setupAutoUpdater() {
   });
 }
 
+function setupFs() {
+  ipcMain.handle("select-folder", async (_e, defaultPath) => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: "Chọn thư mục lưu profile",
+      defaultPath: defaultPath || undefined,
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (res.canceled || !res.filePaths.length) return null;
+    return res.filePaths[0];
+  });
+
+  ipcMain.handle("open-folder", async (_e, folder) => {
+    if (!folder) return false;
+    try {
+      await shell.openPath(folder);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  });
+}
+
 app.whenReady().then(async () => {
   const appVersion = app.getVersion();
   const runningVersion = await getBackendVersion();
@@ -173,6 +203,18 @@ app.whenReady().then(async () => {
   }
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   mainWindow.on("closed", () => (mainWindow = null));
+  mainWindow.webContents.on("console-message", (...args) => {
+    if (args.length >= 5) {
+      const [, level, message, line, sourceId] = args;
+      console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+    } else if (args[0] && args[0].message !== undefined) {
+      console.log(`[renderer:${args[0].level}] ${args[0].message} (${args[0].sourceId}:${args[0].lineNumber})`);
+    }
+  });
+  mainWindow.webContents.on("did-fail-load", (_e, code, desc, url) => {
+    console.error(`[renderer] did-fail-load ${code} ${desc} ${url}`);
+  });
+  setupFs();
   setupAutoUpdater();
 });
 

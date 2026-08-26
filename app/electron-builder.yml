@@ -17,6 +17,10 @@ extraResources:
     to: backend/tab-manager-backend.exe
     filter:
       - "**/*"
+  - from: ../backend/dist/browser
+    to: backend/browser
+    filter:
+      - "**/*"
 
 win:
   target:

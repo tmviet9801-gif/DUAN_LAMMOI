@@ -7,12 +7,67 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div class="app-wrap">
   <header class="topbar">
-    <div class="brand">Auto Tool <span class="brand-version" id="brandVersion">v…</span></div>
-    <nav class="tabs">
-      <button class="tab active" data-tab="home">Trang chủ</button>
-      <button class="tab" data-tab="config">Cấu hình</button>
-    </nav>
+    <div class="topbar-left">
+      <div class="brand" id="brandHome" title="Về Game">Auto Tool <span class="brand-version" id="brandVersion">v…</span></div>
+
+      <nav class="menubar">
+        <div class="mroot-wrap">
+          <button class="mroot" data-menu="mm-game">Game</button>
+          <div class="mmenu hidden" id="mm-game">
+            <button class="menu-item" data-view="gamesim">Bảng điều khiển Game Test</button>
+            <div class="menu-sep"></div>
+            <button class="menu-item" data-action="gs-start">▶ Bắt đầu mô phỏng</button>
+            <button class="menu-item" data-action="gs-stop">■ Dừng</button>
+          </div>
+        </div>
+        <div class="mroot-wrap">
+          <button class="mroot" data-menu="mm-home">Trang chủ</button>
+          <div class="mmenu hidden" id="mm-home">
+            <button class="menu-item" data-view="home">Danh sách profile</button>
+            <div class="menu-sep"></div>
+            <button class="menu-item" data-action="add-profile">Thêm profile…</button>
+            <button class="menu-item" data-action="import-accounts">Import tài khoản từ file…</button>
+            <div class="menu-sep"></div>
+            <button class="menu-item" data-action="open-selected">Mở profile đã chọn</button>
+            <button class="menu-item" data-action="delete-selected">Xóa profile đã chọn</button>
+          </div>
+        </div>
+        <div class="mroot-wrap">
+          <button class="mroot" data-menu="mm-proxy">Proxy</button>
+          <div class="mmenu hidden" id="mm-proxy">
+            <button class="menu-item" data-view="proxy">Quản lý proxy</button>
+          </div>
+        </div>
+        <div class="mroot-wrap">
+          <button class="mroot" data-menu="mm-config">Cấu hình</button>
+          <div class="mmenu hidden" id="mm-config">
+            <button class="menu-item" data-view="config">Cài đặt chung</button>
+            <div class="menu-sep"></div>
+            <button class="menu-item" data-action="open-profiles-folder">Mở thư mục profile</button>
+          </div>
+        </div>
+        <div class="mroot-wrap">
+          <button class="mroot" data-menu="mm-groups">Nhóm</button>
+          <div class="mmenu hidden" id="mm-groups">
+            <button class="menu-item" data-view="groups">Cấu hình nhóm (main + support)</button>
+          </div>
+        </div>
+        <div class="mroot-wrap">
+          <button class="mroot" data-menu="mm-sys">Hệ thống</button>
+          <div class="mmenu hidden" id="mm-sys">
+            <button class="menu-item" data-action="license-info">Thông tin giấy phép</button>
+            <div class="menu-sep"></div>
+            <button class="menu-item" data-action="check-update">Kiểm tra cập nhật</button>
+            <button class="menu-item" data-action="toggle-theme">Giao diện sáng / tối</button>
+            <div class="menu-sep"></div>
+            <button class="menu-item danger" data-action="exit">Thoát</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+
     <div class="topbar-right">
       <div id="updateWidget" class="update-widget">
         <span id="updateText" class="update-text">Đang kiểm tra cập nhật…</span>
@@ -23,133 +78,328 @@
         <button id="btnUpdateInstall" class="update-btn primary hidden">Cài đặt & khởi động lại</button>
       </div>
       <div class="status"><span id="backendDot" class="dot"></span><span id="backendText">Đang kết nối…</span></div>
+      <button id="themeBtn" class="theme-btn" title="Đổi giao diện sáng/tối">🌙</button>
     </div>
   </header>
 
   <main class="layout">
 
-    <section id="tab-home" class="tab-panel">
-      <div class="panel">
-        <h2>Thao tác nhanh</h2>
-        <div class="actions">
-          <button id="btnOpenCount" class="primary">Mở tab</button>
-          <button id="btnOpenAll" class="primary">Mở tất cả tài khoản</button>
-          <button id="btnLayout">Xếp lưới ngay</button>
-          <button id="btnCloseAll" class="danger">Đóng tất cả</button>
+    <section id="view-home" class="view">
+      <div class="cards">
+        <div class="panel wide">
+          <h2>Thao tác nhanh</h2>
+          <div class="quick-actions">
+            <button id="btnAddProfile" class="primary" title="Thêm profile (1 hoặc thêm nhanh)">Thêm profile</button>
+            <button id="pickerBtn" class="picker-btn" disabled title="Chọn profile trong bảng (click dòng hoặc Ctrl+A)">Đã chọn 0/0</button>
+            <button id="btnOpenSelected" class="primary">Mở đã chọn</button>
+            <button id="btnDeleteSelected" class="danger">Xóa đã chọn</button>
+            <button id="btnLayout">Xếp lưới ngay</button>
+            <button id="btnCloseAll" class="danger">Đóng tất cả</button>
+          </div>
         </div>
-        <p class="hint">
-          <b>Mở tất cả tài khoản:</b> chỉ mở đúng số profile hiện có (không tạo tab trống).<br />
-          <b>Mở tab:</b> mở đúng số tab nhập ở Cấu hình; nếu ít profile hơn, phần dư là tab trống.<br />
-          Tên profile sẽ hiển thị ngay trên tab trình duyệt để dễ nhận biết.
-        </p>
-      </div>
 
-      <div class="panel">
-        <h2>Tài khoản / Profile</h2>
-        <form id="accountForm" class="account-form">
-          <input id="accName" placeholder="Tên profile (vd: FB Tài khoản 1)" required />
-          <input id="accUrl" placeholder="URL (vd: https://example.com/login)" />
-          <input id="accUa" placeholder="User-Agent (để trống = ngẫu nhiên)" />
-          <label class="check">
-            <input id="accSaveSession" type="checkbox" checked /> Lưu session riêng (đăng nhập 1 lần, lần sau mở lại vẫn còn login)
-          </label>
-          <button type="submit" class="primary">Thêm profile</button>
-        </form>
-        <ul id="accountList" class="account-list"></ul>
-      </div>
-
-      <div class="panel wide">
-        <h2>Trạng thái cửa sổ (<span id="sessionCount">0</span>)</h2>
-        <div id="sessionGrid" class="session-grid"></div>
+        <div class="panel wide">
+          <h2>Quản lý profile (<span id="profileCount">0</span>)</h2>
+          <div class="table-toolbar">
+            <input id="profSearch" placeholder="Tìm kiếm theo tên / UA / URL…" />
+            <select id="profSort" title="Sắp xếp">
+              <option value="name_asc">Tên A-Z</option>
+              <option value="name_desc">Tên Z-A</option>
+              <option value="date_new">Ngày tạo mới nhất</option>
+              <option value="date_old">Ngày tạo cũ nhất</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table class="profiles-table">
+              <thead>
+                <tr>
+                  <th class="col-stt">STT</th>
+                  <th class="col-name">Tên</th>
+                  <th class="col-ua">User-Agent</th>
+                  <th class="col-proxy">Proxy</th>
+                  <th class="col-actions">Thao tác</th>
+                  <th class="col-del">Xóa</th>
+                </tr>
+              </thead>
+              <tbody id="profileTbody"></tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <button id="pagePrev" class="ghost" title="Trang trước">‹</button>
+            <span id="pageInfo">0-0 / 0</span>
+            <button id="pageNext" class="ghost" title="Trang sau">›</button>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section id="tab-config" class="tab-panel hidden">
-      <div class="panel">
-        <h2>Lưới cửa sổ</h2>
-        <div class="field">
-          <label for="cfgCols">Số cột</label>
-          <input id="cfgCols" type="number" min="1" max="12" />
+    <section id="view-config" class="view hidden">
+      <div class="cards config-cards">
+        <div class="panel">
+          <h2>Lưới cửa sổ</h2>
+          <div class="field">
+            <label for="cfgCols">Số cột</label>
+            <input id="cfgCols" type="number" min="1" max="12" />
+          </div>
+          <div class="field">
+            <label for="cfgGap">Khoảng cách (px)</label>
+            <input id="cfgGap" type="number" min="0" max="200" />
+          </div>
+          <div class="field">
+            <label for="cfgMargin">Lề màn hình (px)</label>
+            <input id="cfgMargin" type="number" min="0" max="200" />
+          </div>
+          <div class="field">
+            <label for="cfgDirection">Hướng sắp xếp</label>
+            <select id="cfgDirection">
+              <option value="row">Theo hàng (trái → phải)</option>
+              <option value="col">Theo cột (trên → xuống)</option>
+            </select>
+          </div>
         </div>
-        <div class="field">
-          <label for="cfgGap">Khoảng cách (px)</label>
-          <input id="cfgGap" type="number" min="0" max="200" />
+
+        <div class="panel">
+          <h2>Kích thước cửa sổ</h2>
+          <div class="field">
+            <label for="cfgWinW">Chiều rộng (px)</label>
+            <input id="cfgWinW" type="number" min="0" max="4000" />
+          </div>
+          <div class="field">
+            <label for="cfgWinH">Chiều cao (px)</label>
+            <input id="cfgWinH" type="number" min="0" max="4000" />
+          </div>
+          <div class="field">
+            <label for="cfgCount">Số tab mặc định</label>
+            <input id="cfgCount" type="number" min="1" max="100" />
+          </div>
+          <label class="check">
+            <input id="cfgAutoLayout" type="checkbox" /> Tự động xếp lưới
+          </label>
         </div>
-        <div class="field">
-          <label for="cfgMargin">Lề màn hình (px)</label>
-          <input id="cfgMargin" type="number" min="0" max="200" />
+
+        <div class="panel">
+          <h2>Antidetect / Fingerprint</h2>
+          <div class="field">
+            <label for="cfgOs">Hệ điều hành giả lập</label>
+            <select id="cfgOs"></select>
+          </div>
+          <div class="field">
+            <label for="cfgLocale">Locale (ngôn ngữ trình duyệt)</label>
+            <select id="cfgLocale"></select>
+          </div>
         </div>
-        <div class="field">
-          <label for="cfgDirection">Hướng sắp xếp</label>
-          <select id="cfgDirection">
-            <option value="row">Theo hàng (trái → phải)</option>
-            <option value="col">Theo cột (trên → xuống)</option>
-          </select>
+
+        <div class="panel">
+          <h2>Thư mục lưu profile</h2>
+          <div class="folder-row">
+            <code class="path" id="infoProfilesDir">…</code>
+            <button id="btnPickFolder" class="ghost" title="Chọn thư mục">Chọn…</button>
+            <button id="btnOpenFolder" class="ghost" title="Mở thư mục">Mở</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Thông tin</h2>
+          <div class="field">
+            <label>Phiên bản ứng dụng</label>
+            <code class="path" id="infoVersion">…</code>
+          </div>
+          <div class="field">
+            <label>Nơi lưu dữ liệu app</label>
+            <code class="path" id="infoDataDir">…</code>
+          </div>
+        </div>
+
+        <div class="panel actions-panel">
+          <div class="actions">
+            <button id="btnSaveConfig" class="primary">Lưu cấu hình</button>
+            <button id="btnLayout2">Xếp lưới ngay</button>
+          </div>
         </div>
       </div>
+    </section>
 
-      <div class="panel">
-        <h2>Kích thước cửa sổ</h2>
-        <p class="hint">Để 0 = tự động chia đều màn hình theo lưới.</p>
-        <div class="field">
-          <label for="cfgWinW">Chiều rộng (px)</label>
-          <input id="cfgWinW" type="number" min="0" max="4000" />
+    <section id="view-gamesim" class="view hidden">
+      <div class="cards">
+        <div class="panel wide">
+          <h2>Game Room Simulator — kiểm thử quyền đi trước</h2>
+          <div class="quick-actions">
+            <button id="gsStart" class="primary">▶ Start</button>
+            <button id="gsStop" class="danger">■ Stop</button>
+            <select id="gsScenario" title="Kịch bản">
+              <option value="winner_keeps_first_move">Winner giữ lượt đầu</option>
+              <option value="reset_after_main_lose">Reset khi MAIN thua</option>
+            </select>
+            <input id="gsRounds" type="number" min="1" max="500" value="5" title="Số ván test" />
+            <span class="label">ván</span>
+          </div>
+          <p class="hint" id="gsInfo">Nhấn Start để chạy mô phỏng (mock adapter).</p>
         </div>
-        <div class="field">
-          <label for="cfgWinH">Chiều cao (px)</label>
-          <input id="cfgWinH" type="number" min="0" max="4000" />
-        </div>
-        <div class="field">
-          <label for="cfgCount">Số tab mặc định</label>
-          <input id="cfgCount" type="number" min="1" max="100" />
-        </div>
-        <label class="check">
-          <input id="cfgAutoLayout" type="checkbox" /> Tự động xếp lưới
-        </label>
-      </div>
 
-      <div class="panel">
-        <h2>Antidetect / Fingerprint</h2>
-        <div class="field">
-          <label for="cfgOs">Hệ điều hành giả lập</label>
-          <select id="cfgOs"></select>
+        <div class="panel">
+          <h2>Trạng thái nhóm</h2>
+          <div id="gsGroups" class="gs-groups"></div>
         </div>
-        <div class="field">
-          <label for="cfgLocale">Locale (ngôn ngữ trình duyệt)</label>
-          <select id="cfgLocale"></select>
-        </div>
-        <p class="hint">Mỗi cửa sổ mới được sinh fingerprint riêng (UA, WebGL, canvas, screen…). Bạn có thể ghi đè UA theo từng tài khoản ở tab Trang chủ.</p>
-      </div>
 
-      <div class="panel">
-        <h2>Thông tin</h2>
-        <div class="field">
-          <label>Phiên bản ứng dụng</label>
-          <code class="path" id="infoVersion">…</code>
+        <div class="panel">
+          <h2>Metrics</h2>
+          <div id="gsMetrics" class="gs-metrics"></div>
         </div>
-        <div class="field">
-          <label>Nơi lưu profile (cookies, đăng nhập)</label>
-          <code class="path" id="infoProfilesDir">…</code>
+
+        <div class="panel wide">
+          <h2>Event log</h2>
+          <div id="gsEvents" class="gs-events"></div>
         </div>
-        <div class="field">
-          <label>Nơi lưu dữ liệu app</label>
-          <code class="path" id="infoDataDir">…</code>
-        </div>
-        <p class="hint">Mỗi profile là 1 thư mục riêng chứa cookies.sqlite, logins.db, localStorage — sao lưu thư mục này để giữ đăng nhập.</p>
-        <div class="actions">
-          <button id="btnCheckUpdate">Kiểm tra cập nhật</button>
+
+        <div class="panel wide">
+          <h2>Auto xả bài — tìm nhau</h2>
+          <div class="quick-actions">
+            <label class="check"><input id="afAutoOut" type="checkbox" checked /> Tự rời sau khi xả</label>
+            <label class="check"><input id="afAutoStart" type="checkbox" /> Tự bắt đầu khi khách sẵn sàng</label>
+          </div>
+          <p class="hint">Chọn các profile sẽ tìm nhau (4–5 acc cho nhanh). Acc đầu thấy bàn trống làm anchor, các acc còn lại join theo room id.</p>
+          <div id="afProfiles" class="chips"></div>
+          <div class="quick-actions">
+            <button id="afStart" class="primary">▶ Tìm &amp; xả</button>
+            <button id="afStop" class="danger">■ Dừng</button>
+          </div>
+          <p class="hint" id="afStatus"></p>
+          <div id="afLogs" class="gs-events-list"></div>
         </div>
       </div>
+    </section>
 
-      <div class="panel actions-panel">
-        <div class="actions">
-          <button id="btnSaveConfig" class="primary">Lưu cấu hình</button>
-          <button id="btnLayout2">Xếp lưới ngay</button>
+    <section id="view-groups" class="view hidden">
+      <div class="cards">
+        <div class="panel wide">
+          <h2>Cấu hình nhóm (Game Test)</h2>
+          <div id="groupEditor"></div>
+          <div class="actions">
+            <button id="btnAddGroup" class="ghost">+ Thêm nhóm</button>
+            <button id="btnSaveGroups" class="primary">Lưu cấu hình nhóm</button>
+          </div>
+          <p class="hint" id="groupsSaveMsg"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-proxy" class="view hidden">
+      <div class="cards">
+        <div class="panel wide">
+          <h2>Quản lý proxy</h2>
+          <div class="field">
+            <label>Danh sách proxy (mỗi dòng: IP:Port:User:Pass)</label>
+            <textarea id="proxyText" rows="10" placeholder="14.224.225.151:50913:bfngZP:FJAJDC&#10;113.160.241.74:20728:bfngZP:FJAJDC"></textarea>
+          </div>
+          <div class="quick-actions">
+            <button id="proxySave" class="primary">Lưu proxy</button>
+            <button id="proxyCheckAll" class="primary">Kiểm tra tất cả</button>
+            <button id="proxyApply" class="primary">Áp dụng proxy sống cho profile</button>
+          </div>
+          <p class="hint" id="proxyStatus"></p>
+          <div id="proxyResults" class="gs-events-list"></div>
         </div>
       </div>
     </section>
 
   </main>
+
+  <footer class="app-footer">
+    <span id="footerLeft">Auto Tool</span>
+    <span class="app-clock" id="appClock">--:--:--</span>
+  </footer>
+  </div>
+
+  <div id="addProfileModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3 id="addProfileTitle">Thêm profile</h3>
+      <div class="modal-tabs">
+        <button class="mtab active" data-mode="single" title="Thêm 1 profile">Thêm 1</button>
+        <button class="mtab" data-mode="bulk" title="Thêm nhanh nhiều profile (A01, A02…)">Thêm nhanh</button>
+      </div>
+      <div class="field">
+        <label id="apNameLabel" for="apName">Tên</label>
+        <input id="apName" placeholder="vd: A" />
+      </div>
+      <div class="field" id="apCountField">
+        <label for="apCount">Số lượng</label>
+        <input id="apCount" type="number" min="1" max="500" value="1" />
+      </div>
+      <div class="field">
+        <label for="apUrl">URL (tùy chọn, dùng chung cho tất cả)</label>
+        <input id="apUrl" placeholder="https://checkip.com/ (mặc định)" />
+      </div>
+      <div class="field">
+        <label for="apUa">User-Agent (tùy chọn)</label>
+        <input id="apUa" placeholder="để trống = ngẫu nhiên" />
+      </div>
+      <div class="field">
+        <label for="apProxy">Proxy HTTP (tùy chọn)</label>
+        <div class="field-row">
+          <textarea id="apProxy" rows="2" placeholder="IP:Port:User:Pass"></textarea>
+          <button id="apCheckProxy" class="ghost" title="Kiểm tra proxy hoạt động">Kiểm tra</button>
+        </div>
+        <p class="hint" id="apProxyResult">Định dạng IP:Port:User:Pass. Để trống = dùng IP máy.</p>
+      </div>
+      <label class="check">
+        <input id="apSaveSession" type="checkbox" checked /> Lưu session riêng (đăng nhập 1 lần, lần sau mở lại vẫn còn login)
+      </label>
+      <p class="hint" id="apPreview">Sẽ thêm: A</p>
+      <div class="actions">
+        <button id="apCancel" class="ghost">Hủy</button>
+        <button id="apSubmit" class="primary">Thêm</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="editProfileModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Sửa profile — <span id="epName" class="normal"></span></h3>
+      <div class="field">
+        <label for="epProfileName">Tên</label>
+        <input id="epProfileName" />
+      </div>
+      <div class="field">
+        <label for="epUrl">URL</label>
+        <input id="epUrl" placeholder="https://checkip.com/ (mặc định)" />
+      </div>
+      <div class="field">
+        <label for="epUa">User-Agent</label>
+        <input id="epUa" placeholder="để trống = ngẫu nhiên khi mở" />
+      </div>
+      <div class="field">
+        <label for="epProxy">Proxy HTTP</label>
+        <div class="field-row">
+          <textarea id="epProxy" rows="2" placeholder="IP:Port:User:Pass"></textarea>
+          <button id="epCheckProxy" class="ghost" title="Kiểm tra proxy hoạt động">Kiểm tra</button>
+        </div>
+        <p class="hint" id="epProxyResult">Định dạng IP:Port:User:Pass. Để trống = dùng IP máy.</p>
+      </div>
+      <div class="actions">
+        <button id="epCancel" class="ghost">Hủy</button>
+        <button id="epSave" class="primary">Lưu</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="importModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Import tài khoản từ file</h3>
+      <div class="field">
+        <label>Chọn file .txt (mỗi dòng: nick|password)</label>
+        <input id="impFile" type="file" accept=".txt,.csv" />
+      </div>
+      <div class="field">
+        <label>Hoặc dán trực tiếp (nick|password mỗi dòng)</label>
+        <textarea id="impText" rows="6" placeholder="nicktestxabai1|222222&#10;nicktestxabai2|222222"></textarea>
+      </div>
+      <p class="hint" id="impPreview"></p>
+      <div class="actions">
+        <button id="impCancel" class="ghost">Hủy</button>
+        <button id="impSubmit" class="primary">Import</button>
+      </div>
+    </div>
+  </div>
 
   <div id="installModal" class="modal-overlay hidden">
     <div class="modal">
@@ -157,12 +407,41 @@
       <div class="install-progress">
         <div id="installProgressBar" class="install-progress-bar"></div>
       </div>
-      <p class="install-percent" id="installPercent">0%</p>
-    </div>
+      <p class="install-percent" id="installPercent">0%</p>    </div>
   </div>
 
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="app.js"></script>
+  <div id="licenseGate" class="modal-overlay">
+    <div class="modal lic-modal">
+      <h3>Kích hoạt giấy phép</h3>
+      <p class="hint" id="licMachine">Đang kiểm tra…</p>
+      <div class="field">
+        <label for="licKey">License key</label>
+        <input id="licKey" placeholder="AUTO-XXXX-…" />
+      </div>
+      <div class="actions">
+        <button id="licActivate" class="primary">Kích hoạt</button>
+      </div>
+      <p class="hint" id="licMsg"></p>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/ws.js"></script>
+  <script src="js/menu.js"></script>
+  <script src="js/actions.js"></script>
+  <script src="js/gamesim.js"></script>
+  <script src="js/groups.js"></script>
+  <script src="js/proxy.js"></script>
+  <script src="js/import.js"></script>
+  <script src="js/license.js"></script>
+  <script src="js/autoplay.js"></script>
+  <script src="js/theme.js"></script>
+  <script src="js/updater.js"></script>
+  <script src="js/app.js"></script>
 </body>
 </html>

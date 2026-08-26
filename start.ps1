@@ -4,7 +4,6 @@ $Backend = Join-Path $Root "backend"
 $App = Join-Path $Root "app"
 $Venv = Join-Path $Backend ".venv"
 $VenvPython = Join-Path $Venv "Scripts\python.exe"
-$VenvPip = Join-Path $Venv "Scripts\pip.exe"
 
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 Remove-Item Env:ELECTRON_OVERRIDE_DIST_PATH -ErrorAction SilentlyContinue
@@ -21,7 +20,7 @@ if (-not (Test-Path $VenvPython)) {
 }
 
 Write-Host "[2/4] Cai dependencies backend..." -ForegroundColor Yellow
-& $VenvPip install --disable-pip-version-check -q -r (Join-Path $Backend "requirements.txt")
+& $VenvPython -m pip install --disable-pip-version-check -q -r (Join-Path $Backend "requirements.txt")
 if ($LASTEXITCODE -ne 0) { throw "pip install that bai" }
 
 Write-Host "[3/4] Kiem tra browser Camoufox..." -ForegroundColor Yellow
