@@ -1,4 +1,5 @@
 """Controller: quản lý tài khoản / profile."""
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -7,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from models.config_model import get_profiles_dir, load_accounts, new_account_record, save_accounts
+from platform_config import DEFAULT_PROFILE_URL
 from services.account_service import bulk_names, ensure_account_fingerprints
 
 log = logging.getLogger("account_controller")
@@ -15,7 +17,7 @@ router = APIRouter()
 
 class AccountIn(BaseModel):
     name: str
-    url: str = "https://checkip.com/"
+    url: str = DEFAULT_PROFILE_URL
     user_agent: str = ""
     proxy: str = ""
     save_session: bool = True
@@ -26,7 +28,7 @@ class AccountIn(BaseModel):
 class AccountBulkIn(BaseModel):
     prefix: str
     count: int = 1
-    url: str = "https://checkip.com/"
+    url: str = DEFAULT_PROFILE_URL
     user_agent: str = ""
     proxy: str = ""
     save_session: bool = True
@@ -43,6 +45,8 @@ class AccountUpdateIn(BaseModel):
     name: str | None = None
     url: str | None = None
     user_agent: str | None = None
+    username: str | None = None
+    password: str | None = None
 
 
 def _split_proxies(raw: str) -> list[str]:
@@ -84,7 +88,7 @@ async def import_accounts(body: ImportAccountsIn):
             record = new_account_record(
                 {
                     "name": it["username"],
-                    "url": "https://checkip.com/",
+                    "url": DEFAULT_PROFILE_URL,
                     "user_agent": "",
                     "proxy": "",
                     "save_session": True,
@@ -210,3 +214,47 @@ async def delete_account(account_id: str, request: Request):
 async def delete_accounts_bulk(body: BulkDeleteIn, request: Request):
     n = await _delete_accounts(request.app.state.manager, body.account_ids)
     return {"ok": True, "deleted": n}
+
+
+@router.post("/api/accounts/{account_id}/save-session")
+async def save_account_session(account_id: str, request: Request):
+    """Đọc toàn bộ localStorage + sessionStorage từ page đang mở và lưu vào account.
+
+    Game HITCLUB lưu token login trong localStorage nhưng Firefox/Playwright
+    KHÔNG flush localStorage xuống đĩa khi đóng persistent context — nên mở lại
+    bị mất login. Gọi endpoint này sau khi login để lưu chủ động.
+    """
+    manager = request.app.state.manager
+    session = None
+    for s in manager.sessions.values():
+        if s.account and s.account.get("id") == account_id and s.page:
+            session = s
+            break
+    if not session:
+        raise HTTPException(status_code=400, detail="Không tìm thấy session đang mở cho profile này")
+    try:
+        ls = await session.page.evaluate("JSON.stringify(window.localStorage)")
+        ss = await session.page.evaluate("JSON.stringify(window.sessionStorage)")
+        data = {}
+        if ls:
+            ld = json.loads(ls)
+            if ld:
+                data["local"] = ld
+        if ss:
+            sd = json.loads(ss)
+            if sd:
+                data["session"] = sd
+        accounts = load_accounts()
+        for a in accounts:
+            if a["id"] == account_id:
+                a["web_storage"] = data
+                break
+        save_accounts(accounts)
+        session.account["web_storage"] = data
+        log.info(
+            "manual save web storage for %s (local=%d, session=%d)",
+            session.account.get("name"), len(data.get("local", {})), len(data.get("session", {})),
+        )
+        return {"ok": True, "local": len(data.get("local", {})), "session": len(data.get("session", {}))}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

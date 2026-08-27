@@ -65,6 +65,17 @@
   }
   App.openAccountRow = openAccountRow;
 
+  // --- Lưu session đăng nhập hiện tại (localStorage/sessionStorage) ---
+  async function saveAccountSession(a) {
+    try {
+      const r = await App.api(`/api/accounts/${a.id}/save-session`, { method: "POST" });
+      App.toast(`Đã lưu login cho "${a.name}" (local=${r.local}, session=${r.session})`, "success");
+    } catch (err) {
+      App.toast("Lưu login thất bại: " + err.message, "error");
+    }
+  }
+  App.saveAccountSession = saveAccountSession;
+
   // --- Xóa 1 profile (nút Xóa trên bảng) ---
   function deleteAccountRow(a) {
     App.confirmDialog(
@@ -129,6 +140,7 @@
           },
           default_count: +$("cfgCount").value,
           auto_layout: $("cfgAutoLayout").checked,
+          mute_all_sites: $("cfgMuteAll").checked,
         }),
       });
       App.toast("Đã lưu cấu hình", "success");
@@ -217,7 +229,7 @@
       App.toast("Nhập tên / tiền tố profile", "warn");
       return;
     }
-    const url = $("apUrl").value.trim() || "https://checkip.com/";
+    const url = $("apUrl").value.trim() || "https://v.hitclub.latino/?a=hitclub";
     const userAgent = $("apUa").value.trim();
     const proxy = $("apProxy").value.trim();
     const saveSession = $("apSaveSession").checked;
@@ -315,7 +327,7 @@
         method: "PATCH",
         body: JSON.stringify({
           name: $("epProfileName").value.trim(),
-          url: $("epUrl").value.trim() || "https://checkip.com/",
+          url: $("epUrl").value.trim() || "https://v.hitclub.latino/?a=hitclub",
           user_agent: $("epUa").value.trim(),
           proxy: $("epProxy").value.trim(),
         }),

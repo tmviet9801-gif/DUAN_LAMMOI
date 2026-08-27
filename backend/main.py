@@ -1,4 +1,5 @@
 """Entry point FastAPI: tạo app, lifespan khởi tạo manager/hub, mount routers."""
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 import sys
@@ -31,6 +32,20 @@ if str(ROOT) not in sys.path:
 log = setup_logging()
 
 
+async def _browser_watchdog(manager: "BrowserManager"):
+    """Định kỳ: prune session chết + auto-save localStorage (giữ login mới nhất)."""
+    i = 0
+    while True:
+        await asyncio.sleep(5)
+        i += 1
+        try:
+            manager.prune_dead_sessions()
+            if i % 2 == 0:  # mỗi ~10s
+                await manager.save_open_sessions_storage()
+        except Exception:
+            pass
+
+
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -45,9 +60,28 @@ def create_app() -> FastAPI:
         game_sim = GameSimManager(browser_manager=manager)
         game_sim.set_event_sink(lambda ev: emitter.publish(ev))
         app.state.game_sim = game_sim
+
+        # Dọn process camoufox mồ côi để lại từ lần chạy trước (restart/kill cứng).
+        # Phải chạy TRƯỚC khi mở trình duyệt mới để không tự kill chính mình.
+        from services.browser_service import reap_orphan_camoufox
+
+        try:
+            reap_orphan_camoufox()
+        except Exception:
+            log.exception("reap orphan camoufox failed")
+
+        watchdog = asyncio.create_task(_browser_watchdog(manager))
         log.info("Backend ready (manager + hub + game_sim initialized)")
-        yield
-        log.info("Backend shutdown")
+        try:
+            yield
+        finally:
+            watchdog.cancel()
+            # đóng graceful: flush cookie xuống profile_dir để login được giữ lại
+            try:
+                await manager.close_all()
+                log.info("All browser sessions closed gracefully")
+            except Exception:
+                log.exception("graceful shutdown failed")
 
     app = FastAPI(title="Tab Manager", lifespan=lifespan)
     app.add_middleware(

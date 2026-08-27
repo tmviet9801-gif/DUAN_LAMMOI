@@ -126,10 +126,10 @@ class TestAccounts:
         assert r.status_code == 200
         assert "created_at" in r.json()
 
-    def test_default_url_is_checkip(self, client, tmp_config):
+    def test_default_url_is_game(self, client, tmp_config):
         r = client.post("/api/accounts", json={"name": "A"})
         assert r.status_code == 200
-        assert r.json()["url"] == "https://checkip.com/"
+        assert r.json()["url"] == "https://v.hitclub.latino/?a=hitclub"
 
 
 class TestBulk:

@@ -1,5 +1,6 @@
 """Controller: mở/đóng/xếp lưới cửa sổ trình duyệt."""
 import logging
+import time
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -19,6 +20,12 @@ class OpenIn(BaseModel):
 
 class CloseIn(BaseModel):
     session_ids: Optional[list[str]] = None
+
+
+class EvalIn(BaseModel):
+    session_id: Optional[str] = None
+    account_id: Optional[str] = None
+    js: str
 
 
 def _available_slots(manager) -> tuple[int, int]:
@@ -77,3 +84,47 @@ async def apply_layout(request: Request):
 @router.get("/api/sessions")
 async def get_sessions(request: Request):
     return request.app.state.manager.states()
+
+
+@router.post("/api/browser/screenshot")
+async def browser_screenshot(body: dict, request: Request):
+    """Chụp màn hình page của 1 session để xem trạng thái (debug/drive browser)."""
+    import base64
+    from models.config_model import DATA_DIR
+
+    account_id = (body.get("account_id") or "").strip()
+    manager = request.app.state.manager
+    session = None
+    for s in manager.sessions.values():
+        if s.account and s.account.get("id") == account_id and s.page:
+            session = s
+            break
+    if not session or not session.page:
+        raise HTTPException(status_code=400, detail="Không tìm thấy session/page")
+    try:
+        png = await session.page.screenshot(type="png")
+        fp = DATA_DIR / "game_sim_debug" / f"shot_{account_id[:8]}_{int(time.time())}.png"
+        fp.write_bytes(png)
+        return {"ok": True, "file": str(fp), "size": len(png)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/browser/eval")
+async def browser_eval(body: EvalIn, request: Request):
+    """Evaluate JS trên page của 1 session (debug / test / lưu session thủ công)."""
+    manager = request.app.state.manager
+    session = None
+    for s in manager.sessions.values():
+        if body.session_id and s.session_id == body.session_id:
+            session = s
+            break
+        if body.account_id and s.account and s.account.get("id") == body.account_id:
+            session = s
+            break
+    if not session or not session.page:
+        raise HTTPException(status_code=400, detail="Không tìm thấy session/page")
+    try:
+        return {"result": await session.page.evaluate(body.js)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

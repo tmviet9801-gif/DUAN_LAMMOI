@@ -42,7 +42,7 @@
       auto_start: $("afAutoStart").checked,
       game: {
         adapter: "hitclub",
-        url: "https://play.hitclub.voting/?a=hitclub",
+        url: "https://v.hitclub.latino/?a=hitclub",
         clicks: (cfg.game && cfg.game.clicks) || {},
         ws_patterns: (cfg.game && cfg.game.ws_patterns) || {},
       },

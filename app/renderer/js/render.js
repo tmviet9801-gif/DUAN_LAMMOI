@@ -49,6 +49,7 @@
     $("cfgWinH").value = w.height || 0;
     $("cfgCount").value = state.config.default_count;
     $("cfgAutoLayout").checked = !!state.config.auto_layout;
+    $("cfgMuteAll").checked = !!state.config.mute_all_sites;
     if (state.antiDetect) {
       const osLabels = { random: "Ngẫu nhiên", windows: "Windows", macos: "macOS", linux: "Linux" };
       fillSelect($("cfgOs"), state.antiDetect.os, ad.os, (o) => osLabels[o] || o);
@@ -122,6 +123,7 @@
         <td class="col-proxy" title="${App.esc(proxy || "IP máy")}">${proxy ? App.esc(proxy) : '<span class="ip-local">IP máy</span>'}</td>
         <td class="col-actions">
           <button class="btn-open-profile primary" title="Mở profile này">Mở</button>
+          <button class="btn-save-session" title="Lưu session đăng nhập hiện tại (localStorage/sessionStorage)">Lưu login</button>
           <button class="btn-edit-profile" title="Sửa profile">Sửa</button>
         </td>
         <td class="col-del">
@@ -131,6 +133,10 @@
       tr.querySelector(".btn-open-profile").onclick = (e) => {
         e.stopPropagation();
         App.openAccountRow(a);
+      };
+      tr.querySelector(".btn-save-session").onclick = (e) => {
+        e.stopPropagation();
+        App.saveAccountSession(a);
       };
       tr.querySelector(".btn-edit-profile").onclick = (e) => {
         e.stopPropagation();

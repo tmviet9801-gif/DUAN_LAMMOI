@@ -13,10 +13,13 @@ log = logging.getLogger("platform")
 # ---- preset mặc định (đổi thành "B52" khi build bản B52) ----
 PLATFORM_ID = "HITCLUB"
 PLATFORM_NAME = "AutoTool HITCLUB"
-PLATFORM_GAME_URL = "https://play.hitclub.voting/?a=hitclub"
+PLATFORM_GAME_URL = "https://v.hitclub.latino/?a=hitclub"
 PLATFORM_ADAPTER = "hitclub"
 PLATFORM_MAX_TABS = 10
 PLATFORM_OWNER_EMAIL = ""  # hiển thị trong phần trợ giúp license
+
+# URL mặc định cho profile khi tạo mới (trỏ vào game)
+DEFAULT_PROFILE_URL = PLATFORM_GAME_URL
 
 # Token chủ sở hữu — dùng để mở khóa panel sinh license trong app.
 # CHỈ owner biết; đổi trước khi build. Nếu để trống, panel sinh license tắt.

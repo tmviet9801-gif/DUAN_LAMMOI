@@ -14,7 +14,7 @@ from core.utils import slugify
 from platform_config import PLATFORM_ID, PLATFORM_NAME
 
 APP_NAME = PLATFORM_NAME
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 
 def get_data_dir() -> Path:
@@ -49,6 +49,7 @@ DEFAULT_CONFIG = {
     },
     "default_count": 10,
     "auto_layout": True,
+    "mute_all_sites": False,
     "profiles_dir": "",
 }
 

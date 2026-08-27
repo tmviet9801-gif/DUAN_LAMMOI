@@ -2,7 +2,11 @@
 
 Ứng dụng desktop (Electron + FastAPI + Camoufox) quản lý nhiều profile/tài khoản game, mỗi profile có **fingerprint chống phát hiện riêng**, **proxy riêng**, **session đăng nhập riêng**. Cốt lõi là **Auto-flow tìm nhau & xả bài** cho các cổng game bài (HITCLUB, B52…) với hệ thống **license cho thuê** và **giới hạn tab**.
 
-> Phiên bản hiện tại: **v1.1.0** — bản HITCLUB (`platform_config.py`).
+> Phiên bản hiện tại: **v1.2.0** — bản HITCLUB (`platform_config.py`).
+
+---
+
+> **Trạng thái gần nhất (v1.2.0)**: hoàn thiện phần **login/session token** và **join bàn theo room id (join-by-id)** cho HITCLUB. Chi tiết phần làm mới và danh sách lỗi còn lại xem [Mục 6.6](#66-những-gì-mới-v120-và-lỗi-đã-sửa) và [Mục 7 — Lỗi đang cần sửa](#7--lỗi-đang-cần-sửa).
 
 ---
 
@@ -117,6 +121,23 @@ Hệ thống server quản lý thuê license tập trung, **không cần sửa a
 - **Quản lý gói thuê**: tên gói, số tab tối đa (mặc định 10), giá/tháng, số ngày
 - Chi tiết: `license-server/README.md`
 
+### 2.10. Session token + Join bàn theo room id (v1.2.0)
+
+Bổ sung cho phần auto-flow HITCLUB, nhằm khắc phục **"profile vẫn không login được"** và **"2 profile chưa vào chung 1 bàn"**:
+
+- **`game_sim/token_store.py` (mới)**: lưu token login mới nhất theo từng profile vào `DATA_DIR/game_sim_token.json`. Game HITCLUB trả **token MỚI mỗi lần login** (`POST /user/login.aspx` → `token: "1-<32hex>"`), token cũ bị expire → profile mở lại không login được. Token store chỉ ghi khi token **thay đổi** (bắt kịp login mới), là nguồn token tươi nhất.
+- **Tự lưu token khi login mới**: gắn vào `HitClubAdapter.join()` (sau khi login đọc `localStorage['token']`), `browser_service.save_open_sessions_storage()` (watchdog định kỳ), và `POST /api/autoplay/session-token` (capture thủ công).
+- **Mở lại profile dùng token mới nhất**: `browser_service._open_one` inject `web_storage` nhưng **ghi đè** `token`/`user_token` bằng token tươi từ token store (thay vì token cũ hết hạn trong `web_storage`).
+- **Khi đóng, xoá token live**: `close_session` đọc+ghi token mới nhất vào store rồi **xóa `token`/`user_token` khỏi localStorage** để app/editor khác không mang theo session cũ hết hạn.
+- **Join bàn theo room id (chính xác)**:
+  - `GET /api/autoplay/join-capture` — trích xuất `rooms[]`, `last_room_id`, `join_template` (msg `cmd=308` SEND đã bắt) từ `ws_capture.jsonl`.
+  - `POST /api/autoplay/join-by-id` — ép 1 profile join đúng bàn `rid` (ưu tiên gửi qua **game socket đã bắt**; fallback **WS phụ** `join_by_id_side` — mở socket riêng từ page, không reload, không logout).
+  - `GET /api/autoplay/list-rooms` — liệt kê bàn `cmd=300` qua kênh phụ, tìm bàn trống `uC=0`.
+  - `POST /api/autoplay/reconnect-ws` — toggle offline→online để game **mở lại WS** (bắt socket thật, không reload/logout), dùng cho gửi lệnh join qua socket authenticated của chính account.
+- **Không còn reload phá session**: `_page()` và `debug-ws-hook` đã bỏ `page.reload()` (game này **không giữ login qua reload** — login gắn với session WebSocket sống). `debug-ws-hook` chỉ reload khi truyền `reload:true`.
+- **Sửa bug parse WS SEND frame**: frame SEND là `[6,"Simms","channelPlugin",{payload}]` → payload ở **index 3** (không phải index 1 như RECV). Helper `_find_cmd_payload(arr)` quét đúng index — trước đây `_capture_room` không bao giờ bắt được template join thật (luôn dùng template đoán cứng).
+- **Sửa `_verify_same_room`**: trước đây đọc `cmd=22007.dMs` — đây là **chat**, không phải người chơi. Nay check `cmd=202.ps[].dn` và `cmd=100.dn` (danh sách người chơi thật trong bàn).
+
 ---
 
 ## 3. Logic chính
@@ -206,19 +227,27 @@ python backend\tools\make_license.py --machine-id <guid> --days 30 --max-tabs 10
 | GET | `/api/gamesim/ws-capture` | đọc WS messages đã bắt |
 | POST | `/api/autoplay/start`·`stop` | auto-flow tìm nhau & xả bài |
 | GET | `/api/autoplay/status` | trạng thái auto-flow |
+| POST | `/api/autoplay/debug-ws-hook` | bật WS hook (mặc định KHÔNG reload, thêm `reload:true` để capture từ đầu) |
+| POST | `/api/autoplay/join-by-id` | ép 1 profile join đúng bàn `rid` (không reload/logout) |
+| GET | `/api/autoplay/list-rooms` | liệt kê bàn (`cmd=300`) qua kênh phụ |
+| GET | `/api/autoplay/join-capture` | trích xuất `rooms`/`last_room_id`/`join_template` từ capture |
+| POST | `/api/autoplay/reconnect-ws` | toggle offline→online để bắt lại game socket (không reload) |
+| POST | `/api/autoplay/session-token` | đọc token login + lưu vào token store |
+| POST | `/api/autoplay/send-raw`·`join-rid`·`reload`·`capture` | công cụ debug WS |
 
 ---
 
 ## 6. Các công việc cần phát triển tiếp
 
-### 6.1. 🔴 Bắt buộc — tinh chỉnh HITCLUB (cần bạn capture WS)
-1. **Capture protocol**: đăng nhập + join bàn 1 ván thủ công, gửi `%APPDATA%\AutoTool_HITCLUB\data\game_sim_debug\ws_capture.jsonl` để tôi phân tích:
-   - Regex **room_id** (tách id phòng từ message)
-   - **join message template** (để các acc join theo room id)
-   - **discard_cmd** (message xả bài)
-   - **guest_ready** pattern (khách vào sẵn sàng) + **start_cmd**
-2. **Xác định tọa độ click** (nút tìm bàn, vào bàn, xả bài, rời bàn) từ screenshot → điền `game.clicks`
-3. Tinh chỉnh `ws_patterns` + logic `_parse_role` trong `hitclub.py` để xác định winner/first-player chính xác
+### 6.1. 🔴 Bắt buộc — hoàn thiện join bàn HITCLUB (đang làm)
+Đã capture được protocol thật (WS channel `Simms`):
+- **Room list**: SEND `cmd=300` `[6,"Simms","channelPlugin",{"cmd":300,"aid":"1","gid":1}]` → RECV `rs:[{rid,rn,b,uC,...}]` (`uC`=số người).
+- **Join bàn**: SEND `cmd=308` `{...,"cmd":308,"rid":<rid>}`.
+- **Xác nhận**: RECV `cmd=305/308` → `ri.rid` + `fu.u`; **danh sách người chơi thật nằm ở `cmd=202.ps[].dn`** và `cmd=100.dn` (đã sửa `_verify_same_room` dùng đúng chỗ này).
+
+Còn lại:
+- **WS auth cho automation**: token trong `localStorage` (`1-<32hex>`) **bị server WS từ chối** khi dùng kênh phụ ("Xác nhận tài khoản thất bại"). Cần dùng **game socket sống** của account (đã làm `reconnect-ws` để bắt) thay vì mở socket riêng.
+- Xác định tọa độ click (nút tìm bàn, vào bàn, xả bài, rời bàn) từ screenshot → điền `game.clicks`.
 
 ### 6.2. 🟠 Cải tiến Auto-flow
 - Tạo room trống nếu game cho phép (thử trước khi nhảy dò)
@@ -247,7 +276,35 @@ python backend\tools\make_license.py --machine-id <guid> --days 30 --max-tabs 10
 
 ---
 
-## 7. Bảo mật dữ liệu
+## 7. Lỗi đang cần sửa (trạng thái mới nhất)
+
+Danh sách lỗi/vướng mắc phát hiện trong quá trình làm **v1.2.0** (HITCLUB):
+
+### 7.1. 🔴 WS auth cho automation (chặn join tự động)
+- Kênh WS phụ (`join_by_id_side`) mở socket tới đúng endpoint (`wss://m-f2.wsmt8g.cc/v3/`) nhưng server từ chối token `localStorage.token` → response **"Xác nhận tài khoản thất bại"**.
+- Nguyên nhân khả nghi: game dùng **socket-token ngắn hạn** cấp riêng khi mở WS (không phải `localStorage.token` của login), hoặc token bị expire nhanh.
+- Hướng xử lý hiện tại: dùng **game socket sống của account** — `POST /api/autoplay/reconnect-ws` toggle offline→online để game tự mở lại WS, bắt socket authenticated đó, rồi gửi `cmd=308` qua `send_raw`. Cần test end-to-end khi có session login thật.
+
+### 7.2. 🔴 Game không giữ login qua reload
+- HITCLUB không auto-login lại sau `page.reload()` dù token vẫn còn trong `localStorage` — login gắn với **session WebSocket sống**.
+- Đã sửa: `_page()` và `debug-ws-hook` **không còn reload** (chỉ reload khi `reload:true`). Không gọi reload trên profile đang login.
+
+### 7.3. 🟠 reCAPTCHA chặn login tự động
+- Trang game nhúng **Google reCAPTCHA enterprise** (frame `recaptcha/enterprise/anchor`) → login tự động bị chặn, phải login thủ công.
+- Chưa có giải pháp tự động; login thủ công 1 lần + token store lưu lại (mục 2.10) giúp lần sau mở lại không cần login lại.
+
+### 7.4. 🟠 Restart backend đóng cửa sổ login
+- Khi **restart server** (dev), `close_all` đóng hết session browser → user phải mở + login lại từng profile.
+- Tránh restart server trong lúc đang test; hoặc triển khai cơ chế "dev reload không đóng browser" (chưa làm).
+
+### 7.5. 🟡 Lỗi nhỏ đã sửa trong v1.2.0
+- Parse WS **SEND** frame sai index (payload ở `arr[3]`, đọc `arr[1]`) → `_capture_room` không bắt được template join thật. Đã sửa bằng `_find_cmd_payload()`.
+- `_verify_same_room` đọc `cmd=22007.dMs` (là **chat**) thay vì người chơi → sửa dùng `cmd=202.ps[].dn` + `cmd=100.dn`.
+- `_page()`/`debug-ws-hook` reload làm mất login → bỏ reload.
+
+---
+
+## 8. Bảo mật dữ liệu
 
 `.gitignore` loại khỏi repo:
 - `backend/data/` — accounts (nick/pass thật), proxies, config, license, ws_capture, game_sim.db, game_sim_debug
