@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "AutoTool WS Bridge",
+  "version": "1.0.0",
+  "description": "Bridge to capture and send game WebSocket frames (embedded by Auto Tool).",
+  "content_scripts": [
+    {
+      "matches": ["*://*.hytsocesk.com/*", "*://*.wsmt8g.cc/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}

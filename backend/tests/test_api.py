@@ -49,10 +49,8 @@ class TestAntidetect:
         r = client.get("/api/antidetect")
         assert r.status_code == 200
         data = r.json()
-        assert "os" in data
         assert "locale" in data
-        assert "random" in data["os"]
-        assert "windows" in data["os"]
+        assert "random" in data["locale"]
 
 
 class TestAccounts:
@@ -130,6 +128,12 @@ class TestAccounts:
         r = client.post("/api/accounts", json={"name": "A"})
         assert r.status_code == 200
         assert r.json()["url"] == "https://v.hitclub.latino/?a=hitclub"
+
+    def test_default_url_config_used(self, client, tmp_config):
+        client.post("/api/config", json={"default_url": "https://example.com/game"})
+        r = client.post("/api/accounts", json={"name": "A"})
+        assert r.status_code == 200
+        assert r.json()["url"] == "https://example.com/game"
 
 
 class TestBulk:

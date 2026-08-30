@@ -23,10 +23,10 @@ Write-Host "[2/4] Cai dependencies backend..." -ForegroundColor Yellow
 & $VenvPython -m pip install --disable-pip-version-check -q -r (Join-Path $Backend "requirements.txt")
 if ($LASTEXITCODE -ne 0) { throw "pip install that bai" }
 
-Write-Host "[3/4] Kiem tra browser Camoufox..." -ForegroundColor Yellow
+Write-Host "[3/4] Kiem tra browser Chromium..." -ForegroundColor Yellow
 $env:PYTHONIOENCODING = "utf-8"
-& $VenvPython -m camoufox fetch
-if ($LASTEXITCODE -ne 0) { throw "camoufox fetch that bai" }
+& $VenvPython -m patchright install chromium
+if ($LASTEXITCODE -ne 0) { throw "patchright install chromium that bai" }
 
 if (-not (Test-Path (Join-Path $App "node_modules"))) {
     Write-Host "[3.5/4] Cai dependencies Electron..." -ForegroundColor Yellow

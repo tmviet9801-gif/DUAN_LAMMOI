@@ -65,7 +65,9 @@ async def autoplay_debug_ws_hook(body: dict, request: Request):
     sniffer = WsSniffer(DATA_DIR / "game_sim_debug")
     await sniffer.inject_playwright(page)
     await sniffer.inject_http(page)
-    await sniffer.inject_init(page)
+    # inject() patch WebSocket.prototype NGAY LẬP TỨC (bắt socket đang tồn tại)
+    # — add_init_script không chạy trong patchright (trả Disposable).
+    await sniffer.inject(page)
     if do_reload:
         # Xóa capture cũ để chỉ giữ demo mới
         for fn in ("ws_capture.jsonl", "room_debug.jsonl", "http_capture.jsonl"):
@@ -366,9 +368,14 @@ def _active_adapter(request):
 
 @router.post("/api/autoplay/send-raw")
 async def autoplay_send_raw(body: dict, request: Request):
-    """Gửi 1 message WS thô vào profile đã mở (dùng để join bàn theo rid)."""
+    """Gửi 1 message WS thô vào profile đã mở (dùng để join bàn theo rid).
+
+    Body: {profile_name, text, channel?} — channel tùy chọn: "Simms"/"MiniGame"/"MiniGame3".
+    Nếu không truyền channel, tự chọn socket game (Simms).
+    """
     name = (body.get("profile_name") or "").strip()
     text = body.get("text")
+    channel = (body.get("channel") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Thiếu profile_name")
     if not text:
@@ -377,8 +384,38 @@ async def autoplay_send_raw(body: dict, request: Request):
     page = await adapter._page(name)
     if not page:
         raise HTTPException(status_code=400, detail=f"Không mở được profile {name}")
-    ok = await adapter.sniffer.send_raw(page, str(text))
+    if channel:
+        ok = await adapter.sniffer.send_raw_channel(page, channel, str(text))
+    else:
+        ok = await adapter.sniffer.send_raw(page, str(text))
     return {"ok": bool(ok)}
+
+
+@router.post("/api/autoplay/join-quick")
+async def autoplay_join_quick(body: dict, request: Request):
+    """Join nhanh 1 bàn (quick match) cho profile — theo protocol THẬT.
+
+    Chuỗi: rời lobby (MiniGame cmd=10002) -> join (Simms [3,"Simms",2,""])
+           -> auto-ready (Simms cmd=363 aRd:true).
+    """
+    name = (body.get("profile_name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Thiếu profile_name")
+    adapter = _active_adapter(request)
+    page = await adapter._page(name)
+    if not page:
+        raise HTTPException(status_code=400, detail=f"Không mở được profile {name}")
+    sniffer = adapter.sniffer
+    steps = []
+    # 1) rời lobby
+    steps.append(await sniffer.send_raw_channel(page, "MiniGame", '[6,"MiniGame","lobbyPlugin",{"cmd":10002}]'))
+    await asyncio.sleep(0.6)
+    # 2) join nhanh
+    steps.append(await sniffer.send_raw(page, '[3,"Simms",2,""]'))
+    await asyncio.sleep(1.2)
+    # 3) auto-ready
+    steps.append(await sniffer.send_raw(page, '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]'))
+    return {"ok": all(steps), "steps": steps}
 
 
 @router.post("/api/autoplay/join-rid")
@@ -450,6 +487,7 @@ async def autoplay_join_by_id(body: dict, request: Request):
 async def autoplay_sniffer_status(request: Request):
     """Đọc trực tiếp trên từng page đang mở: hook đã inject chưa, capture có gì."""
     bm = request.app.state.manager
+    from game_sim.ws_sniffer import _PAGE_WS
     result = []
     for sid, s in bm.sessions.items():
         page = s.page
@@ -457,6 +495,7 @@ async def autoplay_sniffer_status(request: Request):
         hooked = False
         count = 0
         url = ""
+        page_ws = None
         if page:
             try:
                 hooked = bool(await page.evaluate("() => !!(window.__ws_hooked)"))
@@ -470,7 +509,13 @@ async def autoplay_sniffer_status(request: Request):
                 url = page.url
             except Exception:
                 pass
-        result.append({"name": name, "hooked": hooked, "capture_count": count, "url": url})
+            ws = _PAGE_WS.get(id(page))
+            if ws is not None:
+                try:
+                    page_ws = {"url": ws.url, "state": ws.state if hasattr(ws, "state") else "?"}
+                except Exception:
+                    page_ws = {"url": "?", "error": True}
+        result.append({"name": name, "hooked": hooked, "capture_count": count, "url": url, "page_ws": page_ws})
         if page:
             try:
                 frames_diag = []
@@ -478,12 +523,14 @@ async def autoplay_sniffer_status(request: Request):
                     try:
                         diag = await f.evaluate(
                             """() => {
-                                const m = window.__ws_map || {};
+                                const inst = window.__ws_instances || [];
+                                const cap = window.__ws_capture || [];
                                 return {
                                     hooked: !!window.__ws_hooked,
-                                    mapCount: Object.keys(m).length,
-                                    mapUrls: Object.keys(m).slice(0, 5),
-                                    lastReady: window.__ws_last ? window.__ws_last.readyState : null
+                                    instCount: inst.length,
+                                    instReady: inst.filter(s => s && s.readyState === 1).length,
+                                    capCount: cap.length,
+                                    instUrls: inst.map(s => (s && s.url || "")).slice(0, 5)
                                 };
                             }"""
                         )
@@ -760,51 +807,135 @@ async def autoplay_reconnect_ws(body: dict, request: Request):
         raise HTTPException(status_code=400, detail=f"Không tìm thấy profile {name}")
     page = session.page
     ctx = page.context
-    # bảo đảm hook Playwright + wrapper WebSocket live đã active (bắt socket MỚI)
+    # bảo đảm hook Playwright + unified hook (constructor+prototype) active ở MỌI frame
     try:
         from game_sim.ws_sniffer import WsSniffer
         from models.config_model import DATA_DIR as _DATA
 
         sniffer = WsSniffer(_DATA / "game_sim_debug")
         await sniffer.inject_playwright(page)
-        await sniffer.inject_init(page)
+        await sniffer.inject(page)
+        await sniffer.inject_workers(page)
     except Exception as e:
         diag_ = {"inject_err": str(e)[:100]}
-    try:
-        await page.evaluate(
-            """() => {
-                if (window.__ws_live_hooked) return true;
-                window.__ws_live_hooked = true;
-                window.__ws_map = window.__ws_map || {};
-                const orig = window.__ws_orig || WebSocket;
-                window.__ws_orig = orig;
-                window.WebSocket = function(url, protocols) {
-                    const ws = protocols ? new orig(url, protocols) : new orig(url);
-                    try { window.__ws_map[url] = ws; window.__ws_last = ws; } catch(e) {}
-                    return ws;
-                };
-                window.WebSocket.prototype = orig.prototype;
-                return true;
-            }"""
-        )
-    except Exception:
-        pass
     diag = {}
     try:
-        await ctx.setOffline(True)
+        await ctx.set_offline(True)
         diag["offline_set"] = True
     except Exception as e:
         diag["offline_err"] = str(e)[:100]
     await asyncio.sleep(2)
     try:
-        await ctx.setOffline(False)
+        await ctx.set_offline(False)
         diag["online_restored"] = True
     except Exception as e:
         diag["online_err"] = str(e)[:100]
     await asyncio.sleep(10)
     try:
         diag["captured_urls"] = await page.evaluate("() => Object.keys(window.__ws_map || {})")
+        diag["instances"] = await page.evaluate("() => (window.__ws_instances || []).map(s => (s && s.url) || '').slice(0, 8)")
     except Exception as e:
         diag["captured_err"] = str(e)[:100]
     return {"profile": name, "diag": diag}
+
+
+# ---- Luồng WebSocket: Tìm bàn trống 100/500 & Ghép Account 2 ----
+@router.post("/api/autoplay/find-and-match-ws")
+async def autoplay_find_and_match_ws(body: dict, request: Request):
+    """Tìm bàn trống (chỉ mức cược 100 hoặc 500) qua WebSocket và tự động
+    ghép Account 2 vào cùng bàn mà không cần click UI / popup.
+
+    Body:
+      - profile_a: str (mặc định "Account01")
+      - profile_b: str (tuỳ chọn "Account02")
+      - bet_levels: list[int] (mặc định [100, 500])
+      - gid: int (mặc định 1 = Tiến Lên Đếm Lá)
+    """
+    import random as _rand
+    import json as _json
+
+    profile_a = (body.get("profile_a") or "Account01").strip()
+    profile_b = (body.get("profile_b") or "").strip()
+    bet_levels = body.get("bet_levels") or [100, 500]
+    gid = int(body.get("gid", 1))
+
+    adapter = _build_adapter(request, {"game": {"adapter": "hitclub", "clicks": {}}})
+    page_a = await adapter._page(profile_a)
+    if not page_a:
+        raise HTTPException(status_code=400, detail=f"Không mở được profile {profile_a}")
+
+    # 1. Chọn mức cược ngẫu nhiên trong [100, 500]
+    selected_bet = _rand.choice(bet_levels)
+    log.info("find-and-match-ws: Acc1=%s đang tìm bàn trống mức bet=%s", profile_a, selected_bet)
+
+    # 2. Gửi gói WS Quick-Join / Random Table (cmd=308 iJ=true)
+    join_payload = {
+        "cmd": 308, "aid": 1, "gid": gid, "b": selected_bet, "Mu": 2,
+        "iJ": True, "inc": False, "pwd": "", "rid": 0,
+    }
+    join_frame = _json.dumps([6, "Simms", "channelPlugin", join_payload])
+
+    # Gửi qua kênh socket game Simms
+    sent_a = await adapter.sniffer.send_raw_channel(page_a, "Simms", join_frame)
+    if not sent_a:
+        sent_a = await adapter.sniffer.send_raw(page_a, join_frame)
+
+    await asyncio.sleep(2.5)
+
+    # 3. Đọc phản hồi room ID từ sniffer capture
+    try:
+        await adapter.sniffer.drain(page_a)
+    except Exception:
+        pass
+
+    room_id = None
+    recent_msgs = adapter.sniffer.recent(limit=300)
+    from game_sim.adapters.hitclub import _find_cmd_payload
+    for it in reversed(recent_msgs):
+        try:
+            arr = _json.loads(it.get("text", ""))
+            if not isinstance(arr, list):
+                continue
+            _, p = _find_cmd_payload(arr)
+            if isinstance(p, dict) and p.get("cmd") in (305, 308):
+                ri = p.get("ri") or {}
+                r = ri.get("rid")
+                if isinstance(r, (int, float)) and r > 0:
+                    room_id = int(r)
+                    break
+        except Exception:
+            continue
+
+    shot_a = await adapter._screenshot(page_a, f"ws_joined_{profile_a}")
+
+    result = {
+        "ok": bool(room_id or sent_a),
+        "profile_a": profile_a,
+        "bet": selected_bet,
+        "room_id": room_id,
+        "sent_a": sent_a,
+        "screenshot_a": shot_a,
+    }
+
+    # 4. Nếu có Account B và bắt được room_id -> cho Account B join ngay
+    if profile_b and room_id:
+        page_b = await adapter._page(profile_b)
+        if page_b:
+            join_b_payload = {
+                "cmd": 308, "aid": 1, "gid": gid, "b": selected_bet, "Mu": 2,
+                "iJ": True, "inc": False, "pwd": "", "rid": int(room_id),
+            }
+            join_b_frame = _json.dumps([6, "Simms", "channelPlugin", join_b_payload])
+            sent_b = await adapter.sniffer.send_raw_channel(page_b, "Simms", join_b_frame)
+            if not sent_b:
+                sent_b = await adapter.sniffer.send_raw(page_b, join_b_frame)
+            await asyncio.sleep(2.0)
+            shot_b = await adapter._screenshot(page_b, f"ws_joined_{profile_b}")
+            result["profile_b"] = profile_b
+            result["sent_b"] = sent_b
+            result["screenshot_b"] = shot_b
+            log.info("find-and-match-ws: Acc2=%s joined room=%s ok=%s", profile_b, room_id, sent_b)
+
+    return result
+
 

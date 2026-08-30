@@ -2,18 +2,19 @@
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = (
-    collect_submodules("camoufox")
+    collect_submodules("patchright")
     + collect_submodules("uvicorn")
     + collect_submodules("fastapi")
+    + collect_submodules("pycaw")
+    + collect_submodules("comtypes")
 )
 
 datas = (
-    collect_data_files("camoufox")
+    collect_data_files("patchright")
     + collect_data_files("uvicorn")
-    + collect_data_files("browserforge")
-    + collect_data_files("apify_fingerprint_datapoints")
-    + collect_data_files("language_tags")
-    + collect_data_files("playwright")
+    + collect_data_files("fastapi")
+    + collect_data_files("comtypes")
+    + [("extension", "extension")]  # Chrome extension WS bridge (nhúng vào profile)
 )
 
 a = Analysis(

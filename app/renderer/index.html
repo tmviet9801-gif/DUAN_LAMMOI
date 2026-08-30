@@ -102,7 +102,7 @@
         <div class="panel wide">
           <h2>Quản lý profile (<span id="profileCount">0</span>)</h2>
           <div class="table-toolbar">
-            <input id="profSearch" placeholder="Tìm kiếm theo tên / UA / URL…" />
+            <input id="profSearch" placeholder="Tìm kiếm theo tên / URL…" />
             <select id="profSort" title="Sắp xếp">
               <option value="name_asc">Tên A-Z</option>
               <option value="name_desc">Tên Z-A</option>
@@ -116,7 +116,6 @@
                 <tr>
                   <th class="col-stt">STT</th>
                   <th class="col-name">Tên</th>
-                  <th class="col-ua">User-Agent</th>
                   <th class="col-proxy">Proxy</th>
                   <th class="col-actions">Thao tác</th>
                   <th class="col-del">Xóa</th>
@@ -184,13 +183,18 @@
         <div class="panel">
           <h2>Antidetect / Fingerprint</h2>
           <div class="field">
-            <label for="cfgOs">Hệ điều hành giả lập</label>
-            <select id="cfgOs"></select>
-          </div>
-          <div class="field">
             <label for="cfgLocale">Locale (ngôn ngữ trình duyệt)</label>
             <select id="cfgLocale"></select>
           </div>
+        </div>
+
+        <div class="panel">
+          <h2>Đường dẫn mặc định</h2>
+          <div class="field">
+            <label for="cfgDefaultUrl">URL mặc định cho profile mới</label>
+            <input id="cfgDefaultUrl" placeholder="https://v.hitclub.latino/?a=hitclub" />
+          </div>
+          <p class="hint">Dùng khi tạo/sửa profile mà không nhập URL. Đổi khi domain game thay đổi.</p>
         </div>
 
         <div class="panel">
@@ -251,11 +255,6 @@
         </div>
 
         <div class="panel wide">
-          <h2>Event log</h2>
-          <div id="gsEvents" class="gs-events"></div>
-        </div>
-
-        <div class="panel wide">
           <h2>Auto xả bài — tìm nhau</h2>
           <div class="quick-actions">
             <label class="check"><input id="afAutoOut" type="checkbox" checked /> Tự rời sau khi xả</label>
@@ -268,7 +267,6 @@
             <button id="afStop" class="danger">■ Dừng</button>
           </div>
           <p class="hint" id="afStatus"></p>
-          <div id="afLogs" class="gs-events-list"></div>
         </div>
       </div>
     </section>
@@ -334,10 +332,6 @@
         <input id="apUrl" placeholder="https://v.hitclub.latino/?a=hitclub (mặc định)" />
       </div>
       <div class="field">
-        <label for="apUa">User-Agent (tùy chọn)</label>
-        <input id="apUa" placeholder="để trống = ngẫu nhiên" />
-      </div>
-      <div class="field">
         <label for="apProxy">Proxy HTTP (tùy chọn)</label>
         <div class="field-row">
           <textarea id="apProxy" rows="2" placeholder="IP:Port:User:Pass"></textarea>
@@ -345,9 +339,6 @@
         </div>
         <p class="hint" id="apProxyResult">Định dạng IP:Port:User:Pass. Để trống = dùng IP máy.</p>
       </div>
-      <label class="check">
-        <input id="apSaveSession" type="checkbox" checked /> Lưu session riêng (đăng nhập 1 lần, lần sau mở lại vẫn còn login)
-      </label>
       <p class="hint" id="apPreview">Sẽ thêm: A</p>
       <div class="actions">
         <button id="apCancel" class="ghost">Hủy</button>
@@ -366,10 +357,6 @@
       <div class="field">
         <label for="epUrl">URL</label>
         <input id="epUrl" placeholder="https://v.hitclub.latino/?a=hitclub (mặc định)" />
-      </div>
-      <div class="field">
-        <label for="epUa">User-Agent</label>
-        <input id="epUa" placeholder="để trống = ngẫu nhiên khi mở" />
       </div>
       <div class="field">
         <label for="epProxy">Proxy HTTP</label>

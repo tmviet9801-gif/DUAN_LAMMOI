@@ -164,9 +164,15 @@ async def _enter_waiting_next(ctx, machine):
     timing = ctx.get("timing", {})
     pool = ctx.get("pool")
     main = ctx.get("main_account")
+    # Đã đủ số ván → kết thúc, không chờ support tiếp theo
+    rounds_limit = ctx.get("rounds", 0)
+    if rounds_limit and ctx.get("round_no", 0) >= rounds_limit:
+        await machine.trigger("finished")
+        return
     nxt = pool.next_support(ctx["group_name"], exclude=[main, ctx.get("support_account")]) if pool else None
     if not nxt:
-        await machine.trigger("wait_player_timeout")
+        # Hết support trong pool → kết thúc THÀNH CÔNG (không quay vòng retry/lỗi)
+        await machine.trigger("finished")
         return
     ctx["support_account"] = nxt
     try:
@@ -176,9 +182,10 @@ async def _enter_waiting_next(ctx, machine):
         )
     except asyncio.TimeoutError:
         ctx["metrics"].record_timeout()
-        await machine.trigger("wait_player_timeout")
+        # Không chờ vô hạn → kết thúc luôn thay vì wait_player_timeout → RETRY loop
+        await machine.trigger("finished")
         return
-    await machine.trigger("player_joined" if ok else "wait_player_timeout")
+    await machine.trigger("player_joined" if ok else "finished")
 
 
 async def _enter_resetting(ctx, machine):
@@ -251,7 +258,7 @@ def build_machine(group_name: str, timing: dict | None = None, emit_log=None):
         }, timeout=t["leave_timeout"]),
         _build_state("WAITING_NEXT_PLAYER", _enter_waiting_next, {
             "player_joined": Transition("PLAYING"),
-            "wait_player_timeout": Transition("RETRY"),
+            "finished": Transition("FINISHED"),
         }, timeout=t["next_player_wait"]),
         _build_state("RESETTING", _enter_resetting, {
             "reset_done": Transition("BOOTSTRAP_ROUND"),

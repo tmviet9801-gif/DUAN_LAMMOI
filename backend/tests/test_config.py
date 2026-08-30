@@ -84,3 +84,26 @@ def test_accounts_roundtrip(tmp_config):
 
 def test_load_accounts_empty(tmp_config):
     assert config.load_accounts() == []
+
+
+def test_new_account_record_always_save_session(tmp_config):
+    rec = config.new_account_record({"name": "X", "save_session": False})
+    assert rec["save_session"] is True
+    assert rec["profile_dir"]
+
+
+def test_ensure_accounts_save_session_migrates(tmp_config):
+    accs = [
+        {"id": "a1", "name": "A", "save_session": False, "profile_dir": ""},
+        {"id": "a2", "name": "B", "save_session": True, "profile_dir": ""},
+    ]
+    out, n = config.ensure_accounts_save_session(accs)
+    for a in out:
+        assert a["save_session"] is True
+        assert a["profile_dir"]
+    assert n == 3
+
+
+def test_default_config_has_default_url(tmp_config):
+    cfg = config.load_config()
+    assert cfg["default_url"] == "https://v.hitclub.latino/?a=hitclub"

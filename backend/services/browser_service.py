@@ -3,16 +3,17 @@ import ctypes
 import json
 import logging
 import os
+import shutil
+import subprocess
+import sys
+import tempfile
 import time
 from ctypes import wintypes
 from pathlib import Path
 
 import psutil
-from camoufox import AsyncCamoufox
-from camoufox.async_api import AsyncNewContext
 
 from models.config_model import DATA_DIR
-from models.fingerprint_model import random_chrome_ua, random_desktop_os
 from models.proxy_model import parse_proxy
 from models.window_layout_model import compute_grid, get_work_area
 from game_sim.token_store import TokenStore
@@ -20,7 +21,13 @@ from game_sim.token_store import TokenStore
 log = logging.getLogger("browser_service")
 
 user32 = ctypes.windll.user32
-SWP_NOZORDER = 0x0004
+SWP_NOZORDER    = 0x0004
+SWP_SHOWWINDOW  = 0x0040  # buộc hiện window (kể cả khi đang minimized)
+SW_RESTORE      = 9       # restore từ minimized
+SW_SHOW         = 5       # hiện window ở trạng thái hiện tại
+
+# Tên process của Chromium (engine của Patchright) trên Windows/Linux/macOS.
+CHROME_PROCESS_NAMES = ("chrome.exe", "chrome", "chromium.exe", "chromium")
 
 
 def _find_hwnd_by_pid(pid):
@@ -38,32 +45,32 @@ def _find_hwnd_by_pid(pid):
     return hwnds[0] if hwnds else None
 
 
-def _camoufox_pids():
+def _chrome_pids():
     pids = set()
     for proc in psutil.process_iter(["pid", "name"]):
         name = (proc.info["name"] or "").lower()
-        if "camoufox" in name or name in ("firefox.exe", "firefox"):
+        if name in CHROME_PROCESS_NAMES:
             pids.add(proc.info["pid"])
     return pids
 
 
 def _pid_alive(pid):
-    """Trả True nếu pid còn tồn tại và vẫn là process camoufox/firefox."""
+    """Trả True nếu pid còn tồn tại và vẫn là process chromium/chrome."""
     try:
         p = psutil.Process(pid)
         name = (p.name() or "").lower()
-        return "camoufox" in name or name in ("firefox.exe", "firefox")
+        return name in CHROME_PROCESS_NAMES
     except Exception:
         return False
 
 
 def _clear_profile_lock(profile_dir):
-    """Firefox/Camoufox để lại parent.lock khi bị kill đột ngột. Nếu không xóa,
-    lần mở lại profile sẽ từ chối mở (hiện dialog 'profile in use') hoặc mở cửa
-    sổ tạm/trống. Xóa lock cũ trước khi launch persistent_context."""
+    """Chromium để lại SingletonLock/SingletonCookie/SingletonSocket khi bị kill
+    đột ngột. Nếu không xóa, lần mở lại profile có thể bị từ chối ("profile in
+    use"). Xóa lock cũ trước khi launch persistent context."""
     if not profile_dir:
         return
-    for name in ("parent.lock", "lock", ".parentlock"):
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"):
         try:
             p = Path(profile_dir) / name
             if p.exists() or p.is_symlink():
@@ -72,13 +79,13 @@ def _clear_profile_lock(profile_dir):
             pass
 
 
-def reap_orphan_camoufox(my_pid=None):
-    """Kill các process camoufox KHÔNG phải hậu duệ (descendant) của backend hiện tại.
+def reap_orphan_chrome(my_pid=None):
+    """Kill các process Chromium mồ côi DO APP QUẢN LÝ (không phải hậu duệ backend).
 
-    Khi backend/Electron restart mà không đóng trình duyệt cũ (dev reload, kill
-    cứng), các camoufox cũ sống sót thành 'mồ côi' — vẫn hiện trên màn hình nhưng
-    app không track, và có thể là cửa sổ trống. Chỉ giữ lại process là con/cháu của
-    process backend đang chạy; mọi process camoufox khác đều bị thu hồi.
+    CHỈ thu hồi process Chrome mà executable nằm dưới thư mục browser của
+    Playwright/Patchright (ms-playwright/.../chrome-win64) hoặc profile do app tạo
+    (user-data-dir chứa đường dẫn profiles của app). KHÔNG đụng vào Chrome cá nhân
+    của user hay Chromium nhúng của ứng dụng khác.
     """
     me = my_pid or os.getpid()
 
@@ -95,10 +102,29 @@ def reap_orphan_camoufox(my_pid=None):
                 break
         return False
 
+    def is_app_chrome(p):
+        """Chrome thuộc app: exe nằm dưới ms-playwright/browser bundle, HOẶC
+        user-data-dir thuộc thư mục profiles của app."""
+        try:
+            exe = (p.exe() or "").lower().replace("/", "\\")
+            if "ms-playwright" in exe or "chrome-win" in exe or "chromium" in exe:
+                return True
+        except Exception:
+            pass
+        try:
+            for arg in p.cmdline():
+                if arg.startswith("--user-data-dir="):
+                    udd = arg.split("=", 1)[1].lower().replace("/", "\\")
+                    if "\\profiles\\" in udd or "autotool" in udd or "tabmanager" in udd:
+                        return True
+        except Exception:
+            pass
+        return False
+
     killed = 0
     for proc in psutil.process_iter(["pid", "name"]):
         name = (proc.info["name"] or "").lower()
-        if "camoufox" not in name and name not in ("firefox.exe", "firefox"):
+        if name not in CHROME_PROCESS_NAMES:
             continue
         try:
             p = psutil.Process(proc.info["pid"])
@@ -106,6 +132,8 @@ def reap_orphan_camoufox(my_pid=None):
             continue
         if is_descendant(p, me):
             continue  # trình duyệt do backend hiện tại quản lý -> giữ
+        if not is_app_chrome(p):
+            continue  # Chrome cá nhân / ứng dụng khác -> KHÔNG đụng
         try:
             for child in p.children(recursive=True):
                 try:
@@ -115,9 +143,9 @@ def reap_orphan_camoufox(my_pid=None):
             p.kill()
             killed += 1
         except Exception as e:
-            log.warning("reap camoufox %s failed: %s", proc.info["pid"], e)
+            log.warning("reap chrome %s failed: %s", proc.info["pid"], e)
     if killed:
-        log.info("reaped %d orphan camoufox process trees", killed)
+        log.info("reaped %d orphan app-chrome process trees", killed)
     return killed
 
 
@@ -135,6 +163,7 @@ class TabSession:
         self.ua = ua
         self.fp_os = fp_os
         self.url = account["url"] if account and account.get("url") else "about:blank"
+        self.temp_dir = None
 
     def to_dict(self):
         return {
@@ -149,79 +178,60 @@ class TabSession:
         }
 
 
-def _install_browser_with_progress(on_progress=None):
-    import os
-    import shutil
-    import tempfile
-    from pathlib import Path
+def install_chromium(on_progress=None):
+    """Tải Chromium cho Patchright (`patchright install chromium`)."""
+    def emit(p):
+        try:
+            if on_progress:
+                on_progress(int(p))
+        except Exception:
+            pass
 
-    import orjson
-    import requests
-
-    from camoufox.pkgman import CamoufoxFetcher, unzip
-    from camoufox.multiversion import (
-        BROWSERS_DIR,
-        COMPAT_FLAG,
-        get_repo_name,
-        set_active,
-        version_folder_name,
-    )
-
-    fetcher = CamoufoxFetcher()
-    fetcher.fetch_latest()
-    if fetcher._selected_version and fetcher._selected_version.sha256:
-        sha8 = fetcher._selected_version.sha8
-    else:
-        sha8 = getattr(fetcher, "installed_sha8", "")
-    repo_name = get_repo_name(fetcher.github_repo)
-    version_folder = version_folder_name(fetcher.version, fetcher.build, sha8)
-    install_path = BROWSERS_DIR / repo_name / version_folder
-
-    if install_path.exists() and (install_path / "version.json").exists():
-        set_active(f"browsers/{repo_name}/{version_folder}")
-        return
-
-    if install_path.exists():
-        shutil.rmtree(install_path)
-    install_path.mkdir(parents=True, exist_ok=True)
-
-    tmp_path = None
+    emit(3)
+    cmd = [sys.executable, "-m", "patchright", "install", "chromium"]
     try:
-        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-            tmp_path = tmp.name
+        subprocess.run(cmd, check=True, capture_output=True, timeout=900)
+    except Exception:
+        # fallback: console script patchright(.exe) nằm cạnh python.exe
+        script = Path(sys.executable).parent / ("patchright.exe" if os.name == "nt" else "patchright")
+        cmd2 = [str(script), "install", "chromium"] if script.exists() else ["patchright", "install", "chromium"]
+        subprocess.run(cmd2, check=True, capture_output=True, timeout=900)
+    emit(100)
 
-        resp = requests.get(fetcher.url, stream=True, timeout=60)
-        resp.raise_for_status()
-        total = int(resp.headers.get("content-length") or 0)
-        done = 0
-        with open(tmp_path, "wb") as fh:
-            for chunk in resp.iter_content(chunk_size=256 * 1024):
-                fh.write(chunk)
-                done += len(chunk)
-                if total and on_progress:
-                    on_progress(int(done * 100 / total))
 
-        unzip(tmp_path, str(install_path))
-        if fetcher._selected_version:
-            metadata = fetcher._selected_version.to_metadata()
-        else:
-            metadata = {
-                "version": fetcher.version,
-                "build": fetcher.build,
-                "prerelease": fetcher.is_prerelease,
-                "sha256": getattr(fetcher, "installed_sha256", None),
-                "created_at": getattr(fetcher, "installed_created_at", None),
-            }
-        with open(install_path / "version.json", "wb") as fh:
-            fh.write(orjson.dumps(metadata))
-        set_active(f"browsers/{repo_name}/{version_folder}")
-        COMPAT_FLAG.touch()
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+def _title_enforce_script(title: str) -> str:
+    """Script giữ tên profile trên tiêu đề cửa sổ/tab.
+
+    Game (Cocos/WASM) thường ghi đè `document.title` sau khi tải → tên profile
+    biến mất. Script này ép `document.title` = tên profile qua init script
+    (chạy trước mọi script page, tồn tại qua reload) + MutationObserver +
+    setInterval dự phòng.
+    """
+    t = json.dumps(title)
+    return f"""
+    (() => {{
+        const TITLE = {t};
+        const apply = () => {{
+            try {{
+                if (document.title !== TITLE) {{
+                    document.title = TITLE;
+                    const el = document.querySelector('title');
+                    if (el && el.textContent !== TITLE) el.textContent = TITLE;
+                }}
+            }} catch (e) {{}}
+        }};
+        apply();
+        document.addEventListener('DOMContentLoaded', apply);
+        window.addEventListener('load', apply);
+        try {{
+            new MutationObserver(apply).observe(document.documentElement, {{
+                subtree: true, childList: true, characterData: true,
+                attributes: true, attributeFilter: ['title'],
+            }});
+        }} catch (e) {{}}
+        setInterval(apply, 1000);
+    }})();
+    """
 
 
 class BrowserManager:
@@ -230,6 +240,9 @@ class BrowserManager:
         self.sessions = {}
         self.on_event = on_event or (lambda event: None)
         self.token_store = TokenStore(DATA_DIR / "game_sim_token.json")
+        self._pw = None
+        self._last_mute_state = None
+        self._mute_pid_snapshot = None
 
     def _emit(self, kind, **data):
         try:
@@ -240,8 +253,33 @@ class BrowserManager:
     def states(self):
         return [s.to_dict() for s in self.sessions.values()]
 
+    async def _ensure_playwright(self):
+        if self._pw is None:
+            from patchright.async_api import async_playwright
+
+            self._pw = await async_playwright().start()
+        return self._pw
+
+    async def _reset_playwright(self):
+        if self._pw is not None:
+            try:
+                await self._pw.stop()
+            except Exception:
+                pass
+            self._pw = None
+
+    async def _chromium_available(self):
+        try:
+            pw = await self._ensure_playwright()
+            path = pw.chromium.executable_path
+            if path and Path(path).exists():
+                return True
+        except Exception:
+            pass
+        return False
+
     def prune_dead_sessions(self):
-        """Gỡ các session mà trình duyệt đã tắt/crash (pid không còn là camoufox).
+        """Gỡ các session mà trình duyệt đã tắt/crash (pid không còn là chrome).
 
         Mặc định backend không biết khi user đóng cửa sổ thủ công hoặc trình duyệt
         crash → session cứ hiển thị 'ready' mãi. Hàm này đồng bộ lại trạng thái thực
@@ -319,23 +357,11 @@ class BrowserManager:
         return saved_any
 
     async def ensure_browser(self):
-        try:
-            from camoufox.pkgman import installed_verstr
-            installed_verstr()
+        if await self._chromium_available():
             return True
-        except Exception:
-            pass
-        try:
-            from camoufox.multiversion import BROWSERS_DIR, set_active
-            ver_paths = sorted(BROWSERS_DIR.rglob("version.json"))
-            if ver_paths:
-                rel = str(ver_paths[0].parent.relative_to(BROWSERS_DIR))
-                set_active(f"browsers/{rel}")
-                return True
-        except Exception:
-            pass
         try:
             from models.bundled_model import get_bundled_browser_dir, install_bundled_browser
+
             bundled = get_bundled_browser_dir()
             if bundled:
                 self._emit("browser_installing", percent=0, source="bundled")
@@ -344,6 +370,7 @@ class BrowserManager:
                 )
                 if ok:
                     self._emit("browser_installed", source="bundled")
+                    await self._reset_playwright()
                     return True
         except Exception as e:
             log.warning("install bundled browser failed: %s", e)
@@ -351,7 +378,7 @@ class BrowserManager:
         self._emit("browser_installing", percent=0, source="download")
         try:
             def _install():
-                _install_browser_with_progress(
+                install_chromium(
                     lambda p: loop.call_soon_threadsafe(
                         lambda: self._emit("browser_installing", percent=int(p))
                     )
@@ -362,6 +389,7 @@ class BrowserManager:
             self._emit("browser_install_error", error=str(e))
             return False
         self._emit("browser_installed")
+        await self._reset_playwright()
         return True
 
     async def open_sessions(self, count=None, account_ids=None, accounts=None):
@@ -400,60 +428,79 @@ class BrowserManager:
 
     async def _open_one(self, session_id, account):
         ad = self.config.get("anti_detect", {})
-        fp_os = ad.get("os", "random")
         locale = ad.get("locale", "random")
         profile_dir = account.get("profile_dir") if account and account.get("save_session") else None
         if account:
-            ua = account.get("user_agent") or account.get("profile_ua") or None
-            real_os = account.get("profile_os") or fp_os
             idx = account.get("index")
             tab_title = f"#{idx} {account['name']}" if idx else account["name"]
         else:
-            os_name = random_desktop_os()
-            ua = random_chrome_ua(os_name)
-            real_os = os_name
             tab_title = "Tab trống"
-        before = _camoufox_pids()
-        browser_ctx = None
+        before = _chrome_pids()
+        context = None
+        temp_dir = None
         proxy_dict = parse_proxy(account.get("proxy") or "") if account else None
         try:
-            launch_kwargs = {}
+            pw = await self._ensure_playwright()
+            args = []
             if self.config.get("mute_all_sites"):
-                launch_kwargs["firefox_user_prefs"] = {"media.default_muted": True}
-            if profile_dir:
+                args.append("--mute-audio")
+            # Nhúng Chrome extension WS bridge vào profile: content script (main world,
+            # document_start) patch window.WebSocket của game -> Python có thể gửi lệnh
+            # join/đánh bài qua page.evaluate("window.__ws_send(...)") mà không cần
+            # intercept (không làm game treo "Đang kết nối").
+            try:
+                from models.bundled_model import get_extension_dir
+
+                ext_dir = get_extension_dir()
+                if ext_dir:
+                    args.append("--disable-extensions-except=" + str(ext_dir))
+                    args.append("--load-extension=" + str(ext_dir))
+            except Exception:
+                pass
+            user_data_dir = profile_dir
+            if not user_data_dir:
+                temp_dir = tempfile.mkdtemp(prefix="autotool_tab_")
+                user_data_dir = temp_dir
+            else:
                 _clear_profile_lock(profile_dir)
-                launch_kwargs["persistent_context"] = True
-                launch_kwargs["user_data_dir"] = profile_dir
-                if ua:
-                    launch_kwargs["user_agent"] = ua
-                if locale and locale != "random":
-                    launch_kwargs["locale"] = locale
+            # Buộc Chrome luôn mở ra màn hình ở vị trí visible.
+            # --start-maximized: maximize ngay khi mở (thay vì bị ẩn sau taskbar).
+            # --window-position=100,100: đặt vị trí khởi đầu trên màn hình.
+            # --window-size=1280,800: kích thước mặc định nếu chưa có config.
+            # --disable-session-crashed-bubble: bỏ popup "Chrome không tắt đúng cách".
+            args += [
+                "--start-maximized",
+                "--window-position=100,100",
+                "--disable-session-crashed-bubble",
+                "--disable-infobars",
+                "--no-first-run",
+                "--disable-restore-session-state",
+            ]
+            launch_kwargs = {
+                "user_data_dir": user_data_dir,
+                "headless": False,
+                "no_viewport": True,
+                "args": args,
+            }
+            if locale and locale != "random":
+                launch_kwargs["locale"] = locale
             if proxy_dict:
                 launch_kwargs["proxy"] = proxy_dict
-            browser_ctx = AsyncCamoufox(headless=False, **launch_kwargs)
-            browser = await browser_ctx.__aenter__()
-            if profile_dir:
-                pages = browser.pages
-                page = pages[0] if pages else await browser.new_page()
-                for extra in pages[1:]:
-                    try:
-                        await extra.close()
-                    except Exception:
-                        pass
-                ua_actual = await self._read_ua(page)
-            else:
-                context_kwargs = {}
-                if ua:
-                    context_kwargs["user_agent"] = ua
-                if fp_os and fp_os != "random":
-                    context_kwargs["os"] = fp_os
-                if locale and locale != "random":
-                    context_kwargs["locale"] = locale
-                if proxy_dict:
-                    context_kwargs["proxy"] = proxy_dict
-                context = await AsyncNewContext(browser, **context_kwargs)
-                page = await context.new_page()
-                ua_actual = await self._read_ua(page)
+            context = await pw.chromium.launch_persistent_context(**launch_kwargs)
+            browser = context.browser
+            pages = context.pages
+            page = pages[0] if pages else await context.new_page()
+            for extra in pages[1:]:
+                try:
+                    await extra.close()
+                except Exception:
+                    pass
+            ua_actual = await self._read_ua(page)
+            # Giữ tên profile trên tiêu đề cửa sổ/tab (game hay ghi đè title).
+            try:
+                await page.add_init_script(_title_enforce_script(tab_title))
+            except Exception:
+                pass
             try:
                 await page.evaluate(f"document.title = {json.dumps(tab_title)}")
             except Exception:
@@ -463,25 +510,27 @@ class BrowserManager:
                     ws = account["web_storage"]
                     local = dict(ws.get("local", {}))
                     session = dict(ws.get("session", {}))
-                    # Ưu tiên token MỚI NHẤT từ token store (game trả token mới mỗi
-                    # lần login, token cũ có thể expire -> profile không login được).
-                    fresh = self.token_store.get(account.get("name") or account.get("id"))
-                    if fresh:
-                        local["token"] = fresh
-                        local["user_token"] = fresh
-                        log.info("restore FRESH token for %s (override stale web_storage)",
-                                 account.get("name"))
+                    # Token MỚI NHẤT từ token store: chỉ dùng làm FALLBACK khi profile
+                    # (Chromium persist native) chưa có token nào. KHÔNG ghi đè token
+                    # tươi đang nằm trong localStorage tự nhiên của profile.
+                    fresh = self.token_store.get(account.get("name") or account.get("id")) or ""
                     local = json.dumps(local)
                     session = json.dumps(session)
-                    # Force isAutoLogin = true để game tự login khi mở
+                    fresh = json.dumps(fresh)
                     await page.add_init_script(f"""
                         (() => {{
                             const local = {local};
                             const session = {session};
-                            local.isAutoLogin = 'true';
+                            const freshToken = {fresh};
+                            try {{ localStorage.setItem('isAutoLogin', 'true'); }} catch(e) {{}}
+                            const hasToken = localStorage.getItem('token') || localStorage.getItem('user_token');
                             Object.entries(local).forEach(([k, v]) => {{
-                                try {{ localStorage.setItem(k, v); }} catch(e) {{}}
+                                try {{ if (localStorage.getItem(k) === null) localStorage.setItem(k, v); }} catch(e) {{}}
                             }});
+                            if (!hasToken && freshToken) {{
+                                try {{ localStorage.setItem('token', freshToken); }} catch(e) {{}}
+                                try {{ localStorage.setItem('user_token', freshToken); }} catch(e) {{}}
+                            }}
                             Object.entries(session).forEach(([k, v]) => {{
                                 try {{ sessionStorage.setItem(k, v); }} catch(e) {{}}
                             }});
@@ -493,37 +542,53 @@ class BrowserManager:
             if url and url != "about:blank":
                 try:
                     await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                    # Game Cocos/WASM đọc localStorage từ lần boot thứ 2 trở đi.
-                    # Nếu có web_storage đã lưu (token login), reload để game
-                    # đọc token và auto-login, thay vì user phải F5 thủ công.
-                    if account and account.get("web_storage"):
-                        try:
-                            await page.reload(wait_until="domcontentloaded", timeout=60000)
-                        except Exception:
-                            pass
-                    await page.evaluate(f"document.title = {json.dumps(tab_title)}")
                 except Exception as e:
                     log.warning("goto %s failed: %s", url, e)
             pid, hwnd = await self._wait_new_window(before)
             if pid is None:
-                raise RuntimeError("không tìm thấy cửa sổ trình duyệt")
-            session = TabSession(
-                session_id, account, browser_ctx, browser, page, pid, hwnd,
-                ua=ua_actual, fp_os=real_os,
-            )
-            self.sessions[session_id] = session
-            session.state = "ready"
-            self._emit("opened", session_id=session_id)
-        except Exception as e:
-            if browser_ctx is not None:
+                # Fallback: lấy PID từ process của context (Patchright/Playwright
+                # luôn biết PID ngay cả khi UIPI ngăn EnumWindows).
                 try:
-                    await browser_ctx.__aexit__(None, None, None)
+                    proc = context.browser._browser_type._playwright._impl_obj._loop
+                    pid = None
                 except Exception:
                     pass
+                # Thử lấy từ chrome_pids mới nhất
+                new_pids = _chrome_pids() - before
+                if new_pids:
+                    pid = next(iter(new_pids))
+                    log.warning(
+                        "_wait_new_window timeout nhưng tìm thấy chrome PID %s — "
+                        "có thể do UIPI (Admin). Tiếp tục với pid=%s hwnd=None.",
+                        pid, pid,
+                    )
+                else:
+                    raise RuntimeError("không tìm thấy cửa sổ trình duyệt")
+            session = TabSession(
+                session_id, account, context, browser, page, pid, hwnd,
+                ua=ua_actual, fp_os="",
+            )
+            session.temp_dir = temp_dir
+            self.sessions[session_id] = session
+            session.state = "ready"
+            if self.config.get("mute_all_sites"):
+                try:
+                    await self.sync_mute()
+                except Exception:
+                    pass
+            self._emit("opened", session_id=session_id)
+        except Exception as e:
+            if context is not None:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
             log.exception("open %s failed", session_id)
             session = TabSession(
                 session_id, account, None, None, None, None, None,
-                ua=ua if ua else "", fp_os=real_os,
+                ua="", fp_os="",
             )
             session.state = "error"
             session.error = str(e)
@@ -531,13 +596,33 @@ class BrowserManager:
             self._emit("opened", session_id=session_id)
 
     async def _wait_new_window(self, before, timeout=25):
+        """Tìm PID + HWND của cửa sổ Chromium mới vừa mở.
+
+        Khi backend chạy với elevated privileges (Admin), UIPI ngăn
+        EnumWindows/IsWindowVisible thấy cửa sổ của Chromium (chạy ở user
+        level). Trong trường hợp đó hàm vẫn trả về pid tìm được (không có
+        hwnd) để session vẫn được tạo — bring_to_front sẽ dùng Playwright
+        API thay vì Win32.
+        """
         deadline = time.monotonic() + timeout
+        new_pid = None
         while time.monotonic() < deadline:
-            for pid in _camoufox_pids() - before:
+            new_pids = _chrome_pids() - before
+            for pid in new_pids:
                 hwnd = _find_hwnd_by_pid(pid)
                 if hwnd:
                     return pid, hwnd
+                new_pid = pid  # ghi nhớ pid kể cả khi không tìm được hwnd
             await asyncio.sleep(0.5)
+        # Fallback: trả pid (không có hwnd) — cửa sổ vẫn chạy,
+        # bring_to_front sẽ dùng page.bring_to_front() thay vì Win32.
+        if new_pid:
+            log.warning(
+                "_wait_new_window: tìm thấy PID %s nhưng không lấy được HWND "
+                "(có thể do UIPI khi chạy Admin). Dùng Playwright bring_to_front.",
+                new_pid,
+            )
+            return new_pid, None
         return None, None
 
     def _set_window(self, session, rect):
@@ -545,9 +630,31 @@ class BrowserManager:
         if not hwnd:
             return False
         x, y, w, h = rect
-        user32.SetWindowPos(hwnd, 0, int(x), int(y), int(w), int(h), SWP_NOZORDER)
+        # Restore trước (khỏi động minimized ở taskbar) rồi di chuyển ra đúng vị trí.
+        # Đây là nguyên nhân chính khiến Chrome thấy trong taskbar nhưng
+        # không hiện trên màn hình: SetWindowPos với SWP_NOZORDER đơn thuần
+        # không show window nếu nó đang ở trạng thái minimized/hidden.
+        user32.ShowWindow(hwnd, SW_RESTORE)   # restore từ minimize
+        user32.ShowWindow(hwnd, SW_SHOW)      # đảm bảo visible
+        user32.SetWindowPos(
+            hwnd, 0,
+            int(x), int(y), int(w), int(h),
+            SWP_NOZORDER | SWP_SHOWWINDOW,    # vừa move vừa show
+        )
+        user32.SetForegroundWindow(hwnd)      # đưa lên trước mọn
         session.hwnd = hwnd
         return True
+
+    async def _bring_page_to_front(self, session):
+        """Dùng Playwright page.bring_to_front() để đưa cửa sổ Chromium ra
+        trước màn hình — hoạt động kể cả khi backend chạy với Admin privileges
+        (UIPI ngăn Win32 API nhưng không ngăn Playwright CDP)."""
+        if session.page is None:
+            return
+        try:
+            await session.page.bring_to_front()
+        except Exception as e:
+            log.debug("bring_to_front failed for %s: %s", session.session_id, e)
 
     async def apply_layout(self):
         self.prune_dead_sessions()
@@ -570,17 +677,72 @@ class BrowserManager:
         for session, rect in zip(sessions, rects):
             if self._set_window(session, rect):
                 moved += 1
+            # Luôn gọi bring_to_front qua Playwright CDP — hoạt động kể cả
+            # khi Win32 SetWindowPos bị UIPI block (backend chạy Admin).
+            await self._bring_page_to_front(session)
         self._emit("layout", count=moved)
         return moved
+
+    def _session_tree_pids(self, session) -> set:
+        """Toàn bộ pid của 1 session: browser main + mọi process con (renderer/gpu)."""
+        pids = set()
+        if not session.pid:
+            return pids
+        pids.add(session.pid)
+        try:
+            proc = psutil.Process(session.pid)
+            for child in proc.children(recursive=True):
+                pids.add(child.pid)
+        except Exception:
+            pass
+        return pids
+
+    async def mute_all(self, muted: bool) -> int:
+        """Mute/unmute âm thanh ngay lập tức cho mọi session đang mở (Windows Core Audio)."""
+        from services.audio_control import set_processes_mute
+
+        pids = set()
+        for s in self.sessions.values():
+            pids |= self._session_tree_pids(s)
+        if not pids:
+            return 0
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, set_processes_mute, pids, muted)
+
+    async def sync_mute(self) -> int:
+        """Đồng bộ trạng thái mute theo cấu hình (gọi định kỳ + khi mở session).
+
+        Audio session của Chrome chỉ xuất hiện khi tab bắt đầu phát âm thanh,
+        nên khi mute ON cần re-apply định kỳ để bắt session phát sau khi mở.
+        Khi mute OFF chỉ unmute 1 lần (khi user vừa tắt), không gọi lặp lại.
+        """
+        if not self.sessions:
+            self._mute_pid_snapshot = frozenset()
+            return 0
+        muted = bool(self.config.get("mute_all_sites"))
+        if not muted and self._last_mute_state is not True:
+            return 0
+        # Chỉ re-apply khi tập pid session thay đổi (mở/đóng tab) — tránh quét
+        # toàn bộ audio session hệ thống mỗi 5s khi không có gì mới.
+        pid_snapshot = frozenset(self._session_tree_pids(s) for s in self.sessions.values())
+        current = frozenset().union(*pid_snapshot) if pid_snapshot else frozenset()
+        if muted and current == getattr(self, "_mute_pid_snapshot", None):
+            return 0
+        self._mute_pid_snapshot = current
+        self._last_mute_state = muted
+        try:
+            return await self.mute_all(muted)
+        except Exception as e:
+            log.debug("sync_mute fail: %s", e)
+            return 0
 
     async def close_session(self, session_id):
         session = self.sessions.pop(session_id, None)
         if not session:
             return False
         # Lưu localStorage + sessionStorage (token login game) vào account record
-        # TRƯỚC khi đóng. Firefox/Playwright KHÔNG flush localStorage xuống đĩa
-        # khi đóng persistent context (file ls/data.sqlite vẫn rỗng) nên login
-        # bị mất. Ta tự đọc toàn bộ storage rồi inject lại khi mở (_open_one).
+        # TRƯỚC khi đóng. Chủ động đọc toàn bộ storage rồi inject lại khi mở
+        # (_open_one) để login không bị mất (đặc biệt khi đóng trình duyệt đột ngột).
         if session.page and session.account and session.state == "ready":
             try:
                 ls = await session.page.evaluate("JSON.stringify(window.localStorage)")
@@ -610,30 +772,28 @@ class BrowserManager:
                         len(saved.get("local", {})),
                         len(saved.get("session", {})),
                     )
-                # ---- capture token MỚI nhất vào token store trước khi xóa ----
+                # ---- capture token MỚI nhất vào token store ----
                 tok = TokenStore.extract_from_storage(saved.get("local", {})) or TokenStore.extract_from_storage(saved.get("session", {}))
                 if tok:
                     self.token_store.save(session.account.get("name") or session.account.get("id"), tok,
                                            extra={"username": session.account.get("username")})
-                # ---- XÓA token session khỏi browser live ----
-                # Game HITCLUB trả token MỚI mỗi lần login; token cũ (đã lưu trên)
-                # sẽ expire. Xóa token live để app/editor khác mở profile này
-                # KHÔNG mang theo session cũ hết hạn (gây "không login được").
-                # Token mới nhất đã nằm an toàn trong token store + web_storage.
-                try:
-                    await session.page.evaluate(
-                        "try{localStorage.removeItem('token');}catch(e){}"
-                        "try{localStorage.removeItem('user_token');}catch(e){}"
-                    )
-                except Exception:
-                    pass
             except Exception as e:
                 log.debug("save web storage %s fail: %s", session_id, e)
         if session.browser_ctx is not None:
             try:
-                await session.browser_ctx.__aexit__(None, None, None)
+                await session.browser_ctx.close()
             except Exception as e:
                 log.warning("close %s error: %s", session_id, e)
+        # Dọn container module của sniffer (tránh rò rỉ bộ nhớ khi đóng/mở nhiều session)
+        if session.page is not None:
+            try:
+                from game_sim.ws_sniffer import cleanup_page
+
+                cleanup_page(session.page)
+            except Exception:
+                pass
+        if getattr(session, "temp_dir", None):
+            shutil.rmtree(session.temp_dir, ignore_errors=True)
         self._emit("closed", session_id=session_id)
         return True
 
@@ -641,4 +801,5 @@ class BrowserManager:
         ids = list(self.sessions)
         for sid in ids:
             await self.close_session(sid)
+        await self._reset_playwright()
         return len(ids)

@@ -50,9 +50,8 @@
     $("cfgCount").value = state.config.default_count;
     $("cfgAutoLayout").checked = !!state.config.auto_layout;
     $("cfgMuteAll").checked = !!state.config.mute_all_sites;
+    $("cfgDefaultUrl").value = state.config.default_url || "";
     if (state.antiDetect) {
-      const osLabels = { random: "Ngẫu nhiên", windows: "Windows", macos: "macOS", linux: "Linux" };
-      fillSelect($("cfgOs"), state.antiDetect.os, ad.os, (o) => osLabels[o] || o);
       fillSelect($("cfgLocale"), state.antiDetect.locale, ad.locale, (l) =>
         l === "random" ? "Ngẫu nhiên" : l
       );
@@ -72,7 +71,6 @@
       list = list.filter(
         (a) =>
           (a.name || "").toLowerCase().includes(q) ||
-          (a.user_agent || a.profile_ua || "").toLowerCase().includes(q) ||
           (a.url || "").toLowerCase().includes(q)
       );
     }
@@ -107,19 +105,17 @@
     tbody.innerHTML = "";
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="hint">Không có profile nào.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="hint">Không có profile nào.</td></tr>';
     }
 
     rows.forEach((a, i) => {
       const tr = document.createElement("tr");
       const selected = App.selectedProfileIds.has(a.id);
       if (selected) tr.classList.add("row-selected");
-      const ua = a.user_agent || a.profile_ua || "ngẫu nhiên khi mở";
       const proxy = a.proxy ? String(a.proxy) : "";
       tr.innerHTML = `
         <td class="col-stt">${start + i + 1}</td>
         <td class="col-name" title="${App.esc(a.name)}">${App.esc(a.name)}</td>
-        <td class="col-ua" title="${App.esc(ua)}">${App.esc(ua)}</td>
         <td class="col-proxy" title="${App.esc(proxy || "IP máy")}">${proxy ? App.esc(proxy) : '<span class="ip-local">IP máy</span>'}</td>
         <td class="col-actions">
           <button class="btn-open-profile primary" title="Mở profile này">Mở</button>

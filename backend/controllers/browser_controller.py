@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from models.config_model import load_accounts
-from services.account_service import ensure_account_fingerprints
 
 log = logging.getLogger("browser_controller")
 router = APIRouter()
@@ -56,7 +55,7 @@ async def open_browser(body: OpenIn, request: Request):
         count = body.count or 0
         body.count = min(count, slots)
 
-    accounts = ensure_account_fingerprints(load_accounts())
+    accounts = load_accounts()
     ids = await manager.open_sessions(
         count=body.count, account_ids=body.account_ids, accounts=accounts
     )
@@ -128,3 +127,65 @@ async def browser_eval(body: EvalIn, request: Request):
         return {"result": await session.page.evaluate(body.js)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/browser/show-window")
+async def show_window(request: Request):
+    """Dùng CDP Browser.setWindowBounds để maximize/restore Chrome window.
+
+    Hoạt động xuyên desktop context (kể cả sandbox exebox của IDE) vì đi
+    qua DevTools Protocol websocket thay vì Win32 API (không bị UIPI block).
+    """
+    manager = request.app.state.manager
+    results = []
+    for session in manager.sessions.values():
+        if not session.page:
+            continue
+        res = {"session": session.session_id, "ok": False, "detail": ""}
+        try:
+            # bring_to_front qua Playwright (kích hoạt tab)
+            await session.page.bring_to_front()
+
+            # CDP Browser-level: lấy window ID rồi maximize
+            # session.browser_ctx = BrowserContext (PersistentContext)
+            cdp = await session.browser_ctx.new_cdp_session(session.page)
+            target_info = await cdp.send("Target.getTargetInfo", {})
+            target_id = target_info["targetInfo"]["targetId"]
+            await cdp.detach()
+
+            # Browser-level CDP session (dùng page.context.browser nếu có)
+            try:
+                browser_obj = session.browser or session.browser_ctx.browser
+                browser_cdp = await browser_obj.new_browser_cdp_session()
+            except Exception:
+                # Fallback: dùng context-level CDP
+                browser_cdp = await session.browser_ctx.new_cdp_session(session.page)
+
+            win_data = await browser_cdp.send(
+                "Browser.getWindowForTarget", {"targetId": target_id}
+            )
+            window_id = win_data["windowId"]
+
+            # Maximize window → visible trên màn hình thật
+            await browser_cdp.send(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": {"windowState": "maximized"}},
+            )
+            try:
+                await browser_cdp.detach()
+            except Exception:
+                pass
+            res["ok"] = True
+            res["detail"] = f"windowId={window_id} maximized"
+            log.info("show-window CDP OK: session=%s windowId=%s", session.session_id, window_id)
+        except Exception as e:
+            res["detail"] = str(e)
+            log.warning("show-window CDP failed: session=%s err=%s", session.session_id, e)
+            try:
+                await session.page.bring_to_front()
+                res["detail"] += " | bring_to_front fallback OK"
+            except Exception:
+                pass
+        results.append(res)
+    return {"ok": any(r["ok"] for r in results), "results": results}
+

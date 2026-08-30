@@ -1,25 +1,4 @@
-"""Service: nghiệp vụ tài khoản (fingerprint tự động khi thiếu)."""
-import logging
-
-from models.config_model import load_accounts, save_accounts
-from models.fingerprint_model import diverse_os, random_chrome_ua
-
-log = logging.getLogger("account_service")
-
-
-def ensure_account_fingerprints(accounts: list) -> list:
-    """Gán profile_os + profile_ua cho account có save_session nhưng chưa có UA."""
-    changed = False
-    for a in accounts:
-        if a.get("save_session") and not a.get("profile_ua") and not a.get("user_agent"):
-            os_name = diverse_os(a.get("profile_os") for a in accounts)
-            a["profile_os"] = os_name
-            a["profile_ua"] = random_chrome_ua(os_name)
-            changed = True
-    if changed:
-        save_accounts(accounts)
-        log.info("updated fingerprints for %d accounts", changed)
-    return accounts
+"""Service: nghiệp vụ tài khoản."""
 
 
 def bulk_names(prefix: str, count: int) -> list[str]:

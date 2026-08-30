@@ -33,13 +33,14 @@ log = setup_logging()
 
 
 async def _browser_watchdog(manager: "BrowserManager"):
-    """Định kỳ: prune session chết + auto-save localStorage (giữ login mới nhất)."""
+    """Định kỳ: prune session chết + auto-save localStorage + đồng bộ mute."""
     i = 0
     while True:
         await asyncio.sleep(5)
         i += 1
         try:
             manager.prune_dead_sessions()
+            await manager.sync_mute()
             if i % 2 == 0:  # mỗi ~10s
                 await manager.save_open_sessions_storage()
         except Exception:
@@ -61,14 +62,26 @@ def create_app() -> FastAPI:
         game_sim.set_event_sink(lambda ev: emitter.publish(ev))
         app.state.game_sim = game_sim
 
-        # Dọn process camoufox mồ côi để lại từ lần chạy trước (restart/kill cứng).
-        # Phải chạy TRƯỚC khi mở trình duyệt mới để không tự kill chính mình.
-        from services.browser_service import reap_orphan_camoufox
+        # Migration: bật lưu session (save_session) cho mọi profile cũ + tạo
+        # profile_dir nếu thiếu, để login được giữ lại khi mở lại.
+        from models.config_model import ensure_accounts_save_session, load_accounts, save_accounts
 
         try:
-            reap_orphan_camoufox()
+            migrated_accounts, n = ensure_accounts_save_session(load_accounts())
+            if n:
+                save_accounts(migrated_accounts)
+                log.info("migrated %d accounts (enable save_session)", n)
         except Exception:
-            log.exception("reap orphan camoufox failed")
+            log.exception("migrate accounts save_session failed")
+
+        # Dọn process chrome mồ côi để lại từ lần chạy trước (restart/kill cứng).
+        # Phải chạy TRƯỚC khi mở trình duyệt mới để không tự kill chính mình.
+        from services.browser_service import reap_orphan_chrome
+
+        try:
+            reap_orphan_chrome()
+        except Exception:
+            log.exception("reap orphan chrome failed")
 
         watchdog = asyncio.create_task(_browser_watchdog(manager))
         log.info("Backend ready (manager + hub + game_sim initialized)")

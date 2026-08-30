@@ -1,4 +1,4 @@
-"""Controller: cấu hình lưới, fingerprint, antidetect."""
+"""Controller: cấu hình lưới, antidetect (locale)."""
 import logging
 
 from fastapi import APIRouter, Request
@@ -32,17 +32,20 @@ async def set_config(cfg: dict, request: Request):
         current["auto_layout"] = bool(cfg["auto_layout"])
     if "mute_all_sites" in cfg:
         current["mute_all_sites"] = bool(cfg["mute_all_sites"])
+    if "default_url" in cfg:
+        current["default_url"] = (cfg["default_url"] or "").strip()
     save_config(current)
     manager.config = current
     if current.get("auto_layout", True):
         await manager.apply_layout()
+    # Áp dụng mute ngay lập tức cho các tab đang mở khi user đổi cấu hình.
+    await manager.sync_mute()
     return current
 
 
 @router.get("/api/antidetect")
 async def get_antidetect_options():
     return {
-        "os": ["random", "windows", "macos", "linux"],
         "locale": [
             "random",
             "en-US",

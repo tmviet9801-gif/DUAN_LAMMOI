@@ -2,7 +2,7 @@
 
 Hệ thống tự động hóa mô phỏng vòng đời phòng game và kiểm thử **quyền đi trước**
 (người thắng ván trước được đi trước ván tiếp theo), chạy trên nền các profile
-Camoufox có sẵn của ứng dụng.
+Chromium có sẵn của ứng dụng.
 
 ## 1. Kiến trúc hệ thống
 
@@ -24,7 +24,7 @@ Camoufox có sẵn của ứng dụng.
 └────────────────────────────────────────────────────────────────┘
                 │ dùng BrowserManager mở tab profile → join bàn
 ┌───────────────▼────────────────────────────────────────────────┐
-│  services/browser_service.py (Camoufox sessions)                │
+│  services/browser_service.py (Chromium sessions)                 │
 └────────────────────────────────────────────────────────────────┘
 ```
 

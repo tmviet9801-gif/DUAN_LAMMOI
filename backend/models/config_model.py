@@ -11,7 +11,7 @@ from pathlib import Path
 
 from core.time_utils import utcnow_iso
 from core.utils import slugify
-from platform_config import PLATFORM_ID, PLATFORM_NAME
+from platform_config import DEFAULT_PROFILE_URL, PLATFORM_ID, PLATFORM_NAME
 
 APP_NAME = PLATFORM_NAME
 APP_VERSION = "1.2.0"
@@ -44,13 +44,13 @@ DEFAULT_CONFIG = {
     },
     "open_direction": "row",
     "anti_detect": {
-        "os": "random",
         "locale": "random",
     },
     "default_count": 10,
     "auto_layout": True,
     "mute_all_sites": False,
     "profiles_dir": "",
+    "default_url": DEFAULT_PROFILE_URL,
 }
 
 
@@ -110,25 +110,34 @@ def save_accounts(accounts: list):
 
 
 def new_account_record(account: dict, existing: list | None = None) -> dict:
-    """Tạo record account mới (id, profile_dir, fingerprint cần thiết).
+    """Tạo record account mới (id, profile_dir).
 
-    `existing`: danh sách account hiện có để xoay vòng OS — truyền khi thêm
-    hàng loạt để các profile trong cùng batch có fingerprint khác nhau.
+    Luôn bật lưu session riêng (save_session=True) cho mọi profile.
+    `existing`: giữ tham số để tương thích chữ ký cũ (không còn dùng).
     """
-    from models.fingerprint_model import diverse_os, random_chrome_ua
-
-    accounts = existing if existing is not None else load_accounts()
     account_id = str(uuid.uuid4())
     record = {"id": account_id, "created_at": utcnow_iso(), **account}
-    if record.get("save_session"):
-        record["profile_dir"] = make_profile_dir(record["name"], account_id)
-        if not record.get("user_agent"):
-            os_name = diverse_os(a.get("profile_os") for a in accounts)
-            record["profile_os"] = os_name
-            record["profile_ua"] = random_chrome_ua(os_name)
-    else:
-        record["profile_dir"] = ""
+    record["save_session"] = True
+    record["profile_dir"] = make_profile_dir(record.get("name") or "profile", account_id)
     return record
+
+
+def ensure_accounts_save_session(accounts: list) -> tuple[list, int]:
+    """Bật lưu session cho mọi account (migration cho account cũ).
+
+    - save_session -> True
+    - tạo profile_dir nếu còn thiếu
+    Trả về (accounts, số lượng đã sửa).
+    """
+    changed = 0
+    for a in accounts:
+        if not a.get("save_session"):
+            a["save_session"] = True
+            changed += 1
+        if not a.get("profile_dir"):
+            a["profile_dir"] = make_profile_dir(a.get("name") or "profile", a.get("id"))
+            changed += 1
+    return accounts, changed
 
 
 PROFILES_DIR = get_profiles_dir()  # noqa: E402 — giữ cho tương thích import cũ

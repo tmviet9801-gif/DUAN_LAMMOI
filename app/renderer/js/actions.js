@@ -118,6 +118,11 @@
     );
   };
 
+  // --- URL mặc định cho profile (từ cấu hình, fallback hardcode) ---
+  function defaultUrl() {
+    return (state.config && state.config.default_url) || "https://v.hitclub.latino/?a=hitclub";
+  }
+
   // --- Lưu cấu hình ---
   async function saveConfig() {
     try {
@@ -135,12 +140,12 @@
           },
           open_direction: $("cfgDirection").value,
           anti_detect: {
-            os: $("cfgOs").value,
             locale: $("cfgLocale").value,
           },
           default_count: +$("cfgCount").value,
           auto_layout: $("cfgAutoLayout").checked,
           mute_all_sites: $("cfgMuteAll").checked,
+          default_url: $("cfgDefaultUrl").value.trim(),
         }),
       });
       App.toast("Đã lưu cấu hình", "success");
@@ -150,6 +155,21 @@
     }
   }
   $("btnSaveConfig").onclick = saveConfig;
+
+  // Mute/unmute áp dụng NGAY khi tick/bỏ tick (không cần bấm Lưu).
+  $("cfgMuteAll").addEventListener("change", async () => {
+    const muted = $("cfgMuteAll").checked;
+    try {
+      await App.api("/api/config", {
+        method: "POST",
+        body: JSON.stringify({ mute_all_sites: muted }),
+      });
+      App.toast(muted ? "Đã tắt âm thanh các tab" : "Đã bật lại âm thanh", "success");
+      App.refresh();
+    } catch (e) {
+      App.toast("Cập nhật âm thanh thất bại: " + e.message, "error");
+    }
+  });
 
   // --- Modal thêm profile (tab: Thêm 1 / Thêm nhanh) ---
   const apModal = $("addProfileModal");
@@ -180,9 +200,7 @@
     $("apName").value = "";
     $("apCount").value = "1";
     $("apUrl").value = "";
-    $("apUa").value = "";
     $("apProxy").value = "";
-    $("apSaveSession").checked = true;
   }
 
   function openAddProfile() {
@@ -190,9 +208,7 @@
     $("apName").value = "";
     $("apCount").value = "1";
     $("apUrl").value = "";
-    $("apUa").value = "";
     $("apProxy").value = "";
-    $("apSaveSession").checked = true;
     apModal.classList.remove("hidden");
     $("apName").focus();
   }
@@ -229,24 +245,22 @@
       App.toast("Nhập tên / tiền tố profile", "warn");
       return;
     }
-    const url = $("apUrl").value.trim() || "https://v.hitclub.latino/?a=hitclub";
-    const userAgent = $("apUa").value.trim();
+    const url = $("apUrl").value.trim() || defaultUrl();
     const proxy = $("apProxy").value.trim();
-    const saveSession = $("apSaveSession").checked;
     const btn = $("apSubmit");
     btn.disabled = true;
     try {
       if (addMode === "single") {
         const r = await App.api("/api/accounts", {
           method: "POST",
-          body: JSON.stringify({ name: prefix, url, user_agent: userAgent, proxy, save_session: saveSession }),
+          body: JSON.stringify({ name: prefix, url, proxy, save_session: true }),
         });
         App.toast(`Đã thêm profile #${r.index} "${r.name}"`, "success");
       } else {
         const count = Math.max(1, parseInt($("apCount").value, 10) || 1);
         const r = await App.api("/api/accounts/bulk", {
           method: "POST",
-          body: JSON.stringify({ prefix, count, url, user_agent: userAgent, proxy, save_session: saveSession }),
+          body: JSON.stringify({ prefix, count, url, proxy, save_session: true }),
         });
         App.toast(`Đã thêm ${r.count} profile (${r.accounts[0].name} → ${r.accounts[r.accounts.length - 1].name})`, "success");
       }
@@ -300,7 +314,6 @@
     $("epName").textContent = `#${a.index} ${a.name}`;
     $("epProfileName").value = a.name || "";
     $("epUrl").value = a.url || "";
-    $("epUa").value = a.user_agent || a.profile_ua || "";
     $("epProxy").value = a.proxy || "";
     $("epProxyResult").textContent = "Định dạng IP:Port:User:Pass. Để trống = dùng IP máy.";
     $("epProxyResult").className = "hint";
@@ -327,8 +340,7 @@
         method: "PATCH",
         body: JSON.stringify({
           name: $("epProfileName").value.trim(),
-          url: $("epUrl").value.trim() || "https://v.hitclub.latino/?a=hitclub",
-          user_agent: $("epUa").value.trim(),
+          url: $("epUrl").value.trim() || defaultUrl(),
           proxy: $("epProxy").value.trim(),
         }),
       });

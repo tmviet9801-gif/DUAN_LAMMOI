@@ -67,22 +67,21 @@ async def get_platform():
 @router.get("/api/browser-status")
 async def get_browser_status():
     try:
-        from camoufox.pkgman import installed_verstr
+        from patchright.async_api import async_playwright
 
-        ver = installed_verstr()
-        return {"installed": bool(ver), "version": ver}
+        async with async_playwright() as p:
+            path = p.chromium.executable_path
+            installed = bool(path and Path(path).exists())
+        return {"installed": installed, "version": None}
     except Exception:
         return {"installed": False, "version": None}
 
 
 @router.post("/api/install-browser")
 async def install_browser():
-    def _fetch():
-        from camoufox.pkgman import CamoufoxFetcher
+    from services.browser_service import install_chromium
 
-        CamoufoxFetcher().install()
-
-    await asyncio.get_event_loop().run_in_executor(None, _fetch)
+    await asyncio.get_event_loop().run_in_executor(None, install_chromium, None)
     return {"ok": True}
 
 

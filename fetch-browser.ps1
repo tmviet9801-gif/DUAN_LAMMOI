@@ -5,15 +5,15 @@ $Venv = Join-Path $Backend ".venv"
 $VenvPython = Join-Path $Venv "Scripts\python.exe"
 
 Write-Host ""
-Write-Host "=== TAI LAI CAMOUFOX BROWSER ===" -ForegroundColor Cyan
+Write-Host "=== TAI LAI CHROMIUM BROWSER ===" -ForegroundColor Cyan
 
 if (-not (Test-Path $VenvPython)) {
     throw "Chua co venv. Chay install.bat truoc."
 }
 
 $env:PYTHONIOENCODING = "utf-8"
-& $VenvPython -m camoufox fetch
-if ($LASTEXITCODE -ne 0) { throw "camoufox fetch that bai" }
+& $VenvPython -m patchright install chromium
+if ($LASTEXITCODE -ne 0) { throw "patchright install chromium that bai" }
 
 Write-Host ""
 Write-Host "  Xong! Chay build.bat de dong goi vao installer." -ForegroundColor Green

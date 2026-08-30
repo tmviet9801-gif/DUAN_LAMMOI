@@ -47,10 +47,8 @@
     try {
       const st = await App.api("/api/gamesim/status");
       const m = await App.api("/api/gamesim/metrics");
-      const ev = await App.api("/api/gamesim/events?limit=30");
       renderStatus(st);
       renderMetrics(m);
-      renderEvents(ev);
       $("gsInfo").textContent = st.running
         ? `Đang chạy: ${st.run_id} — adapter ${st.adapter}, scenario "${st.scenario}", ${st.rounds} ván`
         : "Đã dừng. Nhấn Start để chạy lại.";
@@ -114,24 +112,7 @@
   }
 
   function renderEvents(events) {
-    const el = $("gsEvents");
-    el.innerHTML = "";
-    if (!events.length) {
-      el.innerHTML = '<div class="hint">Chưa có sự kiện.</div>';
-      return;
-    }
-    const list = document.createElement("div");
-    list.className = "gs-events-list";
-    for (const e of events.slice(0, 30)) {
-      const row = document.createElement("div");
-      row.className = "gs-event";
-      row.innerHTML = `
-        <span class="badge ${e.state_to === "ERROR" ? "error" : ""}">${App.esc(e.state_from)} → ${App.esc(e.state_to)}</span>
-        <span class="meta">${App.esc((e.message || "").slice(0, 80))}</span>
-      `;
-      list.appendChild(row);
-    }
-    el.appendChild(list);
+    // Bỏ hiển thị event log trên UI (chỉ giữ hàm cho tương thích nếu cần).
   }
 
   $("gsStart").onclick = start;

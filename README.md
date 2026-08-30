@@ -1,6 +1,6 @@
 # AutoTool — Tool đa profile cho game bài
 
-Ứng dụng desktop (Electron + FastAPI + Camoufox) quản lý nhiều profile/tài khoản game, mỗi profile có **fingerprint chống phát hiện riêng**, **proxy riêng**, **session đăng nhập riêng**. Cốt lõi là **Auto-flow tìm nhau & xả bài** cho các cổng game bài (HITCLUB, B52…) với hệ thống **license cho thuê** và **giới hạn tab**.
+Ứng dụng desktop (Electron + FastAPI + Patchright/Chromium) quản lý nhiều profile/tài khoản game, mỗi profile có **proxy riêng**, **session đăng nhập riêng**. Cốt lõi là **Auto-flow tìm nhau & xả bài** cho các cổng game bài (HITCLUB, B52…) với hệ thống **license cho thuê** và **giới hạn tab**.
 
 > Phiên bản hiện tại: **v1.2.0** — bản HITCLUB (`platform_config.py`).
 
@@ -28,9 +28,9 @@
 │  services/     nghiệp vụ                                      │
 │    browser_service (BrowserManager/TabSession) · page_pool    │
 │    account_service                                            │
-│  models/       dữ liệu + logic thuần                          │
-│    config_model · fingerprint_model · window_layout_model     │
-│    bundled_model · proxy_model                                │
+  │  models/       dữ liệu + logic thuần                          │
+    │    config_model · window_layout_model · bundled_model        │
+    │    proxy_model                                                │
 │  core/         logging · time_utils · events(WS hub) · utils  │
 │  game_sim/     hệ thống mô phỏng + adapter game thật          │
 │  license.py · platform_config.py                              │
@@ -51,15 +51,16 @@
 - Thêm profile đơn / **thêm nhanh** (prefix + count → `A01…A10`)
 - **Import tài khoản từ file .txt** (`nick|pass`) → tự gán cho profile chưa có account, tạo profile mới nếu hết
 - Gán **username/password** cho profile (dùng khi login game)
-- Lưu session riêng từng profile (cookies, localStorage)
+- Lưu session riêng từng profile (cookies, localStorage) — **luôn bật** cho mọi profile (cũ + mới)
+- **URL mặc định cấu hình được**: tab Cấu hình → "Đường dẫn mặc định" (mặc định `https://v.hitclub.latino/?a=hitclub`), dùng khi tạo/sửa profile không nhập URL — đổi khi domain game thay đổi (không cần hardcode)
 
 ### 2.2. Fingerprint & Proxy
-- **Camoufox** chống phát hiện: UA Chrome, OS (Windows/macOS/Linux) ngẫu nhiên + xoay vòng, locale
+- **Patchright (Chromium)** chống phát hiện: trình duyệt Chromium thật, patch driver để qua các detector (navigator.webdriver, command flags…); locale cấu hình được.
 - **Proxy gắn theo profile** (định dạng `IP:Port:User:Pass`, trống = IP máy)
 - **Tab quản lý proxy**: nhập/lưu danh sách → **Kiểm tra 1 hoặc tất cả** (song song) → proxy sống hiển thị `✓ IP (ms)`, proxy chết `✗ error` → **Áp dụng proxy sống** cho profile chưa có proxy
 
 ### 2.3. Browser
-- Mở nhiều cửa sổ Camoufox, **xếp lưới** tự động (cột, gap, margin, hướng row/col, kích thước cố định)
+- Mở nhiều cửa sổ Chromium, **xếp lưới** tự động (cột, gap, margin, hướng row/col, kích thước cố định)
 - Tên profile hiển thị trên tab browser
 - **Bundle browser vào installer** (lần đầu không tải ~500MB) — nếu chưa fetch, tự tải có progress bar
 
@@ -101,10 +102,10 @@ Panel **"Auto xả bài — tìm nhau"** trong Game view:
 ### 2.8. Scripts
 | Script | Chức năng |
 |---|---|
-| `install.bat` | setup dev: venv + pip + camoufox + npm |
+| `install.bat` | setup dev: venv + pip + patchright chromium + npm |
 | `start.bat` | chạy dev (backend + Electron) |
-| `test.bat` | chạy pytest (83 tests) |
-| `fetch-browser.bat` | tải lại Camoufox để bundle |
+| `test.bat` | chạy pytest (75 tests) |
+| `fetch-browser.bat` | tải lại Chromium để bundle |
 | `build.bat` | build installer |
 | `publish.ps1 -Version x.y.z` | bump version + build + upload GitHub Release |
 | `make_license.bat` | sinh license key (owner) |
@@ -127,14 +128,14 @@ Bổ sung cho phần auto-flow HITCLUB, nhằm khắc phục **"profile vẫn kh
 
 - **`game_sim/token_store.py` (mới)**: lưu token login mới nhất theo từng profile vào `DATA_DIR/game_sim_token.json`. Game HITCLUB trả **token MỚI mỗi lần login** (`POST /user/login.aspx` → `token: "1-<32hex>"`), token cũ bị expire → profile mở lại không login được. Token store chỉ ghi khi token **thay đổi** (bắt kịp login mới), là nguồn token tươi nhất.
 - **Tự lưu token khi login mới**: gắn vào `HitClubAdapter.join()` (sau khi login đọc `localStorage['token']`), `browser_service.save_open_sessions_storage()` (watchdog định kỳ), và `POST /api/autoplay/session-token` (capture thủ công).
-- **Mở lại profile dùng token mới nhất**: `browser_service._open_one` inject `web_storage` nhưng **ghi đè** `token`/`user_token` bằng token tươi từ token store (thay vì token cũ hết hạn trong `web_storage`).
-- **Khi đóng, xoá token live**: `close_session` đọc+ghi token mới nhất vào store rồi **xóa `token`/`user_token` khỏi localStorage** để app/editor khác không mang theo session cũ hết hạn.
+- **Mở lại profile giữ login nhờ Chromium persist native**: `launch_persistent_context(user_data_dir=profile_dir)` tự lưu localStorage/cookie xuống profile. `browser_service._open_one` chỉ **bơm web_storage bổ sung cho key còn thiếu** (không ghi đè token tươi đang nằm sẵn), và dùng token store làm **fallback** khi profile chưa có token nào.
+- **Khi đóng KHÔNG xoá token**: `close_session` đọc+ghi token mới nhất vào store + `web_storage` rồi để Chromium tự flush localStorage xuống profile (không còn xóa `token`/`user_token` — điều này trước đây làm mất login).
 - **Join bàn theo room id (chính xác)**:
   - `GET /api/autoplay/join-capture` — trích xuất `rooms[]`, `last_room_id`, `join_template` (msg `cmd=308` SEND đã bắt) từ `ws_capture.jsonl`.
   - `POST /api/autoplay/join-by-id` — ép 1 profile join đúng bàn `rid` (ưu tiên gửi qua **game socket đã bắt**; fallback **WS phụ** `join_by_id_side` — mở socket riêng từ page, không reload, không logout).
   - `GET /api/autoplay/list-rooms` — liệt kê bàn `cmd=300` qua kênh phụ, tìm bàn trống `uC=0`.
   - `POST /api/autoplay/reconnect-ws` — toggle offline→online để game **mở lại WS** (bắt socket thật, không reload/logout), dùng cho gửi lệnh join qua socket authenticated của chính account.
-- **Không còn reload phá session**: `_page()` và `debug-ws-hook` đã bỏ `page.reload()` (game này **không giữ login qua reload** — login gắn với session WebSocket sống). `debug-ws-hook` chỉ reload khi truyền `reload:true`.
+- **Không còn reload phá session**: `_page()`, `debug-ws-hook` và `_open_one` đều **không còn gọi `page.reload()`** (game này **không giữ login qua reload** — login gắn với session WebSocket sống). `debug-ws-hook` chỉ reload khi truyền `reload:true`.
 - **Sửa bug parse WS SEND frame**: frame SEND là `[6,"Simms","channelPlugin",{payload}]` → payload ở **index 3** (không phải index 1 như RECV). Helper `_find_cmd_payload(arr)` quét đúng index — trước đây `_capture_room` không bao giờ bắt được template join thật (luôn dùng template đoán cứng).
 - **Sửa `_verify_same_room`**: trước đây đọc `cmd=22007.dMs` — đây là **chat**, không phải người chơi. Nay check `cmd=202.ps[].dn` và `cmd=100.dn` (danh sách người chơi thật trong bàn).
 
@@ -150,7 +151,7 @@ Bổ sung cho phần auto-flow HITCLUB, nhằm khắc phục **"profile vẫn kh
 POST /api/browser/open
 → kiểm tra license.max_tabs (còn slot?)
 → BrowserManager.open_sessions(accounts)   # pool không mở trùng account
-→ mỗi session: AsyncCamoufox(headless=False) + proxy + UA + locale
+→ mỗi session: launch_persistent_context(Chromium) + proxy + locale
 → gắn tên profile vào tab → xếp lưới (compute_grid)
 → push events "opened"/"closed" qua WebSocket
 ```
@@ -172,7 +173,7 @@ Mọi điểm vào mở browser / chạy auto-flow đều gọi `license.max_tab
 Yêu cầu: Python 3.11+, Node.js 18+.
 
 ```powershell
-install.bat    # lần đầu: venv + pip + camoufox fetch + npm install
+install.bat    # lần đầu: venv + pip + patchright install chromium + npm install
 start.bat      # chạy dev hàng ngày
 test.bat       # chạy test suite
 ```
@@ -267,7 +268,7 @@ Còn lại:
 - **Multi-table** song song (nhiều room cùng lúc)
 - Captcha giải quyết (nếu gặp) — reCAPTCHA enterprise trên HITCLUB
 - Tối ưu bộ nhớ khi chạy 10 tab
-- Hook login/anti-detect theo từng nền tảng (selenium/camoufox tùy cổng game)
+- Hook login/anti-detect theo từng nền tảng (playwright/patchright tùy cổng game)
 
 ### 6.5. 🟡 Test & chất lượng
 - Test end-to-end với game thật (sau khi có capture)

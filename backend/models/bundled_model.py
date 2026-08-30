@@ -1,4 +1,4 @@
-"""Model tìm và copy bundled browser từ resources vào INSTALL_DIR."""
+"""Model tìm và copy bundled browser (Chromium) từ resources vào Playwright cache."""
 import logging
 import os
 import shutil
@@ -36,57 +36,91 @@ def get_bundled_browser_dir() -> Path | None:
     return None
 
 
-def install_bundled_browser(bundled_dir: Path) -> bool:
-    """Copy thư mục bundled browsers/<repo>/<version>-<build>/* sang INSTALL_DIR.
+def get_extension_dir() -> Path | None:
+    """Tìm thư mục Chrome extension WS bridge, copy sang path AN TOÀN nếu cần.
 
-    Trả về True nếu copy thành công và có ít nhất 1 bản hợp lệ.
+    Chromium `--load-extension` bỏ qua path chứa dấu cách/ký tự non-ASCII
+    (vd "DỰ ÁN KHÁCH") — nên nếu source có dấu cách sẽ copy sang
+    %LOCALAPPDATA%/autotool-extension rồi trả về path an toàn đó.
+
+    Thứ tự tìm source:
+    1. Env TABMANAGER_EXTENSION
+    2. PyInstaller _MEIPASS/extension
+    3. Dev: <backend>/extension (cạnh models/)
     """
-    from camoufox.multiversion import (
-        BROWSERS_DIR,
-        COMPAT_FLAG,
-        INSTALL_DIR,
-        set_active,
-    )
+    src = None
+    env = os.environ.get("TABMANAGER_EXTENSION")
+    if env:
+        p = Path(env)
+        if (p / "manifest.json").exists():
+            src = p
 
+    if src is None:
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            p = Path(meipass) / "extension"
+            if (p / "manifest.json").exists():
+                src = p
+
+    if src is None:
+        dev = Path(__file__).resolve().parent.parent / "extension"
+        if (dev / "manifest.json").exists():
+            src = dev
+
+    if src is None:
+        return None
+
+    # Nếu source path có dấu cách hoặc non-ASCII -> copy sang nơi an toàn
+    raw = str(src)
+    if " " in raw or any(ord(c) > 127 for c in raw):
+        local = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+        safe = Path(local) / "autotool-extension"
+        try:
+            if not (safe / "manifest.json").exists() or (safe / "manifest.json").read_text(encoding="utf-8") != (src / "manifest.json").read_text(encoding="utf-8"):
+                safe.mkdir(parents=True, exist_ok=True)
+                for f in src.iterdir():
+                    if f.is_file():
+                        shutil.copy2(f, safe / f.name)
+                log.info("copied extension -> %s", safe)
+            return safe
+        except Exception as e:
+            log.warning("copy extension fail: %s", e)
+            return src
+    return src
+
+
+def _playwright_browsers_dir() -> Path:
+    """Thư mục cache browser của Playwright/Patchright."""
+    base = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if base:
+        return Path(base)
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        return Path(local) / "ms-playwright"
+    return Path.home() / ".cache" / "ms-playwright"
+
+
+def install_bundled_browser(bundled_dir: Path) -> bool:
+    """Copy thư mục bundled `chromium-*/*` sang Playwright browsers dir.
+
+    Trả về True nếu copy thành công ít nhất 1 bản hợp lệ.
+    """
     if not bundled_dir.exists():
         return False
 
-    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-    BROWSERS_DIR.mkdir(parents=True, exist_ok=True)
+    target = _playwright_browsers_dir()
+    target.mkdir(parents=True, exist_ok=True)
 
-    src_repos = [d for d in bundled_dir.iterdir() if d.is_dir()]
-    if not src_repos:
-        log.warning("bundled browser dir rỗng: %s", bundled_dir)
-        return False
+    copied = False
+    for src in bundled_dir.iterdir():
+        if not src.is_dir():
+            continue
+        dst = target / src.name
+        if dst.exists():
+            log.info("bundled browser %s đã có sẵn, bỏ qua copy", dst)
+            continue
+        log.info("copy bundled browser %s -> %s", src, dst)
+        shutil.copytree(src, dst)
+        copied = True
 
-    active_set = False
-    for src_repo in src_repos:
-        dst_repo = BROWSERS_DIR / src_repo.name
-        dst_repo.mkdir(parents=True, exist_ok=True)
-        for src_version in src_repo.iterdir():
-            if not src_version.is_dir():
-                continue
-            dst_version = dst_repo / src_version.name
-            if dst_version.exists() and (dst_version / "version.json").exists():
-                log.info("bundled browser %s đã có sẵn, bỏ qua copy", dst_version)
-            else:
-                if dst_version.exists():
-                    shutil.rmtree(dst_version)
-                log.info("copy bundled browser %s -> %s", src_version, dst_version)
-                shutil.copytree(src_version, dst_version)
-
-            rel = dst_version.relative_to(INSTALL_DIR).as_posix()
-            if not active_set:
-                try:
-                    set_active(rel)
-                    active_set = True
-                except Exception:
-                    pass
-
-    if active_set:
-        try:
-            COMPAT_FLAG.touch()
-        except Exception:
-            pass
-
-    return active_set
+    return copied

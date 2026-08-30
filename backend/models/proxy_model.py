@@ -1,4 +1,4 @@
-"""Model proxy: chuyển chuỗi proxy do người dùng nhập sang config Playwright/Camoufox."""
+"""Model proxy: chuyển chuỗi proxy do người dùng nhập sang config Playwright."""
 
 
 def parse_proxy(raw: str) -> dict | None:

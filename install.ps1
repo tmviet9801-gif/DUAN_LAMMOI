@@ -29,7 +29,7 @@ if (-not (Test-Path $VenvPython)) {
     Write-Host "  Venv da co san" -ForegroundColor Green
 }
 
-Step 2 5 "Cai Python packages (fastapi, camoufox, pyinstaller...)"
+Step 2 5 "Cai Python packages (fastapi, patchright, pyinstaller...)"
 & $VenvPython -m pip install --disable-pip-version-check -q --upgrade pip
 if ($LASTEXITCODE -ne 0) { throw "pip upgrade that bai" }
 & $VenvPython -m pip install --disable-pip-version-check -q -r (Join-Path $Backend "requirements.txt")
@@ -37,11 +37,11 @@ if ($LASTEXITCODE -ne 0) { throw "pip upgrade that bai" }
 if ($LASTEXITCODE -ne 0) { throw "pip install that bai" }
 Write-Host "  Da cai xong Python packages" -ForegroundColor Green
 
-Step 3 5 "Tai Camoufox browser (de bundle vao installer)..."
+Step 3 5 "Tai Chromium browser (de bundle vao installer)..."
 $env:PYTHONIOENCODING = "utf-8"
-& $VenvPython -m camoufox fetch
-if ($LASTEXITCODE -ne 0) { throw "camoufox fetch that bai" }
-Write-Host "  Camoufox browser da san sang" -ForegroundColor Green
+& $VenvPython -m patchright install chromium
+if ($LASTEXITCODE -ne 0) { throw "patchright install chromium that bai" }
+Write-Host "  Chromium browser da san sang" -ForegroundColor Green
 
 Step 4 5 "Cai Node packages (electron, electron-builder)..."
 Push-Location $App
@@ -58,5 +58,5 @@ Write-Host ""
 Write-Host "Cac lenh tiep theo co the dung:" -ForegroundColor Cyan
 Write-Host "  start.bat         - chay dev (backend + electron)" -ForegroundColor Gray
 Write-Host "  build.bat         - build installer (se bundle browser vao)" -ForegroundColor Gray
-Write-Host "  fetch-browser.bat - tai lai Camoufox browser khi co phien ban moi" -ForegroundColor Gray
+Write-Host "  fetch-browser.bat - tai lai Chromium browser khi co phien ban moi" -ForegroundColor Gray
 Write-Host ""

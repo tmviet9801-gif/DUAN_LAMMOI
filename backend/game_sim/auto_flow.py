@@ -76,6 +76,15 @@ class AutoFlow:
     async def _sniff(self, page):
         await self.adapter.sniffer.drain(page)
 
+    def _sync_room(self):
+        """Đồng bộ room_id + join_template từ flow xuống adapter.
+
+        BUG cũ: flow set `adapter._room_id` nhưng KHÔNG set `adapter._join_template`
+        nên `_join_room_by_id` luôn trả False (không gửi được lệnh join).
+        """
+        self.adapter._room_id = self._room_id
+        self.adapter._join_template = self._join_template
+
     async def _shot_all(self, label):
         """Chụp màn hình tất cả profile ở 1 bước (để debug canvas)."""
         for m in self.members:
@@ -106,36 +115,54 @@ class AutoFlow:
             return False
         return True
 
+    def _build_join_template(self, room: dict):
+        """Dựng template join theo protocol THẬT: [3,"Simms",1,"{room_id}"]."""
+        return '[3,"Simms",1,"{room_id}"]'
+
     async def _find_anchor(self):
+        """Tìm acc ANCHOR: acc vào 1 bàn TRỐNG (uC=0) qua WS (cmd=305 room list)
+        + join cmd=308. Không phụ thuộc click tọa độ (account đã login sẵn).
+
+        Nếu chưa có bàn trống: LẶP LẠI tìm (nhiều vòng, chờ giữa các vòng) cho
+        tới khi A vào được bàn trống — sau đó mới đến bước B join.
+        """
         self._set_phase("SEARCHING")
-        for m in self.members:
+        max_cycles = max(1, int(self.game.get("search_max_cycles", 8)))
+        for cycle in range(max_cycles):
             if self.stop_event.is_set():
                 return None
-            if m["phase"] == "ERROR":
-                continue
-            name = m["name"]
-            page = await self.adapter._page(name)
-            if not page:
-                continue
-            rid = await self.adapter._find_empty_room(page)
-            if rid:
+            for m in self.members:
+                if m["phase"] == "ERROR":
+                    continue
+                name = m["name"]
+                page = await self.adapter._page(name)
+                if not page:
+                    continue
+                room = await self.adapter._find_empty_room(page, max_tries=3, wait=2, strict=True)
+                if not room:
+                    continue  # chưa có bàn trống -> member kế tiếp / vòng sau
+                rid = room["rid"]
+                self._join_template = self._build_join_template(room)
+                self._room_id = rid
+                self._sync_room()
+                if not await self.adapter._join_room_by_id(page):
+                    self._add_log(f"{name}: gửi join bàn {rid} thất bại (vòng {cycle + 1}/{max_cycles})")
+                    continue
+                # Xác minh A thực sự vào bàn (cmd=305/308 recv ri.rid)
+                entered = await self.adapter._page_current_room(page)
+                if entered != rid:
+                    await asyncio.sleep(float(self.game.get("join_wait", 2)))
+                    await self.adapter._join_room_by_id(page)
+                    entered = await self.adapter._page_current_room(page)
+                if entered != rid:
+                    self._add_log(f"{name}: chưa xác nhận vào bàn {rid} (current={entered}, vòng {cycle + 1})")
+                    continue
                 m["phase"] = "ANCHOR"
                 await self.adapter._screenshot(page, "hitclub_anchor")
                 self._add_log(f"Anchor = {name} — empty room rid={rid}")
-                # Anchor join phòng trống này
-                self.adapter._room_id = rid
-                if await self.adapter._join_room_by_id(page):
-                    self._add_log(f"Anchor đã vào phòng {rid}")
-                # Template join chuẩn: cmd=308 + rid placeholder
-                bet = int(self.game.get("bet", 100))
-                self._join_template = (
-                    '[6,"Simms","channelPlugin",{"cmd":308,"aid":1,"gid":1,'
-                    '"b":%d,"Mu":2,"iJ":true,"inc":false,"pwd":"1",'
-                    '"rid":{room_id}}]' % bet
-                )
-                self._room_id = rid
-                self._add_log(f"room_id={self._room_id} template={bool(self._join_template)}")
                 return name
+            self._add_log(f"Vòng {cycle + 1}/{max_cycles}: chưa có bàn trống — chờ và tìm lại")
+            await asyncio.sleep(float(self.game.get("search_wait", 3)))
         return None
 
     async def _capture_room(self):
@@ -143,10 +170,12 @@ class AutoFlow:
         await self.adapter._capture_room({"main_account": self.anchor, "support_account": ""})
         self._room_id = self.adapter._room_id
         self._join_template = self.adapter._join_template
+        self._sync_room()
         self._add_log(f"room_id={self._room_id} template={bool(self._join_template)}")
 
     async def _join_members(self):
         self._set_phase("JOINING")
+        self._sync_room()
         for m in self.members:
             if m["name"] == self.anchor or m["phase"] == "ERROR":
                 continue
@@ -154,8 +183,11 @@ class AutoFlow:
             if not page:
                 m["phase"] = "ERROR"
                 continue
-            ok = await self.adapter._join_room_by_id(page) if self._join_template else await self.adapter._click_retry(page, "join_btn", attempts=3)
+            self._sync_room()
+            ok = await self.adapter._join_room_by_id(page) if self._join_template else False
             m["phase"] = "JOINED" if ok else "ERROR"
+            if not ok:
+                self._add_log(f"{m['name']}: join bàn {self._room_id} thất bại — thử lại")
         self._set_phase("TABLE_READY")
         await asyncio.sleep(float(self.game.get("table_wait", 3)))
         # Xác nhận tất cả member đã vào cùng 1 phòng với anchor
@@ -164,12 +196,13 @@ class AutoFlow:
         if not same:
             self._add_log("Chưa xác nhận cùng phòng — thử join lại lần nữa")
             retry = 0
-            while retry < 2 and not same:
+            while retry < 3 and not same:
                 for m in self.members:
                     if m["name"] == self.anchor or m["phase"] == "ERROR":
                         continue
                     page = await self.adapter._page(m["name"])
                     if page:
+                        self._sync_room()
                         await self.adapter._join_room_by_id(page)
                 await asyncio.sleep(float(self.game.get("join_wait", 2)))
                 same = await self.adapter._verify_same_room(joined)
@@ -201,7 +234,9 @@ class AutoFlow:
             if not page:
                 continue
             await self._sniff(page)
-            msgs = self.adapter.sniffer.recent(limit=300)
+            from game_sim.ws_sniffer import _PAGE_RECV
+
+            msgs = _PAGE_RECV.get(id(page), []) or []
             guest_keys = self.patterns.get("guest_ready", ["sansang", "ready"])
             found = any(g in it.get("text", "").lower() for it in msgs for g in guest_keys)
             if found:

@@ -1,4 +1,4 @@
 @echo off
-title Tai Camoufox browser
+title Tai Chromium browser
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0fetch-browser.ps1"
 pause

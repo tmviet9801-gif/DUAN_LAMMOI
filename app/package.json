@@ -1,7 +1,7 @@
 {
   "name": "tab-manager",
   "version": "1.2.0",
-  "description": "Quản lý tài khoản, mở nhiều cửa sổ Camoufox xếp lưới trên màn hình",
+  "description": "Quản lý tài khoản, mở nhiều cửa sổ Chromium xếp lưới trên màn hình",
   "author": "TabManager",
   "main": "main.js",
   "scripts": {

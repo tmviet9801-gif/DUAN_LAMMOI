@@ -7,17 +7,29 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from models.config_model import get_profiles_dir, load_accounts, new_account_record, save_accounts
+from models.config_model import (
+    get_profiles_dir,
+    load_accounts,
+    load_config,
+    new_account_record,
+    save_accounts,
+)
 from platform_config import DEFAULT_PROFILE_URL
-from services.account_service import bulk_names, ensure_account_fingerprints
+from services.account_service import bulk_names
 
 log = logging.getLogger("account_controller")
 router = APIRouter()
 
 
+def _default_url() -> str:
+    """URL mặc định cho profile: ưu tiên cấu hình (default_url), fallback platform."""
+    url = (load_config().get("default_url") or "").strip()
+    return url or DEFAULT_PROFILE_URL
+
+
 class AccountIn(BaseModel):
     name: str
-    url: str = DEFAULT_PROFILE_URL
+    url: str = ""
     user_agent: str = ""
     proxy: str = ""
     save_session: bool = True
@@ -28,7 +40,7 @@ class AccountIn(BaseModel):
 class AccountBulkIn(BaseModel):
     prefix: str
     count: int = 1
-    url: str = DEFAULT_PROFILE_URL
+    url: str = ""
     user_agent: str = ""
     proxy: str = ""
     save_session: bool = True
@@ -55,7 +67,7 @@ def _split_proxies(raw: str) -> list[str]:
 
 @router.get("/api/accounts")
 async def get_accounts():
-    accounts = ensure_account_fingerprints(load_accounts())
+    accounts = load_accounts()
     for i, a in enumerate(accounts):
         a["index"] = i + 1
     return accounts
@@ -88,7 +100,7 @@ async def import_accounts(body: ImportAccountsIn):
             record = new_account_record(
                 {
                     "name": it["username"],
-                    "url": DEFAULT_PROFILE_URL,
+                    "url": _default_url(),
                     "user_agent": "",
                     "proxy": "",
                     "save_session": True,
@@ -107,7 +119,9 @@ async def import_accounts(body: ImportAccountsIn):
 
 @router.post("/api/accounts")
 async def add_account(a: AccountIn):
-    record = new_account_record(a.model_dump())
+    data = a.model_dump()
+    data["url"] = (data["url"] or "").strip() or _default_url()
+    record = new_account_record(data)
     accounts = load_accounts()
     accounts.append(record)
     save_accounts(accounts)
@@ -124,6 +138,7 @@ async def add_accounts_bulk(b: AccountBulkIn):
     count = max(1, min(int(b.count), 500))
     names = bulk_names(prefix, count)
     proxies = _split_proxies(b.proxy)
+    url = (b.url or "").strip() or _default_url()
     accounts = load_accounts()
     created = []
     for i, name in enumerate(names):
@@ -131,7 +146,7 @@ async def add_accounts_bulk(b: AccountBulkIn):
         record = new_account_record(
             {
                 "name": name,
-                "url": b.url,
+                "url": url,
                 "user_agent": b.user_agent,
                 "proxy": proxy,
                 "save_session": b.save_session,
@@ -220,9 +235,8 @@ async def delete_accounts_bulk(body: BulkDeleteIn, request: Request):
 async def save_account_session(account_id: str, request: Request):
     """Đọc toàn bộ localStorage + sessionStorage từ page đang mở và lưu vào account.
 
-    Game HITCLUB lưu token login trong localStorage nhưng Firefox/Playwright
-    KHÔNG flush localStorage xuống đĩa khi đóng persistent context — nên mở lại
-    bị mất login. Gọi endpoint này sau khi login để lưu chủ động.
+    Game HITCLUB lưu token login trong localStorage. Gọi endpoint này sau khi
+    login để lưu chủ động (mở lại profile không cần login lại).
     """
     manager = request.app.state.manager
     session = None

@@ -81,14 +81,6 @@
     $("afStatus").textContent = st.running
       ? `Đang chạy: ${st.phase_label} — anchor: ${st.anchor || "-"}, room: ${st.room_id || "-"}`
       : `Dừng — ${st.phase_label || "IDLE"}`;
-    const logEl = $("afLogs");
-    logEl.innerHTML = "";
-    for (const l of st.logs || []) {
-      const row = document.createElement("div");
-      row.className = "gs-event";
-      row.innerHTML = `<span class="meta">${App.esc(l.msg)}</span>`;
-      logEl.appendChild(row);
-    }
   }
 
   $("afStart").onclick = start;

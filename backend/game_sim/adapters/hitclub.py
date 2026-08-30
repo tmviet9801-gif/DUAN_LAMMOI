@@ -30,9 +30,11 @@ import asyncio
 import json
 import logging
 import re
+import time
 
 from core.time_utils import utcnow_iso
 from game_sim.game_adapter import GameAdapter
+from game_sim.protocol import ProtocolLearner
 from game_sim.token_store import TokenStore
 from game_sim.ws_sniffer import WsSniffer
 from models.config_model import DATA_DIR
@@ -55,6 +57,43 @@ def _find_cmd_payload(arr):
 
 
 class HitClubAdapter(GameAdapter):
+    # Socket game THẬT (bắt từ capture) — CHỈ dùng làm fallback cuối cùng khi
+    # chưa học được socket_urls từ live. Domain có thể đổi -> ưu tiên bắt từ
+    # socket live + protocol.json.
+    KNOWN_GAME_SOCKETS = [
+        "wss://carkgwaiz.hytsocesk.com/websocket",   # Simms (join/room)
+        "wss://mynisketgw.hytsocesk.com/websocket",  # MiniGame
+    ]
+
+    async def _side_urls(self, page):
+        """URL socket game cho WS phụ.
+
+        Thứ tự ưu tiên:
+        1. Socket live bắt được từ page (luôn đúng với phiên hiện tại)
+        2. protocol.json đã học (socket_urls)
+        3. KNOWN_GAME_SOCKETS (last resort)
+        """
+        from game_sim.ws_sniffer import _PAGE_SOCKETS
+        urls = []
+        for ws in _PAGE_SOCKETS.get(id(page), {}).values():
+            u = getattr(ws, "url", "")
+            if u:
+                urls.append(u)
+        # dedupe giữ thứ tự
+        seen = set()
+        ordered = [u for u in urls if not (u in seen or seen.add(u))]
+        # Học + lưu socket URLs từ live
+        if ordered:
+            self.proto.set("socket_urls", ordered)
+        # Bổ sung từ protocol.json (nếu chưa có trong live)
+        for u in self.proto.get("socket_urls", []) or []:
+            if u not in seen:
+                ordered.append(u)
+                seen.add(u)
+        # Last resort: known sockets
+        ordered += [u for u in self.KNOWN_GAME_SOCKETS if u not in seen]
+        return ordered
+
     def __init__(self, config: dict, account_lookup=None, page_pool=None):
         super().__init__(config)
         self.page_pool = page_pool
@@ -67,10 +106,13 @@ class HitClubAdapter(GameAdapter):
         self.use_room_flow = bool(self.game.get("use_room_flow", True))
         self.sniffer = WsSniffer(DATA_DIR / "game_sim_debug")
         self.token_store = TokenStore(DATA_DIR / "game_sim_token.json")
+        # Protocol Learner: học WS protocol từ capture, cache protocol.json
+        self.proto = ProtocolLearner(DATA_DIR / "protocol.json")
         self._pages = {}
         self._last_msgs = []
         self._room_id = None
         self._join_template = None
+        self._socket_ready = set()
 
     # ---- token helpers ----
     async def _read_token(self, page):
@@ -81,6 +123,10 @@ class HitClubAdapter(GameAdapter):
         except Exception:
             return ""
 
+    def _token_prefix(self):
+        """Token prefix đã học (vd "1-")."""
+        return self.proto.get("token_prefix", "1-")
+
     async def _restore_token(self, page, account_name):
         """Nếu page chưa có token hợp lệ, khôi phục token MỚI NHẤT từ token store.
 
@@ -88,8 +134,9 @@ class HitClubAdapter(GameAdapter):
         có thể đã expire. Ta ưu tiên token store (luôn là token mới nhất) để
         profile tự login mà không cần gõ lại tài khoản.
         """
+        prefix = self._token_prefix()
         live = await self._read_token(page)
-        if live and live.startswith("1-"):
+        if live and live.startswith(prefix):
             return live
         saved = self.token_store.get(account_name)
         if saved:
@@ -135,11 +182,13 @@ class HitClubAdapter(GameAdapter):
                 return None
             page = await self.page_pool.get_or_open(acc)
             if page:
-                # Chỉ cắm hook (KHÔNG reload) để không làm đứt session login
-                # của user — game này không giữ login qua reload.
+                # Cắm hook (KHÔNG reload) để không làm đứt session login của user.
+                # inject_workers: game tạo socket trong Web Worker — phải hook
+                # globalThis.WebSocket của worker để gửi lệnh join được.
                 try:
                     await self.sniffer.inject_playwright(page)
                     await self.sniffer.inject_init(page)
+                    await self.sniffer.inject_workers(page)
                 except Exception:
                     pass
                 self._pages[account_name] = page
@@ -223,9 +272,14 @@ class HitClubAdapter(GameAdapter):
         - Template: msg `cmd=308` SEND (join auto) + chèn `rid` vào.
         """
         anchor_name = ctx.get("main_account") or ""
-        # Lookup tên game thực tế (username) từ account record
+        # Lookup tên game thực tế (username) từ account record.
+        # Account lưu username qua localStorage KEY_USER_NAME, không có field username.
         acc = self.account_lookup.get(anchor_name) or {}
-        game_user = (acc.get("username") or anchor_name).lower().strip()
+        game_user = (acc.get("username") or "").strip()
+        if not game_user:
+            ws_local = (acc.get("web_storage") or {}).get("local", {}) or {}
+            game_user = str(ws_local.get("KEY_USER_NAME") or "").strip()
+        game_user = (game_user or anchor_name).lower().strip()
         page = await self._page(anchor_name)
         await self.sniffer.drain(page)
         msgs = self.sniffer.recent(limit=1500)
@@ -273,44 +327,35 @@ class HitClubAdapter(GameAdapter):
             log.info("chưa bắt được room id (không có cmd=308/305 recv phù hợp, game_user=%s)", game_user)
             return False
 
-        # 3) Xây dựng template join: lấy msg cmd=308 SEND gần nhất, thêm rid
-        template = None
-        for it in reversed(msgs):
-            if it.get("dir") not in ("send", "inject"):
-                continue
-            try:
-                arr = json.loads(it.get("text", ""))
-            except Exception:
-                continue
-            # SEND frame: payload ở arr[3]; RECV frame: arr[1]
-            idx, p = _find_cmd_payload(arr)
-            if idx is None or not isinstance(p, dict) or p.get("cmd") != 308:
-                continue
-            raw = dict(p)
-            raw.pop("rid", None)
-            raw["rid"] = rid
-            new_arr = list(arr)
-            new_arr[idx] = raw
-            template = json.dumps(new_arr, ensure_ascii=False)
-            break
-
-        if not template:
-            template = f'[6,"Simms","channelPlugin",{{"cmd":308,"aid":1,"gid":1,"b":100,"Mu":2,"iJ":true,"inc":false,"pwd":"1","rid":{rid}}}]'
-        template = template.replace(str(rid), "{room_id}")
-
+        # 3) Học protocol từ captured msgs + lấy join template từ ProtocolLearner
         self._room_id = rid
-        self._join_template = template
-        log.info("CAPTURED room_id=%s template=%s game_user=%s", self._room_id, template[:120], game_user)
+        learned = self.proto.learn_from_msgs(msgs, known_room_id=rid)
+        self._join_template = self.proto.get("join") or '[3,"Simms",1,"{room_id}"]'
+        log.info("CAPTURED room_id=%s template=%s learned=%s game_user=%s",
+                 self._room_id, self._join_template[:120], list(learned.keys()), game_user)
         return True
 
     async def _join_room_by_id(self, page):
-        """Cho member gửi message join với room id đã bắt được."""
+        """Cho member gửi message join với room id đã bắt được.
+
+        KHÔNG drain — để response join (cmd=305/308 recv) còn lại trong capture
+        của page, phục vụ `_page_current_room`/`_verify_same_room`.
+        """
         if not self._room_id or not self._join_template:
+            return False
+        if not await self._ensure_socket(page):
+            log.warning("join room: ws socket chưa sẵn sàng")
             return False
         msg = self._join_template.replace("{room_id}", str(self._room_id))
         try:
             ok = await self.sniffer.send_raw(page, msg)
             await asyncio.sleep(float(self.game.get("join_wait", 2)))
+            # Auto-ready (frame học từ protocol, mặc định cmd=363 aRd:true)
+            if ok:
+                try:
+                    await self.sniffer.send_raw(page, self.proto.get("ready"))
+                except Exception:
+                    pass
             log.info("sent join room_id=%s ok=%s", self._room_id, ok)
             return ok
         except Exception as e:
@@ -318,24 +363,15 @@ class HitClubAdapter(GameAdapter):
             return False
 
     def _build_join_msg(self, rid, template=None):
-        """Build message join cmd=308 với rid cụ thể.
+        """Build message join theo protocol đã học (ProtocolLearner).
 
-        Ưu tiên: template truyền vào > template đã bắt (_join_template) >
-        template mặc định. Template có placeholder {room_id} sẽ thay bằng rid;
-        nếu template chứa rid cũ (số) cũng được thay thế.
+        Ưu tiên: template param > _join_template (capture session) > proto > hardcoded.
         """
         rid = str(int(rid))
         tpl = template or self._join_template
-        if tpl:
-            msg = tpl.replace("{room_id}", rid)
-            if self._room_id and str(self._room_id) != rid:
-                msg = msg.replace(str(self._room_id), rid)
-            return msg
-        gid = int(self.game.get("gid", 1))
-        return (
-            f'[6,"Simms","channelPlugin",{{"cmd":308,"aid":1,"gid":{gid},'
-            f'"b":100,"Mu":2,"iJ":true,"inc":false,"pwd":"1","rid":{rid}}}]'
-        )
+        if tpl and "{room_id}" in tpl:
+            return tpl.replace("{room_id}", rid)
+        return self.proto.build_join_msg(rid, template=tpl)
 
     async def join_by_id(self, account_name, rid, template=None):
         """Ép account join CHÍNH XÁC vào bàn rid (dùng template bắt được).
@@ -404,12 +440,14 @@ class HitClubAdapter(GameAdapter):
             return {"ok": False, "rid": int(rid), "responses": [], "error": "no_page"}
         info = await self._game_ws_info(page)
         token = (info or {}).get("token", "")
-        urls = (info or {}).get("urls", []) or []
+        urls = await self._side_urls(page)
         if not token or not urls:
             return {"ok": False, "rid": int(rid), "responses": [],
                     "error": "no_token_or_socket", "token": bool(token), "urls": len(urls)}
         msg = self._build_join_msg(rid, template)
-        responses = await self.sniffer.side_command(page, urls, token, msg)
+        self.proto.learn_token_prefix(token)
+        responses = await self.sniffer.side_command(
+            page, urls, token, msg, connect_frame=self.proto.build_auth_frame(token))
         verified = False
         for r in responses:
             try:
@@ -436,12 +474,14 @@ class HitClubAdapter(GameAdapter):
             return {"ok": False, "error": "no_page", "rooms": []}
         info = await self._game_ws_info(page)
         token = (info or {}).get("token", "")
-        urls = (info or {}).get("urls", []) or []
+        urls = await self._side_urls(page)
         if not token or not urls:
             return {"ok": False, "error": "no_token_or_socket", "rooms": [],
                     "token": bool(token), "urls": len(urls)}
-        cmd = '[6,"Simms","channelPlugin",{"cmd":300,"aid":"1","gid":%d}]' % int(gid)
-        responses = await self.sniffer.side_command(page, urls, token, cmd)
+        cmd = self.proto.build_room_list_msg(gid)
+        self.proto.learn_token_prefix(token)
+        responses = await self.sniffer.side_command(
+            page, urls, token, cmd, connect_frame=self.proto.build_auth_frame(token))
         rooms = {}
         for r in responses:
             try:
@@ -464,59 +504,21 @@ class HitClubAdapter(GameAdapter):
     async def _verify_same_room(self, account_names):
         """Xác nhận tất cả account đã ở cùng 1 phòng.
 
-        Drain WS của mỗi account, kiểm tra cmd=308 recv có cùng rid,
-        hoặc cmd=305 recv có danh sách player chứa tên cả 2.
+        Đọc room id HIỆN TẠI của TỪNG page (cmd=305/308 recv ri.rid trong capture
+        riêng của page) — không phụ thuộc so tên profile với tên game.
         """
         if not self._room_id:
             return False
+        ok_map = {}
         for name in account_names:
             page = await self._page(name)
             if not page:
+                ok_map[name] = False
                 continue
-            await self.sniffer.drain(page)
-        msgs = self.sniffer.recent(limit=2000)
-        found = {name: False for name in account_names}
-        for it in msgs:
-            try:
-                arr = json.loads(it.get("text", ""))
-            except Exception:
-                continue
-            if not isinstance(arr, list) or len(arr) < 2:
-                continue
-            _, payload = _find_cmd_payload(arr)
-            if not isinstance(payload, dict):
-                continue
-            # cmd=308 recv: room info of current player
-            if payload.get("cmd") == 308 and isinstance(payload.get("ri"), dict):
-                r = payload["ri"].get("rid")
-                if r == self._room_id:
-                    # tìm tên user trong msg
-                    for name in account_names:
-                        if name.lower() in it.get("text", "").lower():
-                            found[name] = True
-            # cmd=202: trạng thái bàn, ps[] = danh sách người chơi (dn=display name)
-            if payload.get("cmd") == 202 and isinstance(payload.get("ps"), list):
-                for p in payload["ps"]:
-                    dn = (p.get("dn") or "").lower()
-                    for name in account_names:
-                        if name.lower() in dn:
-                            found[name] = True
-            # cmd=100: broadcast từng người chơi vào bàn (dn=display name)
-            if payload.get("cmd") == 100 and isinstance(payload.get("dn"), str):
-                dn = payload["dn"].lower()
-                for name in account_names:
-                    if name.lower() in dn:
-                        found[name] = True
-            # cmd=305/308 ri.rid khớp + fu.u là người tạo bàn
-            if payload.get("cmd") in (305, 308) and isinstance(payload.get("ri"), dict):
-                if payload["ri"].get("rid") == self._room_id:
-                    fu = payload.get("fu") or {}
-                    fu_u = str(fu.get("u") or "").lower()
-                    for name in account_names:
-                        if name.lower() in fu_u or name.lower() in it.get("text", "").lower():
-                            found[name] = True
-        ok = all(found.values())
-        log.info("verify same room %s: %s -> %s", self._room_id, found, ok)
+            rid = await self._page_current_room(page)
+            ok_map[name] = (rid == self._room_id)
+        ok = all(ok_map.values())
+        log.info("verify same room %s: %s -> %s", self._room_id, ok_map, ok)
         return ok
 
     # ---- hành động chính (có retry + screenshot) ----
@@ -550,43 +552,185 @@ class HitClubAdapter(GameAdapter):
         return None
 
     async def _wait_for_socket(self, page, timeout=20):
-        """Chờ Playwright WS socket được capture (carkgwaiz channel)."""
-        import time
-        from game_sim.ws_sniffer import _PAGE_WS
-        page_id = id(page)
+        """Chờ socket game SẴN SÀNG ĐỂ GỬI (qua JS hook).
+
+        `_INJECT_JS` (prototype patch) lưu socket vào `globalThis.__ws_instances`
+        (mảng) — kiểm tra mảng này trước, fallback `__ws_map` (extension cũ).
+        KHÔNG dùng `_PAGE_WS` (Playwright chỉ để ĐỌC) làm điều kiện.
+        """
+        JS_READY = """() => {
+            const inst = globalThis.__ws_instances || [];
+            for (const s of inst) { if (s && s.readyState === 1) return true; }
+            const map = globalThis.__ws_map || {};
+            for (const k in map) { if (map[k] && map[k].readyState === 1) return true; }
+            return false;
+        }"""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                ws = _PAGE_WS.get(page_id)
-                if ws is not None:
+                if await page.evaluate(JS_READY):
                     return True
             except Exception:
                 pass
+            for w in list(page.workers or []):
+                try:
+                    if await w.evaluate(JS_READY):
+                        return True
+                except Exception:
+                    pass
             await asyncio.sleep(0.5)
-        log.info("ws socket wait timeout page=%s, _PAGE_WS keys=%s", page_id, list(_PAGE_WS.keys())[:8])
+        log.info("ws socket (JS hook) wait timeout page=%s", id(page))
         return False
 
-    async def _find_empty_room(self, page, max_tries=6, wait=2, gid=1):
-        """Tìm 1 phòng (ưu tiên uC=0, fallback uC thấp nhất) qua WS cmd=300.
+    async def _reconnect_socket(self, page, wait=10):
+        """Buộc game mở lại WS (offline->online) để bắt socket qua hook.
 
-        Game HITCLUB: gửi [6,"Simms","channelPlugin",{"cmd":300,"aid":"1","gid":1}]
-        → recv cmd=300 chứa `rs:[{rid,uC,...}]`. Trả rid phù hợp nhất.
+        Socket game được tạo TRƯỚC khi ta cắm hook nên không bắt được. Toggle
+        offline làm WS rớt; khi online game tự reconnect -> socket mới được bắt.
+        KHÔNG reload, KHÔNG logout.
         """
-        req = '[6,"Simms","channelPlugin",{"cmd":300,"aid":"1","gid":%d}]' % gid
-        # Chờ socket sẵn sàng trước khi gửi lệnh
-        if not await self._wait_for_socket(page, timeout=20):
-            log.info("ws socket chưa sẵn sàng cho page %s", id(page))
-            return None
-        for i in range(max_tries):
+        try:
+            await self.sniffer.inject_playwright(page)
+            await self.sniffer.inject(page)
+            await self.sniffer.inject_workers(page)
+        except Exception:
+            pass
+        try:
+            await page.context.set_offline(True)
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+        try:
+            await page.context.set_offline(False)
+        except Exception:
+            pass
+        return await self._wait_for_socket(page, timeout=wait)
+
+    async def _ensure_socket(self, page, timeout=25):
+        """Đảm bảo có socket game live trong JS `__ws_map` (frame hoặc worker).
+
+        Vì gửi lệnh phải qua JS, luôn hook frame + worker trước; nếu chưa có
+        socket trong JS map thì reconnect (offline->online) để game mở lại socket
+        qua constructor đã hook. Reconnect tối đa 1 lần/trang (`_socket_ready`).
+        """
+        pid = id(page)
+        try:
+            await self.sniffer.inject(page)
+            await self.sniffer.inject_workers(page)
+        except Exception:
+            pass
+        if pid in self._socket_ready and await self._wait_for_socket(page, timeout=3):
+            return True
+        self._socket_ready.discard(pid)
+        await self._reconnect_socket(page, wait=timeout)
+        ok = await self._wait_for_socket(page, timeout=10)
+        if ok:
+            self._socket_ready.add(pid)
+        return ok
+
+    async def _page_current_room(self, page):
+        """Đọc room id HIỆN TẠI của page.
+
+        Ưu tiên cmd=308 recv (ri.rid) — phản hồi join của CHÍNH người chơi.
+        cmd=305 recv là BROADCAST danh sách bàn của mọi người, chỉ chấp nhận khi
+        `fu.u` khớp tên game của account (KEY_USER_NAME) — tránh nhầm bàn khác.
+        """
+        from game_sim.ws_sniffer import _PAGE_RECV
+
+        # game_user của account sở hữu page này
+        game_user = ""
+        for name, pg in (self._pages or {}).items():
+            if id(pg) == id(page):
+                acc = self.account_lookup.get(name) or {}
+                ws_local = (acc.get("web_storage") or {}).get("local", {}) or {}
+                game_user = str(ws_local.get("KEY_USER_NAME") or acc.get("username") or "").lower().strip()
+                break
+
+        items = _PAGE_RECV.get(id(page), []) or []
+        if not items:
             try:
-                await self.sniffer.send_raw(page, req)
+                items = items + (await page.evaluate("() => (window.__ws_capture || [])") or [])
             except Exception:
                 pass
-            await asyncio.sleep(wait)
-            await self.sniffer.drain(page)
-            msgs = self.sniffer.recent(limit=1500)
-            best = None
-            cmd300_count = 0
+        for it in reversed(items):
+            if it.get("dir") != "recv":
+                continue
+            try:
+                arr = json.loads(it.get("text", ""))
+            except Exception:
+                continue
+            if not isinstance(arr, list) or len(arr) < 2:
+                continue
+            _, p = _find_cmd_payload(arr)
+            if not isinstance(p, dict) or not isinstance(p.get("ri"), dict):
+                continue
+            r = p["ri"].get("rid")
+            if not (isinstance(r, (int, float)) and r > 0):
+                continue
+            if p.get("cmd") == 308:
+                return int(r)
+            if p.get("cmd") == 305:
+                fu = p.get("fu") or {}
+                u = str(fu.get("u") or "").lower().strip()
+                if u and game_user and (u == game_user or game_user in u or u in game_user):
+                    return int(r)
+        return None
+
+    async def _room_has_others(self, page):
+        """Kiểm tra bàn hiện tại có người chơi KHÁC ngoài mình không (cmd=202 ps).
+
+        Trả True/False nếu có dữ liệu, None nếu chưa thấy cmd=202.
+        """
+        from game_sim.ws_sniffer import _PAGE_RECV
+
+        items = _PAGE_RECV.get(id(page), []) or []
+        if not items:
+            try:
+                items = items + (await page.evaluate("() => (window.__ws_capture || [])") or [])
+            except Exception:
+                pass
+        for it in reversed(items):
+            if it.get("dir") != "recv":
+                continue
+            try:
+                arr = json.loads(it.get("text", ""))
+            except Exception:
+                continue
+            if not isinstance(arr, list) or len(arr) < 2:
+                continue
+            _, p = _find_cmd_payload(arr)
+            if isinstance(p, dict) and p.get("cmd") == 202 and isinstance(p.get("ps"), list):
+                return len(p["ps"]) > 1
+        return None
+
+    async def _leave_room(self, page):
+        """Rời bàn: gửi WS leave (frame học từ protocol) + click leave_btn (fallback)."""
+        try:
+            await self.sniffer.send_raw(page, self.proto.get("leave"))
+        except Exception:
+            pass
+        await self._click_retry(page, "leave_btn", attempts=2)
+        await asyncio.sleep(float(self.game.get("leave_wait", 1.5)))
+
+    async def _find_empty_room(self, page, max_tries=6, wait=2, gid=1, strict=False):
+        """Tìm 1 phòng qua WS.
+
+        THỰC TẾ: game KHÔNG trả cmd=300 rs[] — nó ĐẨY danh sách bàn qua
+        **cmd=305 recv** với `ri:{rid,uC,gid,b,Mu,rn,...}` (mỗi bàn 1 message).
+        Parse cả cmd=300 rs[] (fallback) và cmd=305 ri (nguồn chính).
+
+        strict=True: CHỈ trả phòng rỗng uC==0. strict=False: fallback uC thấp nhất <= 2.
+
+        Trả về dict {rid, gid, b, Mu, uC, rn} hoặc None.
+        """
+        req = self.proto.build_room_list_msg(gid)
+        if not await self._ensure_socket(page):
+            log.info("ws socket chưa sẵn sàng cho page %s", id(page))
+            return None
+
+        def _extract_rooms(msgs):
+            """Trích danh sách bàn từ cmd=300 rs[] và cmd=305 ri."""
+            rooms = {}
             for it in msgs:
                 try:
                     arr = json.loads(it.get("text", ""))
@@ -595,24 +739,61 @@ class HitClubAdapter(GameAdapter):
                 if not isinstance(arr, list) or len(arr) < 2:
                     continue
                 _, payload = _find_cmd_payload(arr)
-                if isinstance(payload, dict) and payload.get("cmd") == 300 and isinstance(payload.get("rs"), list):
-                    cmd300_count += 1
+                if not isinstance(payload, dict):
+                    continue
+                # cmd=300 recv rs[]
+                if payload.get("cmd") == 300 and isinstance(payload.get("rs"), list):
                     for room in payload["rs"]:
-                        if isinstance(room, dict):
-                            uc = room.get("uC", 99)
-                            rid = room.get("rid")
-                            if not (isinstance(rid, (int, float)) and rid > 0):
-                                continue
-                            # ưu tiên phòng rỗng (uC=0); fallback uC thấp nhất
-                            if uc == 0:
-                                log.info("found empty room rid=%s (rn=%s) attempt=%s", rid, room.get("rn"), i + 1)
-                                return int(rid)
-                            if best is None or uc < best[0]:
-                                best = (uc, int(rid), room.get("rn"))
-            if best and best[0] <= 2:
-                log.info("found low-occupancy room rid=%s (uC=%s, rn=%s) attempt=%s", best[1], best[0], best[2], i + 1)
-                return best[1]
-            log.info("cmd=300 no suitable room (cmd300=%s, best=%s) attempt %s/%s", cmd300_count, best, i + 1, max_tries)
+                        if isinstance(room, dict) and isinstance(room.get("rid"), (int, float)):
+                            rid = int(room["rid"])
+                            rooms[rid] = {
+                                "rid": rid,
+                                "uC": room.get("uC", 99),
+                                "b": room.get("b", 0),
+                                "gid": room.get("gid", gid),
+                                "Mu": room.get("Mu", 0),
+                                "rn": room.get("rn", ""),
+                            }
+                # cmd=305 recv ri (nguồn chính — game đẩy từng bàn)
+                if payload.get("cmd") == 305 and isinstance(payload.get("ri"), dict):
+                    ri = payload["ri"]
+                    if isinstance(ri.get("rid"), (int, float)) and ri["rid"] > 0:
+                        rid = int(ri["rid"])
+                        rooms[rid] = {
+                            "rid": rid,
+                            "uC": ri.get("uC", 99),
+                            "b": ri.get("b", 0),
+                            "gid": ri.get("gid", gid),
+                            "Mu": ri.get("Mu", 0),
+                            "rn": ri.get("rn", ""),
+                        }
+            return rooms
+
+        for i in range(max_tries):
+            try:
+                await self.sniffer.send_raw(page, req)
+            except Exception:
+                pass
+            await asyncio.sleep(wait)
+            await self.sniffer.drain(page)
+            # Đọc từ bộ nhớ _PAGE_RECV (riêng page) thay vì quét toàn bộ file JSONL
+            from game_sim.ws_sniffer import _PAGE_RECV
+
+            msgs = _PAGE_RECV.get(id(page), []) or []
+            rooms = _extract_rooms(msgs)
+            if rooms:
+                empty = [r for r in rooms.values() if r["uC"] == 0]
+                if empty:
+                    best = sorted(empty, key=lambda r: (r["gid"] != gid, r["b"]))[0]
+                    log.info("found empty room %s (uC=0) attempt=%s", best, i + 1)
+                    return best
+                if not strict:
+                    low = [r for r in rooms.values() if r["uC"] <= 2]
+                    if low:
+                        best = sorted(low, key=lambda r: (r["uC"], r["gid"] != gid))[0]
+                        log.info("found low-occupancy room %s (uC=%s) attempt=%s", best, best["uC"], i + 1)
+                        return best
+            log.info("cmd=305/300 no suitable room (rooms=%d, strict=%s) attempt %s/%s", len(rooms), strict, i + 1, max_tries)
         return None
 
     async def _discard_cards(self, page, member_name="x"):
@@ -629,6 +810,8 @@ class HitClubAdapter(GameAdapter):
                 ok = await self.sniffer.send_raw(page, cmd) or ok
             except Exception as e:
                 log.warning("discard_cmd send fail: %s", e)
+        if not ok:
+            log.warning("discard %s: chưa cấu hình discard_btn / discard_cmd trong game.clicks / game.ws_patterns", member_name)
         await asyncio.sleep(float(self.game.get("discard_wait", 1.5)))
         await self.sniffer.drain(page)
         await self._screenshot(page, f"hitclub_discard_{member_name}")
