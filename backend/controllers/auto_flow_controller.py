@@ -1538,20 +1538,67 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     if primary_sub_page:
         sub_w, sub_h = await _get_screen_size(primary_sub_page)
         
-        # GIAI ĐOẠN 1: Acc 1 mớm lá nhỏ nhất, Acc 2 tống ngay Heo / lá to bên phải dải bài
-        log.info("find-and-match: [Giai đoạn 1] Acc 1=%s mớm quân nhỏ, Acc 2=%s xả lá to/Heo để không bị thối...", 
-                 anchor_name, primary_sub_name)
-        # Acc 1 đánh quân bài nhỏ nhất (góc trái ngoài cùng x=0.200)
-        await anchor_page.mouse.click(int(sw_a * 0.200), int(sh_a * card_hand_y_ratio))
-        await asyncio.sleep(0.3)
-        await anchor_page.mouse.click(int(sw_a * btn_play_rx), int(sh_a * btn_play_ry))
-        await asyncio.sleep(1.0)
+        # BƯỚC 6.2: TỰ ĐỘNG NHẬN DIỆN BÊN NÀO ĐÁNH TRƯỚC (ACC 1 HAY ACC 2)
+        async def _check_has_turn(p):
+            if not p:
+                return False
+            try:
+                png = await p.screenshot(type="png")
+                im = Image.open(io.BytesIO(png))
+                w, h = im.size
+                btn_x = int(w * btn_play_rx)
+                btn_y = int(h * btn_play_ry)
+                r, g, b = im.getpixel((btn_x, btn_y))[:3]
+                # Nút ĐÁNH sáng rực khi tới lượt (màu cam/vàng: R > 185, G > 120, B < 100)
+                return (r > 185 and g > 120 and b < 100) or (r > 210 and g > 150)
+            except Exception:
+                return False
 
-        # Acc 2 chọn lá to nhất (góc phải x=0.720) để đè bài và giành lượt
-        await primary_sub_page.mouse.click(int(sub_w * 0.720), int(sub_h * card_hand_y_ratio))
-        await asyncio.sleep(0.3)
-        await primary_sub_page.mouse.click(int(sub_w * btn_play_rx), int(sub_h * btn_play_ry))
-        await asyncio.sleep(1.0)
+        first_turn = "MAIN_FIRST"
+        log.info("find-and-match: Đang quét nhận diện xem Acc 1=%s hay Acc 2=%s có lượt đi trước...", 
+                 anchor_name, primary_sub_name)
+        for _ in range(10):
+            if _GOM_BAN_STOP:
+                break
+            turn_sub = await _check_has_turn(primary_sub_page)
+            turn_main = await _check_has_turn(anchor_page)
+            if turn_sub and not turn_main:
+                first_turn = "SUB_FIRST"
+                break
+            elif turn_main and not turn_sub:
+                first_turn = "MAIN_FIRST"
+                break
+            await asyncio.sleep(0.3)
+
+        log.info("find-and-match: >>> KẾT QUẢ XÁC NHẬN LƯỢT ĐI ĐẦU TIÊN: [%s] <<<", first_turn)
+
+        # GIAI ĐOẠN 1: MỞ VÀNG / KHỞI ĐỘNG VÁN THEO ĐÚNG BÊN CÓ LƯỢT
+        if first_turn == "SUB_FIRST":
+            # TRƯỜNG HỢP ACC 2 (PHỤ) ĐI TRƯỚC (cầm 3 Bích hoặc thắng ván trước)
+            log.info("find-and-match: [Acc 2 đi trước] %s chủ động xả quân to/Heo ngay, %s BỎ LƯỢT nhường đường...", 
+                     primary_sub_name, anchor_name)
+            # Acc 2 đi ngay lá to/Heo ở góc phải
+            await primary_sub_page.mouse.click(int(sub_w * 0.720), int(sub_h * card_hand_y_ratio))
+            await asyncio.sleep(0.3)
+            await primary_sub_page.mouse.click(int(sub_w * btn_play_rx), int(sub_h * btn_play_ry))
+            await asyncio.sleep(1.0)
+            # Acc 1 lập tức BỎ LƯỢT (Pass) để Acc 2 tiếp tục quyền đánh
+            await anchor_page.mouse.click(int(sw_a * btn_pass_rx), int(sh_a * btn_pass_ry))
+            await asyncio.sleep(0.5)
+        else:
+            # TRƯỜNG HỢP ACC 1 (CHÍNH) ĐI TRƯỚC
+            log.info("find-and-match: [Acc 1 đi trước] %s mớm quân nhỏ góc trái, %s đè lá to/Heo để cướp lượt...", 
+                     anchor_name, primary_sub_name)
+            # Acc 1 đánh quân bài nhỏ nhất góc trái x=0.200
+            await anchor_page.mouse.click(int(sw_a * 0.200), int(sh_a * card_hand_y_ratio))
+            await asyncio.sleep(0.3)
+            await anchor_page.mouse.click(int(sw_a * btn_play_rx), int(sh_a * btn_play_ry))
+            await asyncio.sleep(1.0)
+            # Acc 2 chọn lá to nhất (góc phải x=0.720) để đè bài và giành lượt
+            await primary_sub_page.mouse.click(int(sub_w * 0.720), int(sub_h * card_hand_y_ratio))
+            await asyncio.sleep(0.3)
+            await primary_sub_page.mouse.click(int(sub_w * btn_play_rx), int(sub_h * btn_play_ry))
+            await asyncio.sleep(1.0)
 
         # GIAI ĐOẠN 2: Acc 2 liên tục xả bài tẩu tán, Acc 1 liên tục Pass để nhường lượt cho Acc 2
         # Quét lần lượt từ bài to về bài nhỏ (từ 0.660 xuống 0.260) để Acc 2 chỉ giữ lại 1 lá duy nhất tại 0.200
