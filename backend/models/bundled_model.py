@@ -76,12 +76,13 @@ def get_extension_dir() -> Path | None:
         local = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
         safe = Path(local) / "autotool-extension"
         try:
-            if not (safe / "manifest.json").exists() or (safe / "manifest.json").read_text(encoding="utf-8") != (src / "manifest.json").read_text(encoding="utf-8"):
-                safe.mkdir(parents=True, exist_ok=True)
-                for f in src.iterdir():
-                    if f.is_file():
-                        shutil.copy2(f, safe / f.name)
-                log.info("copied extension -> %s", safe)
+            safe.mkdir(parents=True, exist_ok=True)
+            for f in src.iterdir():
+                if f.is_file():
+                    target = safe / f.name
+                    if not target.exists() or target.stat().st_mtime < f.stat().st_mtime or target.stat().st_size != f.stat().st_size:
+                        shutil.copy2(f, target)
+            log.info("synced extension files -> %s", safe)
             return safe
         except Exception as e:
             log.warning("copy extension fail: %s", e)

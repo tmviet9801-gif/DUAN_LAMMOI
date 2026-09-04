@@ -75,7 +75,59 @@ _INJECT_JS = r"""
       else text = "[?]";
       G.__ws_capture.push({ ts: Date.now(), dir, text: String(text).slice(0, 8000) });
       if (G.__ws_capture.length > 3000) G.__ws_capture.splice(0, 1500);
+
+      if (text.startsWith("[") && text.includes('"cmd"')) {
+        try {
+          const arr = JSON.parse(text);
+          const p = (Array.isArray(arr) && arr.length > 1 && typeof arr[1] === "object") ? arr[1] : (arr.length > 3 && typeof arr[3] === "object" ? arr[3] : null);
+          if (p) {
+            if (p.cmd === 202) {
+              G.__room_players = p.ps || [];
+              G.__room_state = p.gS;
+              G.__last_room_202 = p;
+
+              // Tự động kiểm tra và phản ứng tức thời với khách lạ (out_guest)
+              if (G.__auto_protect && G.__auto_protect.out_guest) {
+                const known = (G.__auto_protect.known_names || []).map((x) => String(x).toLowerCase().trim());
+                const ps = p.ps || [];
+                let hasStranger = false;
+                for (const ply of ps) {
+                  const dn = String(ply.dn || "").toLowerCase().trim();
+                  const u = String(ply.u || "").toLowerCase().trim();
+                  const isKnown = known.some((k) => k && (k === dn || k === u || dn.indexOf(k) !== -1 || k.indexOf(dn) !== -1));
+                  if (!isKnown && (dn || u)) {
+                    hasStranger = true;
+                    break;
+                  }
+                }
+                if (hasStranger) {
+                  G.__stranger_detected = true;
+                  try {
+                    if (typeof G.__ws_send_channel === "function") {
+                      G.__ws_send_channel("Simms", '[4,"Simms",-1]');
+                    } else if (typeof G.__ws_send === "function") {
+                      G.__ws_send('[4,"Simms",-1]');
+                    }
+                  } catch (_) {}
+                }
+              }
+            } else if (p.cmd === 308 || p.cmd === 305) {
+              if (p.ri && p.ri.rid) G.__last_room_info = p.ri;
+            }
+          }
+        } catch (_) {}
+      }
     } catch (e) {}
+  };
+
+  const hookRecv = (ws) => {
+    try {
+      if (!ws || ws.__recv_hooked) return;
+      ws.__recv_hooked = true;
+      ws.addEventListener("message", (ev) => {
+        push("recv", ev.data);
+      });
+    } catch (_) {}
   };
 
   const register = (ws) => {
@@ -84,6 +136,7 @@ _INJECT_JS = r"""
         G.__ws_instances.push(ws);
         if (G.__ws_instances.length > 30) G.__ws_instances.shift();
       }
+      hookRecv(ws);
       const url = (ws.url || "");
       if (url) G.__ws_map[url] = ws;
     } catch (e) {}
@@ -93,6 +146,7 @@ _INJECT_JS = r"""
   const origSend = WebSocket.prototype.send;
   WebSocket.prototype.send = function (...args) {
     register(this);
+    hookRecv(this);
     push("send", args[0]);
     return origSend.apply(this, args);
   };

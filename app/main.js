@@ -61,6 +61,10 @@ function startBackend() {
   backend.on("exit", (code) => {
     console.log("[backend] exited", code);
     backend = null;
+    if (!app.isQuitting) {
+      console.log("[backend] tu dong khoi dong lai backend...");
+      setTimeout(startBackend, 1000);
+    }
   });
   return backend;
 }
@@ -173,17 +177,13 @@ function setupFs() {
 }
 
 app.whenReady().then(async () => {
-  const appVersion = app.getVersion();
-  const runningVersion = await getBackendVersion();
-  if (runningVersion === appVersion) {
-    console.log("[backend] da chay san, version khop, dung chung");
-  } else {
-    if (await backendAlreadyRunning()) {
-      console.log("[backend] version khac (app=%s backend=%s), kill + spawn lai", appVersion, runningVersion);
-      killPortOwner(PORT);
-    }
-    startBackend();
+  // Luôn dọn dẹp backend cũ mồ côi và spawn backend mới trực tiếp từ Electron
+  // để đảm bảo Chromium luôn hiển thị view trực tiếp trên màn hình vật lý của người dùng.
+  if (await backendAlreadyRunning()) {
+    console.log("[backend] kill backend cu de dam bao chay truc tiep tren desktop nguoi dung");
+    killPortOwner(PORT);
   }
+  startBackend();
   const ok = await waitForBackend();
   mainWindow = new BrowserWindow({
     width: 1280,

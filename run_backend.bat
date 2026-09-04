@@ -1,6 +1,7 @@
 @echo off
+chcp 65001 >nul
 title AutoTool Backend
-cd /d "c:\Users\Admin\Desktop\D? ?N KH?CH\DUAN_LAMMOI\backend"
+cd /d "%~dp0backend"
 echo [AutoTool] Khoi dong Backend...
 .venv\Scripts\python.exe main.py
 pause

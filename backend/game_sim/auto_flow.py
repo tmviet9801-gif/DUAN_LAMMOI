@@ -30,6 +30,8 @@ PHASE_LABELS = {
     "ANCHOR": "Đã thấy bàn (anchor)",
     "JOINING": "Join theo room id",
     "TABLE_READY": "Bàn đã đủ",
+    "STRANGER_DETECTED": "Phát hiện khách lạ (thoát bàn)",
+    "TABLE_BROKEN": "Bàn bị phá (đổi bàn)",
     "DISCARDING": "Xả bài",
     "WAITING_GUEST": "Chờ khách",
     "AUTO_START": "Tự bắt đầu",
@@ -51,6 +53,10 @@ class AutoFlow:
         self.clicks = self.game.get("clicks", {})
         self.auto_out = bool(config.get("auto_out", True))
         self.auto_start = bool(config.get("auto_start", False))
+        self.chong_pha = bool(config.get("chong_pha", True))
+        self.out_guest = bool(config.get("out_guest", True))
+        self.xa_delay_ms = int(config.get("xa_delay_ms", 1000))
+        self.known_names = set()
         self.capture = bool(self.game.get("capture", False))
         self.discard_repeat = max(1, int(self.game.get("discard_repeat", 1)))
         self.phase = "IDLE"
@@ -94,6 +100,21 @@ class AutoFlow:
                     await self.adapter._screenshot(page, f"{label}_{m['name']}")
             except Exception:
                 pass
+
+    def _build_known_names(self, profile_names):
+        """Khởi tạo danh sách tên các account phe mình để phân biệt với khách lạ."""
+        self.known_names.clear()
+        for name in profile_names:
+            self.known_names.add(name.strip().lower())
+            acc = self.adapter.account_lookup.get(name) or {}
+            u = (acc.get("username") or "").strip()
+            if u:
+                self.known_names.add(u.lower())
+            ws_local = (acc.get("web_storage") or {}).get("local", {}) or {}
+            ku = (ws_local.get("KEY_USER_NAME") or "").strip()
+            if ku:
+                self.known_names.add(ku.lower())
+        self._add_log(f"Dàn account phe mình (known_names): {list(self.known_names)}")
 
     # ---- các bước ----
     async def _open_profiles(self, profile_names):
@@ -157,6 +178,18 @@ class AutoFlow:
                 if entered != rid:
                     self._add_log(f"{name}: chưa xác nhận vào bàn {rid} (current={entered}, vòng {cycle + 1})")
                     continue
+
+                # Cấu hình bảo vệ ngay trong page cho Anchor
+                await self.adapter._configure_inpage_protection(
+                    page, self.known_names, out_guest=self.out_guest, chong_pha=self.chong_pha
+                )
+                # Kiểm tra ngay xem có khách lạ nào đã ở trong bàn hoặc vừa nhảy vào không
+                diag = await self.adapter._check_has_stranger(page, self.known_names)
+                if diag.get("has_stranger"):
+                    await self.adapter._leave_room(page)
+                    self._add_log(f"{name}: Vừa vào bàn {rid} nhưng bị khách lạ {diag['strangers']} chen vào -> Rời bàn ngay!")
+                    continue
+
                 m["phase"] = "ANCHOR"
                 await self.adapter._screenshot(page, "hitclub_anchor")
                 self._add_log(f"Anchor = {name} — empty room rid={rid}")
@@ -173,9 +206,64 @@ class AutoFlow:
         self._sync_room()
         self._add_log(f"room_id={self._room_id} template={bool(self._join_template)}")
 
-    async def _join_members(self):
+    async def _check_table_protection(self) -> bool:
+        """Kiểm tra bảo vệ bàn:
+        1. Thoát khi có khách lạ (out_guest): nếu có người không thuộc known_names -> rời bàn ngay.
+        2. Chống phá (chong_pha): nếu phát hiện khách lạ hoặc bàn bị kẹt -> rời bàn ngay.
+        Trả về True nếu an toàn, False nếu đã kích hoạt rời bàn bảo vệ.
+        """
+        if not self.out_guest and not self.chong_pha:
+            return True
+
+        for m in self.members:
+            if m.get("phase") == "ERROR":
+                continue
+            name = m["name"]
+            page = await self.adapter._page(name)
+            if not page:
+                continue
+
+            diag = await self.adapter._check_has_stranger(page, self.known_names)
+            if diag.get("has_stranger"):
+                strangers = diag.get("strangers", [])
+                self._add_log(f"CẢNH BÁO: Phát hiện khách lạ {strangers} trong bàn!")
+
+                if self.out_guest:
+                    self._set_phase("STRANGER_DETECTED")
+                    self._add_log("Kích hoạt bảo vệ (out_guest): tất cả tài khoản tự động rời bàn!")
+                    for mem in self.members:
+                        pg = await self.adapter._page(mem["name"])
+                        if pg:
+                            await self.adapter._leave_room(pg)
+                    return False
+
+                if self.chong_pha:
+                    gs = await self.adapter._get_game_state(page)
+                    if gs == 0:  # Đang chờ mà có khách phá
+                        self._set_phase("TABLE_BROKEN")
+                        self._add_log("Kích hoạt chống phá (chong_pha): bàn bị kẹt/phá, rời bàn đổi bàn mới!")
+                        for mem in self.members:
+                            pg = await self.adapter._page(mem["name"])
+                            if pg:
+                                await self.adapter._leave_room(pg)
+                        return False
+
+        return True
+
+    async def _join_members(self) -> bool:
+        """Gom bàn: Cho tất cả các tài khoản phụ (Joiners) vào cùng bàn của Anchor."""
         self._set_phase("JOINING")
         self._sync_room()
+
+        # Kiểm tra trước: Anchor có bị khách lạ chen chân trong lúc chờ Joiner không?
+        anchor_page = await self.adapter._page(self.anchor)
+        if anchor_page:
+            diag_anchor = await self.adapter._check_has_stranger(anchor_page, self.known_names)
+            if diag_anchor.get("has_stranger"):
+                self._add_log(f"Bàn {self._room_id} bị khách lạ {diag_anchor['strangers']} chen chân trước khi Joiner kịp vào -> Thoát bàn để gom bàn khác!")
+                await self.adapter._leave_room(anchor_page)
+                return False
+
         for m in self.members:
             if m["name"] == self.anchor or m["phase"] == "ERROR":
                 continue
@@ -183,35 +271,47 @@ class AutoFlow:
             if not page:
                 m["phase"] = "ERROR"
                 continue
+
+            # Cấu hình bảo vệ thời gian thực cho Joiner
+            await self.adapter._configure_inpage_protection(
+                page, self.known_names, out_guest=self.out_guest, chong_pha=self.chong_pha
+            )
+
             self._sync_room()
             ok = await self.adapter._join_room_by_id(page) if self._join_template else False
             m["phase"] = "JOINED" if ok else "ERROR"
             if not ok:
-                self._add_log(f"{m['name']}: join bàn {self._room_id} thất bại — thử lại")
+                self._add_log(f"{m['name']}: join bàn {self._room_id} thất bại (bàn có thể đã full do khách lạ) — thoát và thử lại")
+                # Hủy bàn cho tất cả nick
+                for mem in self.members:
+                    pg = await self.adapter._page(mem["name"])
+                    if pg:
+                        await self.adapter._leave_room(pg)
+                return False
+
         self._set_phase("TABLE_READY")
-        await asyncio.sleep(float(self.game.get("table_wait", 3)))
+        await asyncio.sleep(float(self.game.get("table_wait", 2.0)))
+
         # Xác nhận tất cả member đã vào cùng 1 phòng với anchor
         joined = [m["name"] for m in self.members if m["phase"] != "ERROR"]
-        same = await self.adapter._verify_same_room(joined) if len(joined) >= 2 else False
-        if not same:
-            self._add_log("Chưa xác nhận cùng phòng — thử join lại lần nữa")
-            retry = 0
-            while retry < 3 and not same:
-                for m in self.members:
-                    if m["name"] == self.anchor or m["phase"] == "ERROR":
-                        continue
-                    page = await self.adapter._page(m["name"])
-                    if page:
-                        self._sync_room()
-                        await self.adapter._join_room_by_id(page)
-                await asyncio.sleep(float(self.game.get("join_wait", 2)))
-                same = await self.adapter._verify_same_room(joined)
-                retry += 1
+        if len(joined) >= 2:
+            same = await self.adapter._verify_same_room(joined)
             if not same:
-                self._add_log("Vẫn chưa cùng phòng sau retry")
+                self._add_log("Không hội tụ đủ vào cùng bàn (có thể bàn full do khách lạ) -> Thoát bàn!")
+                for mem in self.members:
+                    pg = await self.adapter._page(mem["name"])
+                    if pg:
+                        await self.adapter._leave_room(pg)
+                return False
+
         await self._shot_all("table_ready")
 
+        # Kiểm tra bảo vệ bàn ngay sau khi cả dàn đã vào phòng
+        safe = await self._check_table_protection()
+        return safe
+
     async def _discard(self):
+        """Xả bài tự động cho từng tài khoản với độ trễ xa_delay_ms."""
         self._set_phase("DISCARDING")
         for rep in range(self.discard_repeat):
             for m in self.members:
@@ -220,9 +320,9 @@ class AutoFlow:
                 page = await self.adapter._page(m["name"])
                 if not page:
                     continue
-                ok = await self.adapter._discard_cards(page, m["name"])
+                ok = await self.adapter._discard_cards(page, m["name"], delay_ms=self.xa_delay_ms)
                 m["phase"] = "DISCARDED" if ok else m.get("phase", "OPENED")
-            self._add_log(f"Xả bài vòng {rep + 1}/{self.discard_repeat}")
+            self._add_log(f"Xả bài vòng {rep + 1}/{self.discard_repeat} (độ trễ {self.xa_delay_ms}ms)")
 
     async def _wait_guest(self):
         self._set_phase("WAITING_GUEST")
@@ -255,6 +355,8 @@ class AutoFlow:
         if not await self._open_profiles(profile_names):
             return
 
+        self._build_known_names(profile_names)
+
         if self.capture:
             self._set_phase("CAPTURE")
             self._add_log("Chế độ CAPTURE: chơi thủ công để ghi protocol. Dừng khi xong.")
@@ -267,31 +369,54 @@ class AutoFlow:
             self._set_phase("DONE")
             return
 
-        # 2) tìm bàn trống: acc đầu thấy = anchor
-        self.anchor = await self._find_anchor()
-        if not self.anchor:
-            self._set_phase("ERROR")
-            self._add_log("Không acc nào tìm thấy bàn trống — kiểm tra tọa độ find_table_btn / ws_patterns.table_found")
-            await self._shot_all("search_fail")
-            return
-        self._set_phase("ANCHOR")
+        max_table_cycles = max(1, int(self.game.get("max_table_cycles", 5)))
+        for table_cycle in range(max_table_cycles):
+            if self.stop_event.is_set():
+                return
 
-        # 3) bắt room id + join
-        if not self._room_id:
-            await self._capture_room()
-        await self._join_members()
+            self._room_id = None
+            self._join_template = None
+            self._sync_room()
 
-        # 4) xả bài
-        await self._discard()
+            # 2) tìm bàn trống: acc đầu thấy = anchor
+            self.anchor = await self._find_anchor()
+            if not self.anchor:
+                self._set_phase("ERROR")
+                self._add_log("Không acc nào tìm thấy bàn trống — kiểm tra lại mạng / kết nối")
+                await self._shot_all("search_fail")
+                return
+            self._set_phase("ANCHOR")
 
-        if self.auto_out:
+            # 3) bắt room id + gom các nick còn lại vào chung bàn
+            if not self._room_id:
+                await self._capture_room()
+
+            joined_ok = await self._join_members()
+            if not joined_ok:
+                self._add_log(f"Gom bàn vòng {table_cycle + 1}: Có khách lạ hoặc bị phá, đã thoát bàn an toàn. Chờ 3s tìm bàn mới...")
+                await asyncio.sleep(3.0)
+                continue
+
+            # 4) tự động xả bài (có delay)
+            await self._discard()
+
+            if self.auto_out:
+                # Tự rời bàn sau khi xả
+                for m in self.members:
+                    page = await self.adapter._page(m["name"])
+                    if page:
+                        await self.adapter._leave_room(page)
+                self._set_phase("DONE")
+                self._add_log("auto_out: đã tự rời bàn — chu trình hoàn tất an toàn.")
+                return
+
+            # 5) chờ khách + tự bắt đầu (nếu không auto_out)
+            await self._wait_guest()
             self._set_phase("DONE")
-            self._add_log("auto_out: tự rời — chu trình kết thúc")
             return
 
-        # 5) chờ khách + tự bắt đầu
-        await self._wait_guest()
         self._set_phase("DONE")
+        self._add_log("Đã kết thúc chu trình gom bàn.")
 
     def stop(self):
         self.stop_event.set()

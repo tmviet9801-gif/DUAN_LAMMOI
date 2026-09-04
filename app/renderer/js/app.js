@@ -26,7 +26,7 @@
 
 refresh();
 App.connectWs();
-App.switchView("gamesim");
+App.switchView("home");
 App.initProfilesTableControls();
 App.setupUpdater();
 })();

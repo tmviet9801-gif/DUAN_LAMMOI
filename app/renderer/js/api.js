@@ -15,8 +15,12 @@
 
   window.App.runApi = async function runApi(path, options, okMsg, errMsg) {
     try {
-      await window.App.api(path, options);
+      const res = await window.App.api(path, options);
       if (okMsg) window.App.toast(okMsg, "success");
+      if (typeof window.App.refresh === "function") {
+        window.App.refresh();
+      }
+      return res;
     } catch (e) {
       window.App.toast(errMsg || `Lỗi: ${e.message}`, "error");
     }

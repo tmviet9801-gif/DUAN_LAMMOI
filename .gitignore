@@ -20,3 +20,9 @@ Desktop.ini
 
 # Env / secrets
 .env
+
+# Scratch and test caches
+scratch/
+backend/scratch/
+backend/scratch_analyze.py
+.pytest_cache/

@@ -110,15 +110,17 @@ def save_accounts(accounts: list):
 
 
 def new_account_record(account: dict, existing: list | None = None) -> dict:
-    """Tạo record account mới (id, profile_dir).
+    """Tạo record account mới (id, profile_dir, user_agent).
 
-    Luôn bật lưu session riêng (save_session=True) cho mọi profile.
-    `existing`: giữ tham số để tương thích chữ ký cũ (không còn dùng).
+    Luôn bật lưu session riêng (save_session=True) và cấp phát User-Agent cho mọi profile.
     """
+    from core.device_profiles import assign_user_agent_if_empty
+
     account_id = str(uuid.uuid4())
     record = {"id": account_id, "created_at": utcnow_iso(), **account}
     record["save_session"] = True
     record["profile_dir"] = make_profile_dir(record.get("name") or "profile", account_id)
+    assign_user_agent_if_empty(record, existing)
     return record
 
 

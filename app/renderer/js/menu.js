@@ -85,11 +85,13 @@
         case "toggle-theme":
           if (window.App.toggleTheme) window.App.toggleTheme();
           break;
-        case "gs-start":
-          if (window.App.gsStart) window.App.gsStart();
+        case "af-start":
+          const btnAf = document.getElementById("afStart");
+          if (btnAf) btnAf.click();
           break;
-        case "gs-stop":
-          if (window.App.gsStop) window.App.gsStop();
+        case "af-stop":
+          const btnStop = document.getElementById("afStop");
+          if (btnStop) btnStop.click();
           break;
         case "exit":
           window.close();
@@ -99,6 +101,6 @@
     };
   });
 
-  // Click brand -> về Game (màn hình chính)
-  $("brandHome").onclick = () => switchView("gamesim");
+  // Click brand "Auto Tool" -> về Quản lý profile (Home) thay vì gamesim
+  $("brandHome").onclick = () => switchView("home");
 })();

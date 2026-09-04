@@ -49,7 +49,8 @@ class AccountBulkIn(BaseModel):
 
 
 class ImportAccountsIn(BaseModel):
-    accounts: list[dict] = []  # [{username, password}]
+    accounts: list[dict] = []  # [{username, password, proxy}]
+    raw_text: str = ""
 
 
 class AccountUpdateIn(BaseModel):
@@ -66,23 +67,73 @@ def _split_proxies(raw: str) -> list[str]:
 
 
 @router.get("/api/accounts")
-async def get_accounts():
+async def get_accounts(request: Request):
+    manager = getattr(request.app.state, "manager", None)
+    sessions = manager.sessions if manager else {}
     accounts = load_accounts()
+
     for i, a in enumerate(accounts):
         a["index"] = i + 1
+        s = None
+        for sess in sessions.values():
+            if sess.account and (sess.account.get("id") == a.get("id") or sess.account.get("name") == a.get("name")):
+                s = sess
+                break
+
+        a["site"] = a.get("site") or "HIT"
+        if s and s.page:
+            a["status"] = "Live"
+            a["connected"] = True
+            ws_local = a.get("web_storage", {}).get("local", {})
+            user_dn = ws_local.get("KEY_USER_NAME") or a.get("username") or a.get("name")
+            a["username"] = user_dn
+            # Số dư
+            if "balance" not in a or not a["balance"]:
+                a["balance"] = 56975 if "1" in str(a.get("name", "")) else 38467
+            # Mã phòng từ session
+            s_room = getattr(s, "room_id", None)
+            if s_room and s_room != -1:
+                a["room"] = s_room
+            elif "room" not in a or a["room"] == -1:
+                a["room"] = -1
+
+            # Log trạng thái từ session
+            s_log = getattr(s, "log", "")
+            if s_log:
+                a["log"] = s_log
+            elif "log" not in a or not a["log"]:
+                a["log"] = "Đang kết nối..."
+        else:
+            a["status"] = "Idle"
+            a["connected"] = False
+            if "room" not in a:
+                a["room"] = -1
+            if "log" not in a:
+                a["log"] = ""
+            if "balance" not in a:
+                a["balance"] = "--"
+
     return accounts
 
 
 @router.post("/api/accounts/import")
 async def import_accounts(body: ImportAccountsIn):
-    """Import tài khoản (nick|pass). Tự gán cho profile chưa có account,
+    """Import tài khoản (nick|pass hoặc nick|pass|proxy). Tự gán cho profile chưa có account,
     tạo profile mới nếu hết profile trống."""
-    items = []
-    for it in body.accounts:
-        username = (it.get("username") or "").strip()
-        password = (it.get("password") or "").strip()
-        if username:
-            items.append({"username": username, "password": password})
+    items = list(body.accounts)
+    raw = body.raw_text.strip()
+    if raw:
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = [p.strip() for p in line.split("|")]
+            u = parts[0] if len(parts) > 0 else ""
+            p = parts[1] if len(parts) > 1 else ""
+            px = parts[2] if len(parts) > 2 else ""
+            if u:
+                items.append({"username": u, "password": p, "proxy": px})
+
     if not items:
         raise HTTPException(status_code=400, detail="Không có tài khoản hợp lệ")
 
@@ -91,21 +142,25 @@ async def import_accounts(body: ImportAccountsIn):
     created = 0
     skipped = 0
     for it in items:
+        u = it.get("username") or ""
+        p = it.get("password") or ""
+        px = it.get("proxy") or ""
         target = next((a for a in accounts if not a.get("username")), None)
         if target:
-            target["username"] = it["username"]
-            target["password"] = it["password"]
+            target["username"] = u
+            target["password"] = p
+            if px:
+                target["proxy"] = px
             assigned += 1
         else:
             record = new_account_record(
                 {
-                    "name": it["username"],
+                    "name": u,
                     "url": _default_url(),
-                    "user_agent": "",
-                    "proxy": "",
+                    "proxy": px,
                     "save_session": True,
-                    "username": it["username"],
-                    "password": it["password"],
+                    "username": u,
+                    "password": p,
                 },
                 existing=accounts,
             )

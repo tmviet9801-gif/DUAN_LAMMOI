@@ -31,6 +31,14 @@
     }
       if (ev.sessions) {
         App.state.sessions = ev.sessions;
+        if (typeof App.renderProfilesTable === "function") {
+          App.renderProfilesTable();
+        }
+      }
+      if (ev.type === "opened" || ev.type === "closed" || ev.type === "layout") {
+        if (typeof App.renderProfilesTable === "function") {
+          App.renderProfilesTable();
+        }
       }
     };
     ws.onclose = () => {

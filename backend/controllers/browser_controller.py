@@ -24,7 +24,18 @@ class CloseIn(BaseModel):
 class EvalIn(BaseModel):
     session_id: Optional[str] = None
     account_id: Optional[str] = None
+    profile_name: Optional[str] = None
+    name: Optional[str] = None
     js: str
+
+
+class ClickIn(BaseModel):
+    session_id: Optional[str] = None
+    account_id: Optional[str] = None
+    profile_name: Optional[str] = None
+    name: Optional[str] = None
+    x: int
+    y: int
 
 
 def _available_slots(manager) -> tuple[int, int]:
@@ -92,10 +103,18 @@ async def browser_screenshot(body: dict, request: Request):
     from models.config_model import DATA_DIR
 
     account_id = (body.get("account_id") or "").strip()
+    session_id = (body.get("session_id") or "").strip()
+    name = (body.get("name") or body.get("profile_name") or "").strip()
     manager = request.app.state.manager
     session = None
     for s in manager.sessions.values():
-        if s.account and s.account.get("id") == account_id and s.page:
+        if session_id and s.session_id == session_id:
+            session = s
+            break
+        if account_id and s.account and s.account.get("id") == account_id:
+            session = s
+            break
+        if name and s.account and s.account.get("name") == name:
             session = s
             break
     if not session or not session.page:
@@ -114,6 +133,7 @@ async def browser_eval(body: EvalIn, request: Request):
     """Evaluate JS trên page của 1 session (debug / test / lưu session thủ công)."""
     manager = request.app.state.manager
     session = None
+    pname = (body.profile_name or body.name or "").strip().lower()
     for s in manager.sessions.values():
         if body.session_id and s.session_id == body.session_id:
             session = s
@@ -121,10 +141,58 @@ async def browser_eval(body: EvalIn, request: Request):
         if body.account_id and s.account and s.account.get("id") == body.account_id:
             session = s
             break
+        if pname and s.account:
+            s_name = (s.account.get("name") or "").lower()
+            if s_name == pname or pname in s_name or s_name in pname:
+                session = s
+                break
     if not session or not session.page:
         raise HTTPException(status_code=400, detail="Không tìm thấy session/page")
     try:
-        return {"result": await session.page.evaluate(body.js)}
+        frames_res = []
+        for i, frame in enumerate(session.page.frames):
+            try:
+                fr_res = await frame.evaluate(body.js)
+                frames_res.append({"frame_idx": i, "url": frame.url, "result": fr_res})
+            except Exception as e:
+                frames_res.append({"frame_idx": i, "url": frame.url, "error": str(e)})
+
+        workers_res = []
+        for j, w in enumerate(session.page.workers or []):
+            try:
+                w_res = await w.evaluate(body.js)
+                workers_res.append({"worker_idx": j, "url": w.url, "result": w_res})
+            except Exception as e:
+                workers_res.append({"worker_idx": j, "url": w.url, "error": str(e)})
+
+        return {"result": frames_res, "workers": workers_res}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/browser/click")
+async def browser_click(body: ClickIn, request: Request):
+    """Click tọa độ x, y trên page của 1 session bằng Playwright native mouse."""
+    manager = request.app.state.manager
+    session = None
+    pname = (body.profile_name or body.name or "").strip().lower()
+    for s in manager.sessions.values():
+        if body.session_id and s.session_id == body.session_id:
+            session = s
+            break
+        if body.account_id and s.account and s.account.get("id") == body.account_id:
+            session = s
+            break
+        if pname and s.account:
+            s_name = (s.account.get("name") or "").lower()
+            if s_name == pname or pname in s_name or s_name in pname:
+                session = s
+                break
+    if not session or not session.page:
+        raise HTTPException(status_code=400, detail="Không tìm thấy session/page")
+    try:
+        await session.page.mouse.click(body.x, body.y)
+        return {"ok": True, "x": body.x, "y": body.y}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -188,4 +256,22 @@ async def show_window(request: Request):
                 pass
         results.append(res)
     return {"ok": any(r["ok"] for r in results), "results": results}
+
+
+@router.get("/api/browser/targets")
+async def get_browser_targets(request: Request):
+    manager = request.app.state.manager
+    data = {}
+    for sid, session in manager.sessions.items():
+        if not session.page:
+            continue
+        try:
+            cdp = await session.browser_ctx.new_cdp_session(session.page)
+            targets = await cdp.send("Target.getTargets", {})
+            await cdp.detach()
+            sws = [str(sw) for sw in getattr(session.browser_ctx, "service_workers", [])]
+            data[sid] = {"targets": targets.get("targetInfos", []), "service_workers": sws}
+        except Exception as e:
+            data[sid] = {"error": str(e)}
+    return data
 

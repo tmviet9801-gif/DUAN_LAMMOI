@@ -7,12 +7,9 @@
 
   async function load() {
     try {
-      const [cfg, acc] = await Promise.all([
-        App.api("/api/gamesim/config"),
-        App.api("/api/accounts"),
-      ]);
+      const acc = await App.api("/api/accounts");
       accounts = acc.map((a) => a.name).filter(Boolean);
-      render(Object.keys(cfg.groups || {}));
+      render(["A"]);
     } catch (e) {
       App.log.warn("load groups failed:", e.message);
     }

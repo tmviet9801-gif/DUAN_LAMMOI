@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src http://127.0.0.1:8000 ws://127.0.0.1:8000" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src http://127.0.0.1:8000 ws://127.0.0.1:8000" />
   <title>Auto Tool</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -10,18 +10,9 @@
   <div class="app-wrap">
   <header class="topbar">
     <div class="topbar-left">
-      <div class="brand" id="brandHome" title="Về Game">Auto Tool <span class="brand-version" id="brandVersion">v…</span></div>
+      <div class="brand" id="brandHome" title="Về Trang chủ (Quản lý Profile)">Auto Tool <span class="brand-version" id="brandVersion">v…</span></div>
 
       <nav class="menubar">
-        <div class="mroot-wrap">
-          <button class="mroot" data-menu="mm-game">Game</button>
-          <div class="mmenu hidden" id="mm-game">
-            <button class="menu-item" data-view="gamesim">Bảng điều khiển Game Test</button>
-            <div class="menu-sep"></div>
-            <button class="menu-item" data-action="gs-start">▶ Bắt đầu mô phỏng</button>
-            <button class="menu-item" data-action="gs-stop">■ Dừng</button>
-          </div>
-        </div>
         <div class="mroot-wrap">
           <button class="mroot" data-menu="mm-home">Trang chủ</button>
           <div class="mmenu hidden" id="mm-home">
@@ -32,6 +23,15 @@
             <div class="menu-sep"></div>
             <button class="menu-item" data-action="open-selected">Mở profile đã chọn</button>
             <button class="menu-item" data-action="delete-selected">Xóa profile đã chọn</button>
+          </div>
+        </div>
+        <div class="mroot-wrap">
+          <button class="mroot" data-menu="mm-game">Game</button>
+          <div class="mmenu hidden" id="mm-game">
+            <button class="menu-item" data-view="gamesim">Gom Bàn & Xả Bài</button>
+            <div class="menu-sep"></div>
+            <button class="menu-item" data-action="af-start">🚀 Bắt đầu gom bàn</button>
+            <button class="menu-item" data-action="af-stop">■ Dừng gom bàn</button>
           </div>
         </div>
         <div class="mroot-wrap">
@@ -70,8 +70,8 @@
     </div>
 
     <div class="topbar-right">
-      <div id="updateWidget" class="update-widget">
-        <span id="updateText" class="update-text">Đang kiểm tra cập nhật…</span>
+      <div id="updateWidget" class="update-widget" style="display: none;">
+        <span id="updateText" class="update-text"></span>
         <div id="updateProgressWrap" class="update-progress hidden">
           <div id="updateProgressBar" class="update-progress-bar"></div>
         </div>
@@ -86,50 +86,198 @@
   <main class="layout">
 
     <section id="view-home" class="view">
-      <div class="cards">
-        <div class="panel wide">
-          <h2>Thao tác nhanh</h2>
-          <div class="quick-actions">
-            <button id="btnAddProfile" class="primary" title="Thêm profile (1 hoặc thêm nhanh)">Thêm profile</button>
-            <button id="pickerBtn" class="picker-btn" disabled title="Chọn profile trong bảng (click dòng hoặc Ctrl+A)">Đã chọn 0/0</button>
-            <button id="btnOpenSelected" class="primary">Mở đã chọn</button>
-            <button id="btnDeleteSelected" class="danger">Xóa đã chọn</button>
-            <button id="btnLayout">Xếp lưới ngay</button>
-            <button id="btnCloseAll" class="danger">Đóng tất cả</button>
+      <!-- TOP DASHBOARD: 2 COLUMNS (Account Quick Import & Game Control) -->
+      <div class="dash-top-grid">
+        <!-- LEFT: Quick Account Import & Device ID -->
+        <div class="dash-card account-import-card">
+          <div class="dash-card-header">
+            <div class="dash-card-title">
+              <span class="badge-ver">Phiên bản: 6.0.1.0</span>
+            </div>
+            <div class="dash-card-actions">
+              <button id="btnGetDeviceId" class="btn-sub red-tint" title="Lấy mã thiết bị máy tính (MachineGuid)">Lấy device ID</button>
+              <button id="btnAddName" class="btn-sub gold" title="Thêm tên profile">Thêm Name</button>
+              <button id="btnDelName" class="btn-sub red-tint" title="Xóa tên profile">Xoá Name</button>
+              <button id="btnUpdateTool" class="btn-sub red-tint" title="Kiểm tra & cập nhật phần mềm">Update Tool</button>
+            </div>
+          </div>
+          <div class="dash-card-body">
+            <textarea id="txtQuickAccounts" class="accounts-textarea" placeholder="Dán danh sách nick vào đây (mỗi dòng 1 nick: username|password hoặc username|password|proxy)..."></textarea>
+            <div class="account-import-btns">
+              <button id="btnQuickAddAccounts" class="btn-action red">Thêm tài khoản</button>
+              <button id="btnQuickLogin" class="btn-action cyan">Đăng nhập</button>
+              <button id="btnQuickCheckLive" class="btn-action green">Check Live</button>
+            </div>
           </div>
         </div>
 
-        <div class="panel wide">
-          <h2>Quản lý profile (<span id="profileCount">0</span>)</h2>
-          <div class="table-toolbar">
-            <input id="profSearch" placeholder="Tìm kiếm theo tên / URL…" />
-            <select id="profSort" title="Sắp xếp">
-              <option value="name_asc">Tên A-Z</option>
-              <option value="name_desc">Tên Z-A</option>
-              <option value="date_new">Ngày tạo mới nhất</option>
-              <option value="date_old">Ngày tạo cũ nhất</option>
-            </select>
+        <!-- RIGHT: Game Control & Room Matching Config -->
+        <div class="dash-card game-control-card">
+          <!-- Row 1: Game, Bet, Slot, Code, Chờ SS, Delay, Size -->
+          <div class="gc-row row-1">
+            <div class="gc-field">
+              <label>Game</label>
+              <select id="gcGameSelect">
+                <option value="TLDL" selected>TLDL</option>
+                <option value="PHOM">PHOM</option>
+                <option value="MAUBINH">MAUBINH</option>
+                <option value="SAM">SAM</option>
+                <option value="LIENG">LIENG</option>
+                <option value="POKER">POKER</option>
+              </select>
+            </div>
+            <div class="gc-field">
+              <label>Cược</label>
+              <select id="gcBetSelect">
+                <option value="100" selected>100</option>
+                <option value="500">500</option>
+                <option value="1000">1k</option>
+                <option value="2000">2k</option>
+                <option value="5000">5k</option>
+                <option value="10000">10k</option>
+                <option value="20000">20k</option>
+                <option value="50000">50k</option>
+                <option value="100000">100k</option>
+              </select>
+            </div>
+            <div class="gc-field narrow" title="Số người / slot: 2 (Bàn Solo 2 người) hoặc 4 (Bàn 4 người)">
+              <input id="gcSlotCount" type="number" value="2" title="Số người / slot (Mặc định: bàn 2 người)" />
+            </div>
+            <div class="gc-field narrow" title="Mật khẩu bàn (Room Password / PIN) để tạo/join bàn riêng (tránh khách lạ)">
+              <input id="gcRoomCode" type="number" value="2222" title="Mật khẩu bàn / PIN (Mặc định: 2222)" />
+            </div>
+            <label class="gc-check-lbl">
+              <input id="gcWaitSS" type="checkbox" checked /> Chờ khi gặp SS
+            </label>
+            <div class="gc-field inline">
+              <label>Delay (s)</label>
+              <input id="gcDelay" type="number" value="2" style="width:40px" />
+            </div>
+            <div class="gc-field inline">
+              <label>Rộng</label>
+              <input id="gcWinW" type="number" value="520" style="width:50px" />
+            </div>
+            <div class="gc-field inline">
+              <label>Cao</label>
+              <input id="gcWinH" type="number" value="580" style="width:50px" />
+            </div>
           </div>
-          <div class="table-wrap">
-            <table class="profiles-table">
-              <thead>
-                <tr>
-                  <th class="col-stt">STT</th>
-                  <th class="col-name">Tên</th>
-                  <th class="col-proxy">Proxy</th>
-                  <th class="col-actions">Thao tác</th>
-                  <th class="col-del">Xóa</th>
-                </tr>
-              </thead>
-              <tbody id="profileTbody"></tbody>
-            </table>
+
+          <!-- Row 2: Action Buttons (Tạo phòng, Tìm ID, Thoát hết, Dừng) -->
+          <div class="gc-row row-2">
+            <button id="btnGcCreateRoom" class="btn-gc green-bold">TẠO PHÒNG</button>
+            <button id="btnGcFindId" class="btn-gc lime">TÌM ID</button>
+            <button id="btnGcLeaveAll" class="btn-gc red">THOÁT HẾT</button>
+            <button id="btnGcStop" class="btn-gc red-dark">DỪNG</button>
           </div>
-          <div class="pagination">
-            <button id="pagePrev" class="ghost" title="Trang trước">‹</button>
-            <span id="pageInfo">0-0 / 0</span>
-            <button id="pageNext" class="ghost" title="Trang sau">›</button>
+
+          <!-- Row 3: Auto options & Random Join -->
+          <div class="gc-row row-3">
+            <label class="gc-check-lbl"><input id="gcAutoRejoin" type="checkbox" checked /> Auto Vào Lại</label>
+            <label class="gc-check-lbl"><input id="gcSSWhenEnter" type="checkbox" checked /> SS Khi Vào</label>
+            <label class="gc-check-lbl"><input id="gcAutoLeave" type="checkbox" checked /> Tự Out</label>
+            <input id="gcTargetRoomId" class="gc-input-rid" type="text" placeholder="1295398" value="1295398" />
+            <div class="gc-field inline">
+              <label>Slot</label>
+              <input id="gcSlotNum" type="number" value="3" style="width:40px" />
+            </div>
+            <button id="btnGcRandomJoin" class="btn-gc blue">RANDOM VÀO PHÒNG</button>
+            <button id="btnGcStopLeave" class="btn-gc red">DỪNG/THOÁT</button>
+          </div>
+
+          <!-- Row 4: TÍCH HỢP GOM BÀN ĐỒNG BỘ (ACCOUNT CHÍNH & PHỤ) -->
+          <div class="gc-sync-bar">
+            <div class="gc-sync-pair">
+              <div class="gc-sync-field">
+                <span class="badge-role main" title="Account Chính sẽ quét tìm và giữ bàn trống trước">⭐ Chính:</span>
+                <select id="gcProfileMain" title="Chọn Account Chính vào bàn trước"></select>
+              </div>
+              <div class="gc-sync-arrow">➔</div>
+              <div class="gc-sync-field">
+                <span class="badge-role sub" title="Chờ Chính vào an toàn mới vào ghép">👥 Phụ:</span>
+                <select id="gcProfileSub" title="Chọn Account Phụ vào sau ghép bàn"></select>
+              </div>
+            </div>
+            <div class="gc-sync-actions">
+              <button id="btnGcSyncMatch" class="btn-gc sync-bold" title="Kích hoạt gom bàn đồng bộ: A vào trước -> B vào ghép -> Sẵn sàng -> Bắt đầu -> Xả bài">
+                🚀 GOM BÀN & XẢ
+              </button>
+              <button id="btnGcStopSync" class="btn-gc red-dark" title="Dừng quá trình gom bàn">Dừng</button>
+            </div>
+          </div>
+
+          <!-- Row 5: Tuỳ chọn xả bài, bẫy khách SS, tự out -->
+          <div class="gc-row gc-match-options">
+            <label class="gc-check-lbl opt-xa" title="Tự động xả bài sau khi các tài khoản tìm thấy nhau và vào chung bàn. Nếu bỏ tích: Dừng chờ thao tác tay">
+              <input id="gcAutoXaBai" type="checkbox" checked /> ⚡ Tự động xả bài khi thấy nhau
+            </label>
+            <label class="gc-check-lbl opt-guest-ss" title="Sau khi xả bài xong, chủ bàn giữ bàn, nếu có khách lạ vào bấm Sẵn Sàng (SS) thì chủ bàn bấm Bắt Đầu ngay để bẫy khách">
+              <input id="gcAutoStartGuestSS" type="checkbox" checked /> 🎯 Bắt đầu nếu khách SS
+            </label>
+            <label class="gc-check-lbl opt-leave" title="Tự động thoát bàn về sảnh sau khi hoàn thành chu trình">
+              <input id="gcAutoLeaveAfter" type="checkbox" /> 🚪 Tự Out sau khi xả
+            </label>
+            <span class="opt-tip">💡 Mẹo: Tick chọn 2-5 tài khoản trên danh sách để cùng nhảy dò tìm phòng</span>
+          </div>
+          <!-- Live Status Box for Synchronous Matching -->
+          <div id="gcSyncStatusBox" class="gc-sync-status hidden">
+            <span id="gcSyncStatusIcon">⚡</span>
+            <span id="gcSyncStatusText">Sẵn sàng gom bàn...</span>
           </div>
         </div>
+      </div>
+
+      <!-- MIDDLE TOOLBAR: Multi-selection & Quick Chrome Actions -->
+      <div class="dash-toolbar">
+        <div class="tb-left">
+          <label class="tb-check-all">
+            <input id="chkSelectAll" type="checkbox" /> All
+          </label>
+          <span id="pickerBtn" class="tb-selected-count">Đã chọn 0/0</span>
+          <button id="btnCloseChrome" class="btn-tb red">Đóng Chrome</button>
+          <button id="btnOpenChrome" class="btn-tb green">Mở Chrome</button>
+          <button id="btnReconnect" class="btn-tb lime">Reconnec</button>
+          <button id="btnModePhom" class="btn-tb blue">Phom</button>
+          <button id="btnModeMauBinh" class="btn-tb blue">MauBinh</button>
+          <button id="btnLayout" class="btn-tb purple">Sắp Xếp</button>
+        </div>
+        <div class="tb-right">
+          <input id="profSearch" class="tb-search" placeholder="Tìm kiếm tài khoản..." />
+          <button id="btnRefreshList" class="btn-tb cyan">Refresh</button>
+          <button id="btnEditSelected" class="btn-tb blue" title="Sửa thông tin tài khoản đã chọn">Sửa</button>
+          <button id="btnSaveAll" class="btn-tb green">Lưu</button>
+          <button id="btnDeleteSelected" class="btn-tb red">Xóa</button>
+          <button id="btnDeleteProfile" class="btn-tb red-dark">Xóa Profile</button>
+        </div>
+      </div>
+
+      <!-- DATA GRID TABLE: Rich Account Table -->
+      <div class="dash-table-container">
+        <table class="dash-table">
+          <thead>
+            <tr>
+              <th style="width:36px; text-align:center;"><input type="checkbox" id="thCheckAll" /></th>
+              <th style="width:130px">Username</th>
+              <th style="width:110px">Name</th>
+              <th style="width:130px">Proxy</th>
+              <th style="width:90px">Balance</th>
+              <th style="width:60px">Room</th>
+              <th>Log</th>
+              <th style="width:65px">Status</th>
+              <th style="width:60px">Tìm.P</th>
+              <th style="width:65px">Thoát.P</th>
+              <th style="width:65px">Site</th>
+              <th style="width:60px">Dừng</th>
+              <th style="width:55px; text-align:center;">Connect</th>
+            </tr>
+          </thead>
+          <tbody id="profileTbody"></tbody>
+        </table>
+      </div>
+      <div class="dash-pagination">
+        <button id="pagePrev" class="ghost">‹</button>
+        <span id="pageInfo">0-0 / 0</span>
+        <button id="pageNext" class="ghost">›</button>
       </div>
     </section>
 
@@ -230,43 +378,57 @@
     <section id="view-gamesim" class="view hidden">
       <div class="cards">
         <div class="panel wide">
-          <h2>Game Room Simulator — kiểm thử quyền đi trước</h2>
-          <div class="quick-actions">
-            <button id="gsStart" class="primary">▶ Start</button>
-            <button id="gsStop" class="danger">■ Stop</button>
-            <select id="gsScenario" title="Kịch bản">
-              <option value="winner_keeps_first_move">Winner giữ lượt đầu</option>
-              <option value="reset_after_main_lose">Reset khi MAIN thua</option>
-            </select>
-            <input id="gsRounds" type="number" min="1" max="500" value="5" title="Số ván test" />
-            <span class="label">ván</span>
-          </div>
-          <p class="hint" id="gsInfo">Nhấn Start để chạy mô phỏng (mock adapter).</p>
-        </div>
-
-        <div class="panel">
-          <h2>Trạng thái nhóm</h2>
-          <div id="gsGroups" class="gs-groups"></div>
-        </div>
-
-        <div class="panel">
-          <h2>Metrics</h2>
-          <div id="gsMetrics" class="gs-metrics"></div>
-        </div>
-
-        <div class="panel wide">
-          <h2>Auto xả bài — tìm nhau</h2>
+          <h2>Auto Gom Bàn — Tìm Nhau & Xả Bài</h2>
           <div class="quick-actions">
             <label class="check"><input id="afAutoOut" type="checkbox" checked /> Tự rời sau khi xả</label>
-            <label class="check"><input id="afAutoStart" type="checkbox" /> Tự bắt đầu khi khách sẵn sàng</label>
+            <label class="check"><input id="afOutGuest" type="checkbox" checked /> Thoát khi có khách lạ</label>
+            <label class="check"><input id="afChongPha" type="checkbox" checked /> Chống phá bàn</label>
+            <label class="check"><input id="afAutoStart" type="checkbox" /> Tự bắt đầu</label>
+            <label class="num-lbl" style="font-size:12px;color:var(--text-muted);display:inline-flex;align-items:center;gap:4px">Delay xả: <input id="afXaDelay" type="number" value="1000" min="0" step="200" style="width:65px;padding:2px 4px" /> ms</label>
+            <label class="num-lbl" style="font-size:12px;color:var(--text-muted);display:inline-flex;align-items:center;gap:4px">Số lần thử lại: <input id="afMaxTries" type="number" value="0" min="0" max="999" title="0 = Thử lại vô hạn cho tới khi thấy bàn trống" style="width:55px;padding:2px 4px;border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border)" /> (0 = Vô hạn)</label>
+            <label style="font-size:12px;color:var(--text-muted);display:inline-flex;align-items:center;gap:4px">Mức cược: 
+              <select id="afTargetBet" style="padding:2px 6px;border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border)">
+                <option value="100" selected>100đ</option>
+                <option value="500">500đ</option>
+                <option value="1000">1.000đ (1K)</option>
+                <option value="2000">2.000đ (2K)</option>
+                <option value="5000">5.000đ (5K)</option>
+                <option value="10000">10.000đ (10K)</option>
+                <option value="20000">20.000đ (20K)</option>
+                <option value="50000">50.000đ (50K)</option>
+                <option value="100000">100.000đ (100K)</option>
+                <option value="0">Tự động (thấp nhất)</option>
+              </select>
+            </label>
+            <label style="font-size:12px;color:var(--text-muted);display:inline-flex;align-items:center;gap:4px">Loại bàn: 
+              <select id="afTargetMu" style="padding:2px 6px;border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border)">
+                <option value="2" selected>Solo 2 người</option>
+                <option value="4">Bàn 4 người</option>
+              </select>
+            </label>
           </div>
-          <p class="hint">Chọn các profile sẽ tìm nhau (4–5 acc cho nhanh). Acc đầu thấy bàn trống làm anchor, các acc còn lại join theo room id.</p>
-          <div id="afProfiles" class="chips"></div>
-          <div class="quick-actions">
-            <button id="afStart" class="primary">▶ Tìm &amp; xả</button>
-            <button id="afStop" class="danger">■ Dừng</button>
+          <div class="field" style="display:flex; gap:16px; margin: 14px 0; padding:12px; background:rgba(0,0,0,0.2); border-radius:8px; border:1px solid var(--border)">
+            <div style="flex:1;">
+              <label for="afProfileMain" style="font-weight:bold; color:var(--text-primary); margin-bottom:6px; display:block;">⭐ Profile Chính (Vào tìm bàn trống trước):</label>
+              <select id="afProfileMain" style="width:100%; padding:8px 12px; border-radius:6px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border); font-size:13px; font-weight:bold;">
+              </select>
+              <p class="hint" style="margin-top:4px; font-size:11px;">Profile này sẽ quét và vào giữ bàn trống trước. Nếu có khách lạ sẽ tự thoát ngay.</p>
+            </div>
+            <div style="flex:1;">
+              <label for="afProfileSub" style="font-weight:bold; color:var(--text-primary); margin-bottom:6px; display:block;">👥 Profile Phụ (Vào sau ghép bàn):</label>
+              <select id="afProfileSub" style="width:100%; padding:8px 12px; border-radius:6px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border); font-size:13px; font-weight:bold;">
+              </select>
+              <p class="hint" style="margin-top:4px; font-size:11px;">Chỉ khi Profile Chính đã ngồi an toàn 1 mình, Profile Phụ mới được kích hoạt vào ghép.</p>
+            </div>
           </div>
-          <p class="hint" id="afStatus"></p>
+
+          <div class="quick-actions" style="margin-top:12px;">
+            <button id="afStart" class="primary" style="font-size:14px; padding:10px 20px; font-weight:bold;">🚀 Bắt đầu gom bàn</button>
+            <button id="afStop" class="danger" style="font-size:14px; padding:10px 20px;">■ Dừng</button>
+          </div>
+          <div id="afStatusBox" style="margin-top:12px; padding:10px 14px; border-radius:6px; background:rgba(245,176,65,0.1); border:1px solid rgba(245,176,65,0.3); display:none;">
+            <p id="afStatus" style="margin:0; font-weight:bold; color:var(--text-primary); font-size:13px;"></p>
+          </div>
         </div>
       </div>
     </section>
@@ -348,27 +510,44 @@
   </div>
 
   <div id="editProfileModal" class="modal-overlay hidden">
-    <div class="modal">
-      <h3>Sửa profile — <span id="epName" class="normal"></span></h3>
-      <div class="field">
-        <label for="epProfileName">Tên</label>
-        <input id="epProfileName" />
+    <div class="modal" style="max-width: 520px;">
+      <h3>Sửa thông tin tài khoản — <span id="epName" class="normal"></span></h3>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div class="field">
+          <label for="epProfileName">Tên Profile</label>
+          <input id="epProfileName" placeholder="Account01" />
+        </div>
+        <div class="field">
+          <label for="epUsername">Username (Tên đăng nhập)</label>
+          <input id="epUsername" placeholder="nicktest..." />
+        </div>
       </div>
       <div class="field">
-        <label for="epUrl">URL</label>
-        <input id="epUrl" placeholder="https://v.hitclub.latino/?a=hitclub (mặc định)" />
+        <label for="epPassword">Mật khẩu (Password)</label>
+        <input id="epPassword" type="text" placeholder="Mật khẩu tài khoản..." />
       </div>
       <div class="field">
-        <label for="epProxy">Proxy HTTP</label>
+        <label for="epProxy">Proxy (HTTP / SOCKS5)</label>
         <div class="field-row">
-          <textarea id="epProxy" rows="2" placeholder="IP:Port:User:Pass"></textarea>
+          <textarea id="epProxy" rows="2" placeholder="IP:Port:User:Pass hoặc IP:Port"></textarea>
           <button id="epCheckProxy" class="ghost" title="Kiểm tra proxy hoạt động">Kiểm tra</button>
         </div>
         <p class="hint" id="epProxyResult">Định dạng IP:Port:User:Pass. Để trống = dùng IP máy.</p>
       </div>
+      <div class="field">
+        <label for="epUserAgent">User-Agent (Trình duyệt)</label>
+        <div class="field-row">
+          <textarea id="epUserAgent" rows="2" placeholder="Mozilla/5.0 ... Chrome/..."></textarea>
+          <button id="epRandomUa" class="ghost" title="Sinh User-Agent ngẫu nhiên">Random UA</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="epUrl">URL Game</label>
+        <input id="epUrl" placeholder="https://v.hitclub.latino/?a=hitclub (mặc định)" />
+      </div>
       <div class="actions">
         <button id="epCancel" class="ghost">Hủy</button>
-        <button id="epSave" class="primary">Lưu</button>
+        <button id="epSave" class="primary">Lưu thay đổi</button>
       </div>
     </div>
   </div>
@@ -457,7 +636,6 @@
   <script src="js/ws.js"></script>
   <script src="js/menu.js"></script>
   <script src="js/actions.js"></script>
-  <script src="js/gamesim.js"></script>
   <script src="js/groups.js"></script>
   <script src="js/proxy.js"></script>
   <script src="js/import.js"></script>

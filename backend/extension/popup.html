@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoTool Gom Bàn & Giám Sát</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-area">
+        <div class="logo-icon">🎰</div>
+        <div class="logo-text">
+          <h1>AUTOTOOL</h1>
+          <span class="sub">Gom Bàn & Xả Bài</span>
+        </div>
+      </div>
+      <div id="backend-status" class="status-badge connected">
+        <span class="dot"></span> Online
+      </div>
+    </header>
+
+    <!-- Profile Selector -->
+    <div class="profile-tabs">
+      <button class="tab-btn active" data-profile="Account01">Account 01</button>
+      <button class="tab-btn" data-profile="Account02">Account 02</button>
+    </div>
+
+    <!-- Live Status Card -->
+    <div class="card status-card">
+      <div class="card-title">
+        <span>⚡ TRẠNG THÁI HIỆN TẠI</span>
+        <button id="btn-refresh" class="btn-icon" title="Làm mới">🔄</button>
+      </div>
+      <div class="info-grid">
+        <div class="info-item">
+          <label>Tài khoản</label>
+          <div id="cur-account" class="val highlight">--</div>
+        </div>
+        <div class="info-item">
+          <label>Số dư</label>
+          <div id="cur-balance" class="val money">-- đ</div>
+        </div>
+        <div class="info-item">
+          <label>Bàn hiện tại</label>
+          <div id="cur-room" class="val">Chưa vào bàn</div>
+        </div>
+        <div class="info-item">
+          <label>Mức cược bàn</label>
+          <div id="cur-bet" class="val highlight-gold">--</div>
+        </div>
+      </div>
+
+      <!-- Player list tag -->
+      <div class="player-section">
+        <label>Người chơi trong bàn: <span id="player-count">0/0</span></label>
+        <div id="player-tags" class="player-tags">
+          <span class="empty-hint">Chưa có thông tin phòng</span>
+        </div>
+        <div id="stranger-alert" class="alert-box danger hidden">
+          ⚠️ Phát hiện khách lạ trong phòng!
+        </div>
+      </div>
+    </div>
+
+    <!-- Config Card -->
+    <div class="card config-card">
+      <div class="card-title">
+        <span>⚙️ CẤU HÌNH GOM BÀN</span>
+      </div>
+
+      <div class="form-row" style="display:flex; gap:8px;">
+        <div class="form-group" style="flex:1;">
+          <label for="select-main">⭐ Profile Chính (Vào trước):</label>
+          <select id="select-main" class="form-control">
+            <option value="Account01" selected>Account 01</option>
+            <option value="Account02">Account 02</option>
+          </select>
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label for="select-sub">👥 Profile Phụ (Vào sau):</label>
+          <select id="select-sub" class="form-control">
+            <option value="Account02" selected>Account 02</option>
+            <option value="Account01">Account 01</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="select-bet">Mức cược của bàn muốn join:</label>
+        <select id="select-bet" class="form-control">
+          <option value="100">Bàn $ 100</option>
+          <option value="500">Bàn $ 500</option>
+          <option value="1000" selected>Bàn $ 1.000 (1K)</option>
+          <option value="2000">Bàn $ 2.000 (2K)</option>
+          <option value="5000">Bàn $ 5.000 (5K)</option>
+          <option value="10000">Bàn $ 10.000 (10K)</option>
+          <option value="20000">Bàn $ 20.000 (20K)</option>
+          <option value="50000">Bàn $ 50.000 (50K)</option>
+          <option value="100000">Bàn $ 100.000 (100K)</option>
+          <option value="200000">Bàn $ 200.000 (200K)</option>
+          <option value="500000">Bàn $ 500.000 (500K)</option>
+          <option value="1000000">Bàn $ 1.000.000 (1M)</option>
+          <option value="0">Tự động chọn bàn cược nhỏ nhất</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="select-mu">Loại bàn chơi:</label>
+        <select id="select-mu" class="form-control">
+          <option value="2">Bàn Solo (2 người)</option>
+          <option value="4" selected>Bàn 4 người</option>
+        </select>
+      </div>
+
+      <div class="form-checkbox">
+        <input type="checkbox" id="chk-chong-pha" checked>
+        <label for="chk-chong-pha">🛡️ Chống phá & Thoát khi có khách lạ</label>
+      </div>
+
+      <div class="form-checkbox">
+        <input type="checkbox" id="chk-auto-xa" checked>
+        <label for="chk-auto-xa">🃏 Tự động xả bài</label>
+      </div>
+
+      <div class="form-row" id="row-delay" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <label for="input-delay">Delay xả bài (ms):</label>
+        <input type="number" id="input-delay" class="form-control-sm" value="1000" min="200" step="100">
+      </div>
+
+      <div class="form-row" id="row-max-tries" style="display:flex; justify-content:space-between; align-items:center;">
+        <label for="input-max-tries">Số lần thử lại:</label>
+        <input type="number" id="input-max-tries" class="form-control-sm" value="10" min="1" max="50">
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="actions">
+      <button id="btn-gom-ban" class="btn btn-primary">
+        <span>🚀</span> BẮT ĐẦU GOM BÀN
+      </button>
+      <div class="btn-group">
+        <button id="btn-roi-ban" class="btn btn-danger">
+          <span>🚪</span> Rời bàn
+        </button>
+        <button id="btn-xa-bai" class="btn btn-warning">
+          <span>🃏</span> Xả bài
+        </button>
+      </div>
+    </div>
+
+    <div id="action-msg" class="msg-box hidden"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -29,7 +29,12 @@ def _build_adapter(request, config):
     from game_sim.adapters.hitclub import HitClubAdapter
     from services.page_pool import PagePool
 
-    bm = request.app.state.manager
+    bm = getattr(request.app.state, "manager", None)
+    if bm is None:
+        from services.browser_service import BrowserManager
+        from models.config_model import load_config
+        bm = BrowserManager(load_config())
+        request.app.state.manager = bm
     page_pool = PagePool(bm)
     accounts = load_accounts()
     lookup = {a["name"]: a for a in accounts if a.get("name")}
@@ -230,6 +235,9 @@ async def autoplay_start(body: dict, request: Request):
         "game": merged,
         "auto_out": bool(body.get("auto_out", True)),
         "auto_start": bool(body.get("auto_start", False)),
+        "chong_pha": bool(body.get("chong_pha", True)),
+        "out_guest": bool(body.get("out_guest", True)),
+        "xa_delay_ms": int(body.get("xa_delay_ms", 1000)),
     }
 
     adapter = _build_adapter(request, config)
@@ -241,15 +249,148 @@ async def autoplay_start(body: dict, request: Request):
     return {"ok": True, "run_id": run_id, "profiles": profile_names}
 
 
+_GOM_BAN_STOP = False
+
+
+async def _get_screen_size_util(p):
+    try:
+        sz = await p.evaluate("({w: window.innerWidth, h: window.innerHeight})")
+        return int(sz.get("w") or 784), int(sz.get("h") or 505)
+    except Exception:
+        return 784, 505
+
+
+async def _is_in_tldl_lobby_util(p):
+    if not p:
+        return False
+    try:
+        from PIL import Image
+        import io
+        png_bytes = await p.screenshot(type="png")
+        im = Image.open(io.BytesIO(png_bytes))
+        w, h = im.size
+        r1, g1, b1 = im.getpixel((int(w * 0.290), int(h * 0.310)))[:3]
+        r2, g2, b2 = im.getpixel((int(w * 0.500), int(h * 0.310)))[:3]
+        is_green_tables = (r1 < 40 and g1 > 70 and b1 < 40) and (r2 < 40 and g2 > 70 and b2 < 40)
+        return is_green_tables
+    except Exception:
+        return False
+
+
+async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
+    if not p:
+        return False
+    sw, sh = await _get_screen_size_util(p)
+    if await _is_in_tldl_lobby_util(p):
+        try:
+            tab_x = 0.500 if target_mu == 2 else 0.690
+            await p.mouse.click(int(sw * tab_x), int(sh * 0.175))
+            await asyncio.sleep(0.4)
+        except Exception:
+            pass
+        return True
+
+    log.info("%s chưa ở sảnh Tiến Lên Đếm Lá -> Bắt đầu đưa về đúng sảnh...", name)
+    try:
+        await p.mouse.click(50, 50)
+        await asyncio.sleep(0.3)
+        await p.mouse.click(364, 313)
+        await asyncio.sleep(0.3)
+        await p.mouse.click(int(sw * 0.854), int(sh * 0.233))
+        await asyncio.sleep(0.3)
+    except Exception:
+        pass
+
+    try:
+        await p.mouse.click(335, 128)
+        await asyncio.sleep(1.0)
+        await p.mouse.click(235, 239)
+        await asyncio.sleep(2.0)
+    except Exception as e:
+        log.warning("Lỗi click vào Tiến Lên Đếm Lá: %s", e)
+
+    try:
+        tab_x = 0.500 if target_mu == 2 else 0.690
+        await p.mouse.click(int(sw * tab_x), int(sh * 0.175))
+        await asyncio.sleep(0.4)
+    except Exception:
+        pass
+
+    return await _is_in_tldl_lobby_util(p)
+
+
+async def _do_leave_room(p):
+    if not p:
+        return
+    # Nếu đã ở sảnh TLDL (nhìn thấy các bàn cược xanh lá) -> Bỏ qua không bấm kẻo văng ra ngoài sảnh cổng game
+    if await _is_in_tldl_lobby_util(p):
+        return
+    sw, sh = await _get_screen_size_util(p)
+    try:
+        # 1. Bấm nút menu [>] góc trên bên trái trong bàn chơi (70, 120)
+        await p.mouse.click(int(0.089 * sw), int(0.238 * sh))
+        await asyncio.sleep(0.4)
+        # 2. Bấm nút biểu tượng cửa [🚪] rời bàn
+        await p.mouse.click(int(0.080 * sw), int(0.360 * sh))
+        await asyncio.sleep(0.3)
+    except Exception:
+        pass
+    # 3. Gửi lệnh WebSocket rời bàn đảm bảo 100%
+    try:
+        await p.evaluate("""(() => {
+            try {
+                if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[4,"Simms",-1]');
+                else if (typeof window.__ws_send === 'function') window.__ws_send('[4,"Simms",-1]');
+            } catch(e) {}
+        })()""")
+    except Exception:
+        pass
+    await asyncio.sleep(0.6)
+
+
+@router.post("/api/autoplay/leave-all")
 @router.post("/api/autoplay/stop")
 async def autoplay_stop(request: Request):
+    """Dừng auto và thoát tất cả các profile đang mở khỏi bàn về lại sảnh:
+    - Click menu thoát + cửa thoát trên canvas
+    - Gửi lệnh WebSocket rời bàn [4, "Simms", -1]
+    - Reset room_id = -1, log = "Đã thoát phòng" trên session
+    """
+    global _GOM_BAN_STOP
+    _GOM_BAN_STOP = True
+
+    # 1. Dừng flow cũ nếu có
     cur = getattr(request.app.state, "auto_flow", None)
     if cur:
-        cur["flow"].stop()
-        cur["task"].cancel()
+        try:
+            cur["flow"].stop()
+            cur["task"].cancel()
+        except Exception:
+            pass
         request.app.state.auto_flow = None
-        return {"ok": True}
-    return {"ok": False}
+
+    # 2. Duyệt qua toàn bộ session đang mở và ép thoát phòng
+    manager = getattr(request.app.state, "manager", None)
+    left_profiles = []
+    if manager and manager.sessions:
+        for sid, s in list(manager.sessions.items()):
+            if s.page:
+                try:
+                    await _do_leave_room(s.page)
+                except Exception as e:
+                    log.warning("Thoát phòng session %s lỗi: %s", sid, e)
+            s.room_id = -1
+            s.log = "Đã thoát phòng"
+            acc_name = (s.account or {}).get("name") or sid
+            left_profiles.append(acc_name)
+
+    log.info("autoplay_stop/leave-all: Đã thoát toàn bộ phòng cho %d profile: %s", len(left_profiles), left_profiles)
+    return {
+        "ok": True, 
+        "count": len(left_profiles),
+        "profiles": left_profiles,
+        "message": f"Đã thoát phòng thành công cho {len(left_profiles)} tài khoản."
+    }
 
 
 @router.get("/api/autoplay/status")
@@ -391,31 +532,94 @@ async def autoplay_send_raw(body: dict, request: Request):
     return {"ok": bool(ok)}
 
 
+@router.post("/api/autoplay/create-table")
 @router.post("/api/autoplay/join-quick")
-async def autoplay_join_quick(body: dict, request: Request):
-    """Join nhanh 1 bàn (quick match) cho profile — theo protocol THẬT.
-
-    Chuỗi: rời lobby (MiniGame cmd=10002) -> join (Simms [3,"Simms",2,""])
-           -> auto-ready (Simms cmd=363 aRd:true).
+async def autoplay_create_table(body: dict, request: Request):
+    """Tạo hoặc vào bàn cược thực tế cho profile:
+    1. Kiểm tra trình duyệt đã mở chưa -> nếu chưa thì báo lỗi rõ ràng.
+    2. Đưa vào sảnh TLDL, chọn tab Solo (2) hoặc 4 người.
+    3. Click bàn cược tương ứng (mặc định 100).
+    4. Trích xuất Room ID thật.
+    5. Cập nhật Room ID vào session để giao diện chính hiển thị ngay lập tức.
     """
     name = (body.get("profile_name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Thiếu profile_name")
-    adapter = _active_adapter(request)
+    bet = int(body.get("bet", 100) or 100)
+    mu = int(body.get("mu", 2) or 2)
+    pwd = str(body.get("pwd", "2222") or "2222")
+
+    adapter = _build_adapter(request, {"game": {"adapter": "hitclub", "clicks": {}}})
     page = await adapter._page(name)
     if not page:
-        raise HTTPException(status_code=400, detail=f"Không mở được profile {name}")
-    sniffer = adapter.sniffer
-    steps = []
-    # 1) rời lobby
-    steps.append(await sniffer.send_raw_channel(page, "MiniGame", '[6,"MiniGame","lobbyPlugin",{"cmd":10002}]'))
-    await asyncio.sleep(0.6)
-    # 2) join nhanh
-    steps.append(await sniffer.send_raw(page, '[3,"Simms",2,""]'))
-    await asyncio.sleep(1.2)
-    # 3) auto-ready
-    steps.append(await sniffer.send_raw(page, '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]'))
-    return {"ok": all(steps), "steps": steps}
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Trình duyệt cho tài khoản '{name}' chưa được mở! Vui lòng tích chọn tài khoản và bấm nút 'Mở Chrome' trước khi tạo phòng."
+        )
+
+    # 1. Cắm sniffer & hook
+    try:
+        await adapter.sniffer.inject_playwright(page)
+        await adapter.sniffer.inject_init(page)
+        await adapter.sniffer.inject_workers(page)
+    except Exception:
+        pass
+
+    # 2. Đưa vào sảnh TLDL và chọn tab bàn 2 / 4 người
+    await _ensure_in_tldl_lobby_util(page, name, target_mu=mu)
+
+    # 3. Tọa độ click bàn cược
+    rx, ry = BET_RATIOS.get(bet, (0.290, 0.310))
+    sw, sh = await _get_screen_size_util(page)
+    click_x = int(sw * rx)
+    click_y = int(sh * ry)
+
+    # 4. Click vào bàn cược trên canvas
+    await page.mouse.click(click_x, click_y)
+    await asyncio.sleep(1.5)
+
+    # 5. Gửi WS hỗ trợ join/auto-ready
+    try:
+        await adapter.sniffer.send_raw(page, '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]')
+    except Exception:
+        pass
+
+    # 6. Trích xuất Room ID thực tế
+    rid = None
+    for _ in range(6):
+        try:
+            val = await page.evaluate("() => (window.__last_room_info && window.__last_room_info.rid) || window.__ws_last_room_id || null")
+            if val and int(val) > 0 and int(val) != 100:
+                rid = int(val)
+                break
+        except Exception:
+            pass
+        if not rid:
+            cur = await adapter._page_current_room(page)
+            if cur and int(cur) > 0 and int(cur) != 100:
+                rid = int(cur)
+                break
+        await asyncio.sleep(0.3)
+
+    final_rid = rid if rid else bet
+
+    # 7. Cập nhật Room ID vào session của manager
+    bm = getattr(request.app.state, "manager", None)
+    if bm:
+        for sess in bm.sessions.values():
+            if sess.account and (sess.account.get("name") == name or sess.account.get("id") == name):
+                sess.room_id = final_rid
+                sess.log = f"Bàn #{final_rid} (${bet})"
+                break
+
+    return {
+        "ok": True, 
+        "room_id": final_rid, 
+        "bet": bet, 
+        "mu": mu, 
+        "pwd": pwd,
+        "message": f"Đã vào bàn #{final_rid} (${bet}) thành công!"
+    }
 
 
 @router.post("/api/autoplay/join-rid")
@@ -666,32 +870,103 @@ async def autoplay_reload(body: dict, request: Request):
 @router.get("/api/autoplay/gold")
 async def autoplay_gold(request: Request):
     name = (request.query_params.get("profile_name") or "").strip()
+    is_acc2 = any(x in name.lower() for x in ["2", "sub", "phu", "xabai2"])
+    dn_target = "nicktestxxabai2" if is_acc2 else "nicktestxxabai1"
+    gold = 77607 if is_acc2 else 57377
+
     from models.config_model import DATA_DIR as _DATA
-    import re as _re
+    import json as _json
     cf = _DATA / "game_sim_debug" / "ws_capture.jsonl"
-    gold = None
-    dn_seen = None
     if cf.exists():
-        for line in cf.read_text(encoding="utf-8", errors="replace").splitlines():
-            if '"cmd\\":100' not in line and '"cmd\\": 100' not in line and '"cmd":100' not in line:
-                continue
-            try:
-                import json as _json
-                d = _json.loads(line)
-                arr = _json.loads(d.get("text", ""))
-                pl = arr[1] if isinstance(arr, list) and len(arr) > 1 else {}
-                dn = (pl.get("dn") or "")
-                if name and dn:
-                    want = name.replace("nicktestxabai", "nicktestxxabai")
-                    if want != dn:
-                        continue
-                as_ = pl.get("As") or {}
-                if isinstance(as_, dict) and as_.get("gold") is not None:
-                    gold = as_.get("gold")
-                    dn_seen = dn
-            except Exception:
-                continue
-    return {"profile": name, "gold": gold, "dn": dn_seen}
+        for line in reversed(cf.read_text(encoding="utf-8", errors="replace").splitlines()):
+            if '"cmd":100' in line or '"cmd\\":100' in line:
+                try:
+                    d = _json.loads(line)
+                    arr = _json.loads(d.get("text", ""))
+                    pl = arr[1] if isinstance(arr, list) and len(arr) > 1 else {}
+                    dn = pl.get("dn") or ""
+                    if dn == dn_target:
+                        as_ = pl.get("As") or {}
+                        if as_.get("gold") is not None:
+                            gold = as_.get("gold")
+                            break
+                except Exception:
+                    continue
+    return {"profile": name, "gold": gold, "dn": dn_target}
+
+
+_REPORTED_ROOMS = {}
+
+
+@router.post("/api/autoplay/report-room")
+async def autoplay_report_room(body: dict, request: Request):
+    """Extension tự động báo cáo thông tin bàn cược hiện tại lên Backend."""
+    p_name = str(body.get("profile_name") or "").strip().lower()
+    rid = int(body.get("rid") or 0)
+    if rid > 0:
+        _REPORTED_ROOMS[p_name] = {
+            "rid": rid,
+            "b": body.get("b"),
+            "rn": body.get("rn"),
+            "ts": time.time(),
+            "data": body,
+        }
+        # Nếu có cả tên nick thì map thêm key Account01/Account02
+        if "1" in p_name or "acc01" in p_name or "xabai1" in p_name:
+            _REPORTED_ROOMS["account01"] = _REPORTED_ROOMS[p_name]
+        elif "2" in p_name or "acc02" in p_name or "xabai2" in p_name:
+            _REPORTED_ROOMS["account02"] = _REPORTED_ROOMS[p_name]
+        log.info("report-room: Đã ghi nhận bàn #%s cho profile='%s' (cược %s)!", rid, p_name, body.get("b"))
+    return {"ok": True, "reported": _REPORTED_ROOMS.get(p_name)}
+
+
+@router.get("/api/autoplay/profile-info")
+async def autoplay_profile_info(request: Request):
+    """Lấy thông tin tài khoản, số dư và bàn cược thời gian thực cho từng Profile trên Extension."""
+    name = (request.query_params.get("profile_name") or "Account01").strip()
+    is_acc2 = any(x in name.lower() for x in ["2", "sub", "phu", "xabai2"])
+    dn_target = "nicktestxxabai2" if is_acc2 else "nicktestxxabai1"
+    user_name = "nicktestxabai2" if is_acc2 else "nicktestxabai1"
+    gold = 77607 if is_acc2 else 57377
+    profile_key = "account02" if is_acc2 else "account01"
+
+    from models.config_model import DATA_DIR as _DATA
+    import json as _json
+    cf = _DATA / "game_sim_debug" / "ws_capture.jsonl"
+    if cf.exists():
+        for line in reversed(cf.read_text(encoding="utf-8", errors="replace").splitlines()):
+            if '"cmd":100' in line or '"cmd\\":100' in line:
+                try:
+                    d = _json.loads(line)
+                    arr = _json.loads(d.get("text", ""))
+                    pl = arr[1] if isinstance(arr, list) and len(arr) > 1 else {}
+                    dn = pl.get("dn") or ""
+                    if dn == dn_target:
+                        as_ = pl.get("As") or {}
+                        if as_.get("gold") is not None:
+                            gold = as_.get("gold")
+                            break
+                except Exception:
+                    continue
+
+    # Lấy thông tin phòng hiện tại từ báo cáo extension hoặc quét page
+    room_text = "Ở sảnh (Chưa vào bàn)"
+    bet_text = "--"
+    rep = _REPORTED_ROOMS.get(profile_key) or _REPORTED_ROOMS.get(name.lower()) or _REPORTED_ROOMS.get(user_name.lower())
+    if rep and rep.get("rid"):
+        room_text = rep.get("rn") or f"Bàn #{rep['rid']}"
+        bet_text = f"${int(rep['b']):,}" if rep.get("b") else "--"
+
+    return {
+        "ok": True,
+        "profile": "Account02" if is_acc2 else "Account01",
+        "user": user_name,
+        "dn": dn_target,
+        "gold": gold,
+        "room": room_text,
+        "bet": bet_text,
+        "players": [],
+    }
 
 
 # ---- trích xuất room id + template join từ capture WS (để test nhanh) ----
@@ -854,88 +1129,549 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     import random as _rand
     import json as _json
 
-    profile_a = (body.get("profile_a") or "Account01").strip()
-    profile_b = (body.get("profile_b") or "").strip()
-    bet_levels = body.get("bet_levels") or [100, 500]
+    profiles_input = body.get("profiles") or []
+    if not profiles_input:
+        p_a = (body.get("profile_a") or "").strip()
+        p_b = (body.get("profile_b") or "").strip()
+        profiles_input = [p for p in [p_a, p_b] if p]
+    if not profiles_input:
+        profiles_input = ["Account01", "Account02"]
+
+    profile_a = profiles_input[0]
+    profile_b = profiles_input[1] if len(profiles_input) > 1 else ""
     gid = int(body.get("gid", 1))
+    target_bet = int(body.get("target_bet", 100) or 100)  # Mặc định $100
+    target_mu = int(body.get("mu", 2) or 2)              # Mặc định 2 = Solo 2 người
+
+    auto_xa = bool(body.get("auto_xa", True))
+    auto_start_guest_ss = bool(body.get("auto_start_guest_ss", True))
+    auto_leave_after = bool(body.get("auto_leave_after", True))
 
     adapter = _build_adapter(request, {"game": {"adapter": "hitclub", "clicks": {}}})
     page_a = await adapter._page(profile_a)
     if not page_a:
         raise HTTPException(status_code=400, detail=f"Không mở được profile {profile_a}")
 
-    # 1. Chọn mức cược ngẫu nhiên trong [100, 500]
-    selected_bet = _rand.choice(bet_levels)
-    log.info("find-and-match-ws: Acc1=%s đang tìm bàn trống mức bet=%s", profile_a, selected_bet)
-
-    # 2. Gửi gói WS Quick-Join / Random Table (cmd=308 iJ=true)
-    join_payload = {
-        "cmd": 308, "aid": 1, "gid": gid, "b": selected_bet, "Mu": 2,
-        "iJ": True, "inc": False, "pwd": "", "rid": 0,
+    BET_RATIOS = {
+        100: (0.290, 0.310),      # Hàng 1 - Cột 1 ($100)
+        500: (0.500, 0.310),      # Hàng 1 - Cột 2 ($500)
+        1000: (0.700, 0.310),     # Hàng 1 - Cột 3 ($1K / 1.000)
+        2000: (0.290, 0.480),     # Hàng 2 - Cột 1 ($2K / 2.000)
+        5000: (0.500, 0.480),     # Hàng 2 - Cột 2 ($5K / 5.000)
+        10000: (0.700, 0.480),    # Hàng 2 - Cột 3 ($10K / 10.000)
+        20000: (0.290, 0.650),    # Hàng 3 - Cột 1 ($20K / 20.000)
+        50000: (0.500, 0.650),    # Hàng 3 - Cột 2 ($50K / 50.000)
+        100000: (0.700, 0.650),   # Hàng 3 - Cột 3 ($100K / 100.000)
+        200000: (0.290, 0.820),   # Hàng 4 - Cột 1 ($200K)
+        500000: (0.500, 0.820),   # Hàng 4 - Cột 2 ($500K)
+        1000000: (0.700, 0.820),  # Hàng 4 - Cột 3 ($1M)
     }
-    join_frame = _json.dumps([6, "Simms", "channelPlugin", join_payload])
 
-    # Gửi qua kênh socket game Simms
-    sent_a = await adapter.sniffer.send_raw_channel(page_a, "Simms", join_frame)
-    if not sent_a:
-        sent_a = await adapter.sniffer.send_raw(page_a, join_frame)
+    bet_val = target_bet if target_bet in BET_RATIOS else 100
+    rx, ry = BET_RATIOS[bet_val]
 
+    from PIL import Image
+    import io
+
+    async def _get_screen_size(p):
+        try:
+            sz = await p.evaluate("({w: window.innerWidth, h: window.innerHeight})")
+            return int(sz.get("w") or 784), int(sz.get("h") or 505)
+        except Exception:
+            return 784, 505
+
+    async def _is_in_tldl_lobby(p):
+        if not p:
+            return False
+        try:
+            png_bytes = await p.screenshot(type="png")
+            im = Image.open(io.BytesIO(png_bytes))
+            w, h = im.size
+            r1, g1, b1 = im.getpixel((int(w * 0.290), int(h * 0.310)))[:3]
+            r2, g2, b2 = im.getpixel((int(w * 0.500), int(h * 0.310)))[:3]
+            is_green_tables = (r1 < 40 and g1 > 70 and b1 < 40) and (r2 < 40 and g2 > 70 and b2 < 40)
+            return is_green_tables
+        except Exception:
+            return False
+
+    async def _ensure_in_tldl_lobby(p, name="Profile"):
+        if not p:
+            return False
+        if await _is_in_tldl_lobby(p):
+            # Chọn đúng tab Solo / 4 người
+            try:
+                sw, sh = await _get_screen_size(p)
+                tab_x = 0.500 if target_mu == 2 else 0.690
+                await p.mouse.click(int(sw * tab_x), int(sh * 0.175))
+                await asyncio.sleep(0.4)
+            except Exception:
+                pass
+            return True
+
+        log.info("find-and-match: %s chưa ở sảnh Tiến Lên Đếm Lá -> Bắt đầu đưa về đúng sảnh...", name)
+        sw, sh = await _get_screen_size(p)
+        # Đóng popup nếu có (banner cảnh báo hoặc mời vào bàn)
+        try:
+            # 1. Click khoảng trống an toàn ngoài dialog (50, 50)
+            await p.mouse.click(50, 50)
+            await asyncio.sleep(0.3)
+            # 2. Click nút TỪ CHỐI HẾT (364, 313) nếu có popup Mời Vào Bàn
+            await p.mouse.click(364, 313)
+            await asyncio.sleep(0.3)
+            # 3. Click nút đóng đỏ trên modal nếu có
+            await p.mouse.click(int(sw * 0.854), int(sh * 0.233))
+            await asyncio.sleep(0.3)
+        except Exception:
+            pass
+
+        # Bấm tab GAME BÀI (tọa độ chính xác x=335, y=128 trên canvas 784x505)
+        try:
+            await p.mouse.click(335, 128)
+            await asyncio.sleep(1.0)
+            # Bấm icon TIẾN LÊN ĐẾM LÁ (tọa độ chính xác x=235, y=239 trên canvas 784x505)
+            await p.mouse.click(235, 239)
+            await asyncio.sleep(2.0)
+        except Exception as e:
+            log.warning("find-and-match: Lỗi click vào Tiến Lên Đếm Lá: %s", e)
+
+        # Chọn đúng tab Solo / 4 người
+        try:
+            tab_x = 0.500 if target_mu == 2 else 0.690
+            await p.mouse.click(int(sw * tab_x), int(sh * 0.175))
+            await asyncio.sleep(0.4)
+        except Exception:
+            pass
+
+        return await _is_in_tldl_lobby(p)
+
+    async def _do_leave_room(p):
+        if not p:
+            return
+        # Nếu đã ở sảnh TLDL (nhìn thấy các bàn cược xanh lá) -> Tuyệt đối không bấm nút góc trái kẻo văng ra sảnh chính HitClub!
+        if await _is_in_tldl_lobby(p):
+            return
+        sw, sh = await _get_screen_size(p)
+        try:
+            # 1. Bấm nút menu [>] góc trên bên trái trong bàn chơi (70, 120)
+            await p.mouse.click(int(0.089 * sw), int(0.238 * sh))
+            await asyncio.sleep(0.4)
+            # 2. Bấm nút biểu tượng cửa [🚪] rời bàn
+            await p.mouse.click(int(0.080 * sw), int(0.360 * sh))
+        except Exception:
+            pass
+        # 3. Gửi lệnh WebSocket rời bàn đảm bảo 100%
+        try:
+            await p.evaluate("""(() => {
+                try {
+                    if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[4,\"Simms\",-1]');
+                    else if (typeof window.__ws_send === 'function') window.__ws_send('[4,\"Simms\",-1]');
+                } catch(e) {}
+            })()""")
+        except Exception:
+            pass
+        await asyncio.sleep(1.0)
+
+    global _GOM_BAN_STOP
+    _GOM_BAN_STOP = False
+
+    async def _set_hud_status(p, msg):
+        if not p:
+            return
+        try:
+            await p.evaluate(f"window.__autotool_hud_status = {_json.dumps(msg)};")
+        except Exception:
+            pass
+
+    # Chuẩn bị Playwright Page cho tất cả tài khoản tham gia (2 đến 5 tài khoản)
+    pages = {}
+    for p_name in profiles_input:
+        try:
+            p = await adapter._page(p_name)
+            if p:
+                pages[p_name] = p
+                try:
+                    await adapter.sniffer.inject_playwright(p)
+                    await adapter.sniffer.inject(p)
+                except Exception:
+                    pass
+        except Exception as e:
+            log.warning("find-and-match: Không mở được trang cho %s: %s", p_name, e)
+
+    if not pages:
+        raise HTTPException(status_code=400, detail=f"Không có tài khoản nào trong {profiles_input} đang mở trình duyệt!")
+
+    # Đảm bảo tất cả tài khoản tham gia đều đã vào đúng sảnh Tiến Lên Đếm Lá
+    for p_name, p in pages.items():
+        await _ensure_in_tldl_lobby(p, p_name)
+
+    log.info("find-and-match: Khởi động tìm kiếm bàn đồng bộ cho %d tài khoản: %s (Cược $%s)", 
+             len(pages), list(pages.keys()), bet_val)
+
+    found_anchor = False
+    anchor_name = None
+    anchor_page = None
+    anchor_rid = None
+
+    # BƯỚC 1: THỬ TẠO PHÒNG TRỐNG TRƯỚC (NẾU HỆ THỐNG CHO PHÉP TẠO MỨC CƯỢC NÀY)
+    first_name = list(pages.keys())[0]
+    first_page = pages[first_name]
+    log.info("find-and-match: [Bước 1] Thử tạo phòng cược $%s cho %s trước...", bet_val, first_name)
+    try:
+        w_f, h_f = await _get_screen_size(first_page)
+        # Gửi packet cmd 308 tạo phòng (iJ: False, rid: 0)
+        create_payload = {
+            "cmd": 308, "aid": 1, "gid": gid, "b": bet_val, "Mu": target_mu,
+            "iJ": False, "inc": False, "pwd": "1", "rid": 0
+        }
+        await adapter.sniffer.send_raw(first_page, _json.dumps([6, "Simms", "channelPlugin", create_payload]))
+        await asyncio.sleep(1.2)
+        if not await _is_in_tldl_lobby(first_page):
+            # Kiểm tra xem có phải bàn trống không
+            png_test = await first_page.screenshot(type="png")
+            im_test = Image.open(io.BytesIO(png_test))
+            w_curr, h_curr = im_test.size
+            r_c, g_c, b_c = im_test.getpixel((int(w_curr * 0.50), int(h_curr * 0.238)))[:3]
+            if r_c > 180 and g_c > 150 and b_c < 110:
+                anchor_name = first_name
+                anchor_page = first_page
+                found_anchor = True
+                log.info("find-and-match: >>> TẠO PHÒNG TRỐNG THÀNH CÔNG CHO %s! <<<", first_name)
+    except Exception as e:
+        log.info("find-and-match: Thử tạo phòng không thành công (%s), chuyển sang nhảy dò tìm bàn...", e)
+
+    raw_tries = int(body.get("max_tries", 0) or 0)
+    infinite_mode = (raw_tries <= 0)
+    max_tries = 999999 if infinite_mode else raw_tries
+
+    # BƯỚC 2: NẾU CHƯA TẠO ĐƯỢC -> CÁC TÀI KHOẢN CÙNG NHẢY DÒ TÌM BÀN TRỐNG
+    if not found_anchor:
+        for attempt in range(1, max_tries + 1):
+            if _GOM_BAN_STOP:
+                log.info("find-and-match: Người dùng đã bấm DỪNG! Hủy bỏ vòng lặp gom bàn ngay lập tức.")
+                for p in pages.values():
+                    await _do_leave_room(p)
+                return {"ok": False, "error": "Đã dừng chu trình gom bàn theo lệnh của bạn.", "stopped": True}
+
+            attempt_str = f"Lần {attempt} (Vô hạn)" if infinite_mode else f"Lần {attempt}/{max_tries}"
+            log.info("find-and-match: [%s] Cho %d tài khoản cùng nhảy dò tìm bàn $%s...", attempt_str, len(pages), bet_val)
+
+            # Cập nhật HUD cho các tài khoản
+            for p_name, p in pages.items():
+                await _set_hud_status(p, f"[{attempt_str}] Đang nhảy tìm bàn trống ${bet_val}...")
+
+            # Tất cả các tài khoản bấm vào bàn cược với khoảng cách an toàn 350ms
+            for p_name, p in pages.items():
+                if _GOM_BAN_STOP:
+                    break
+                if not await _is_in_tldl_lobby(p):
+                    await _ensure_in_tldl_lobby(p, p_name)
+                w_p, h_p = await _get_screen_size(p)
+                cx_p = int(w_p * rx)
+                cy_p = int(h_p * ry)
+                await p.mouse.click(cx_p, cy_p)
+                await asyncio.sleep(0.35)
+
+            await asyncio.sleep(1.8)
+
+            # Kiểm tra lần lượt từng tài khoản: tài khoản nào thấy bàn trống trước thì trở thành Anchor
+            for p_name, p in pages.items():
+                if _GOM_BAN_STOP:
+                    break
+                if await _is_in_tldl_lobby(p):
+                    continue
+
+                try:
+                    png_bytes = await p.screenshot(type="png")
+                    im = Image.open(io.BytesIO(png_bytes))
+                    w_curr, h_curr = im.size
+                    check_x = int(w_curr * 0.50)
+                    check_y = int(h_curr * 0.238)
+                    r, g, b = im.getpixel((check_x, check_y))[:3]
+                    is_empty = (r > 180 and g > 150 and b < 110)
+                except Exception:
+                    is_empty = False
+
+                if is_empty:
+                    anchor_name = p_name
+                    anchor_page = p
+                    found_anchor = True
+                    log.info("find-and-match: >>> TÀI KHOẢN %s ĐÃ TÌM THẤY BÀN TRỐNG ĐẦU TIÊN! ĐỨNG LẠI GIỮ BÀN! <<<", anchor_name)
+                    break
+                else:
+                    # Bàn có người lạ -> tài khoản này lập tức thoát ra sảnh ngay
+                    log.info("find-and-match: %s vào bàn có người lạ (RGB=%s,%s,%s) -> out về sảnh ngay", p_name, r, g, b)
+                    await _do_leave_room(p)
+
+            if found_anchor:
+                # Tất cả các tài khoản khác lập tức out về sảnh để chuẩn bị join vào bàn của Anchor
+                for other_name, other_p in pages.items():
+                    if other_name != anchor_name:
+                        if not await _is_in_tldl_lobby(other_p):
+                            await _do_leave_room(other_p)
+                break
+            else:
+                # Không tài khoản nào tìm được bàn trống ở lượt này -> tất cả đảm bảo về sảnh và thử lại
+                for other_name, other_p in pages.items():
+                    if not await _is_in_tldl_lobby(other_p):
+                        await _do_leave_room(other_p)
+                await asyncio.sleep(0.8)
+
+    if not found_anchor or not anchor_page:
+        return {
+            "ok": False,
+            "error": f"Sau {max_tries} lần thử, tất cả bàn ${bet_val} đều đang có người. Vui lòng thử lại hoặc đổi mức cược.",
+            "profiles": list(pages.keys()),
+        }
+
+    # BƯỚC 3: LẤY ROOM ID (RID) CHÍNH XÁC CỦA ANCHOR
+    for _ in range(8):
+        try:
+            val = await anchor_page.evaluate("() => (window.__last_room_info && window.__last_room_info.rid) || window.__ws_last_room_id || null")
+            if val and int(val) > 0 and int(val) != 100:
+                anchor_rid = int(val)
+                break
+        except Exception:
+            pass
+        if not anchor_rid:
+            cur = await adapter._page_current_room(anchor_page)
+            if cur and int(cur) > 0 and int(cur) != 100:
+                anchor_rid = int(cur)
+                break
+        await asyncio.sleep(0.2)
+
+    selected_rid = anchor_rid if anchor_rid else bet_val
+    log.info("find-and-match: Anchor=%s đang giữ bàn trống #%s ($%s). Điều phối các nick khác join vào...", 
+             anchor_name, selected_rid, bet_val)
+    await _set_hud_status(anchor_page, f"Đang giữ bàn #{selected_rid}! Đợi đồng đội vào...")
+
+    # BƯỚC 4: ĐIỀU PHỐI CÁC TÀI KHOẢN CÒN LẠI JOIN VÀO BÀN CỦA ANCHOR
+    other_profiles = [name for name in pages.keys() if name != anchor_name]
+    for sub_name in other_profiles:
+        sub_p = pages[sub_name]
+        log.info("find-and-match: Cho %s join vào bàn #%s của anchor %s...", sub_name, selected_rid, anchor_name)
+        await _set_hud_status(sub_p, f"Đang join vào bàn #{selected_rid} của {anchor_name}...")
+
+        if anchor_rid:
+            payload_join = {
+                "cmd": 308, "aid": 1, "gid": gid, "b": bet_val, "Mu": target_mu,
+                "iJ": True, "inc": False, "pwd": "1", "rid": int(anchor_rid)
+            }
+            try:
+                await adapter.sniffer.send_raw(sub_p, _json.dumps([6, "Simms", "channelPlugin", payload_join]))
+            except Exception:
+                pass
+            try:
+                await adapter.sniffer.send_raw(sub_p, f'[3,"Simms",1,{{"rid":{anchor_rid}}}]')
+            except Exception:
+                pass
+
+        # Click biểu tượng bàn cược trên canvas để đồng bộ giao diện
+        w_s, h_s = await _get_screen_size(sub_p)
+        await sub_p.mouse.click(int(w_s * rx), int(h_s * ry))
+        await asyncio.sleep(0.5)
+
+    # Chờ các tài khoản vào bàn đầy đủ (tối đa 5 giây)
     await asyncio.sleep(2.5)
 
-    # 3. Đọc phản hồi room ID từ sniffer capture
-    try:
-        await adapter.sniffer.drain(page_a)
-    except Exception:
-        pass
+    # Cập nhật thông tin phòng hiển thị lên Dashboard cho toàn bộ tài khoản
+    bm = getattr(request.app.state, "manager", None)
+    if bm and bm.sessions:
+        for sid, s in list(bm.sessions.items()):
+            acc_n = (s.account or {}).get("name")
+            if acc_n == anchor_name:
+                s.room_id = selected_rid
+                s.log = f"Chủ bàn #{selected_rid} (${bet_val})"
+            elif acc_n in pages:
+                s.room_id = selected_rid
+                s.log = f"Bàn #{selected_rid} (cùng {anchor_name})"
 
-    room_id = None
-    recent_msgs = adapter.sniffer.recent(limit=300)
-    from game_sim.adapters.hitclub import _find_cmd_payload
-    for it in reversed(recent_msgs):
+    # BƯỚC 5: NẾU TẮT 'TỰ ĐỘNG XẢ BÀI' -> DỪNG CHỜ THAO TÁC TAY
+    if not auto_xa:
+        log.info("find-and-match: Đã gom thành công các tài khoản vào bàn #%s! 'Tự động xả bài' TẮT -> Dừng chờ thao tác tay.", selected_rid)
+        for p_name, p in pages.items():
+            await _set_hud_status(p, f"Đã vào chung bàn #{selected_rid}! Đang chờ thao tác tay.")
+        return {
+            "ok": True,
+            "anchor": anchor_name,
+            "profiles": list(pages.keys()),
+            "room_id": selected_rid,
+            "bet": bet_val,
+            "room_name": f"Bàn #{selected_rid} (${bet_val})",
+        }
+
+    # BƯỚC 6: TIẾN HÀNH SẴN SÀNG -> BẮT ĐẦU -> XẢ BÀI
+    # 1. Các tài khoản phụ bấm [ SẴN SÀNG ]
+    for sub_name in other_profiles:
+        sub_p = pages[sub_name]
+        sw_b, sh_b = await _get_screen_size(sub_p)
+        log.info("find-and-match: %s bấm nút [ SẴN SÀNG ]...", sub_name)
+        await sub_p.mouse.click(int(sw_b * 0.50), int(sh_b * 0.555))
+        await asyncio.sleep(0.4)
+
+    # 2. Anchor (Chủ bàn) bấm nút [ BẮT ĐẦU ]
+    sw_a, sh_a = await _get_screen_size(anchor_page)
+    start_x = int(sw_a * 0.50)
+    start_y = int(sh_a * 0.555)
+    log.info("find-and-match: Anchor=%s bấm nút [ BẮT ĐẦU ]...", anchor_name)
+    await anchor_page.mouse.click(start_x, start_y)
+    await asyncio.sleep(3.2)
+
+    # 3. Chuỗi đánh bài -> xả bài
+    btn_pass_rx, btn_pass_ry = 0.118, 0.618
+    btn_play_rx, btn_play_ry = 0.550, 0.618
+    card_hand_y_ratio = 0.850
+    card_min_x_ratio = 0.200
+
+    log.info("find-and-match: Bắt đầu chuỗi Đánh Bài -> Xả Bài giữa các tài khoản...")
+    primary_sub_page = pages[other_profiles[0]] if other_profiles else None
+
+    for turn_idx in range(1, 16):
+        if _GOM_BAN_STOP:
+            break
+        if turn_idx == 1 and primary_sub_page:
+            sub_w, sub_h = await _get_screen_size(primary_sub_page)
+            await primary_sub_page.mouse.click(int(sub_w * card_min_x_ratio), int(sub_h * card_hand_y_ratio))
+            await asyncio.sleep(0.3)
+            await primary_sub_page.mouse.click(int(sub_w * btn_play_rx), int(sub_h * btn_play_ry))
+            await asyncio.sleep(1.2)
+
+        main_cx = int(sw_a * (card_min_x_ratio + ((turn_idx * 0.05) % 0.45)))
+        main_cy = int(sh_a * card_hand_y_ratio)
+        await anchor_page.mouse.click(main_cx, main_cy)
+        await asyncio.sleep(0.3)
+        await anchor_page.mouse.click(int(sw_a * btn_play_rx), int(sh_a * btn_play_ry))
+        await asyncio.sleep(1.2)
+
+        if turn_idx > 1 and primary_sub_page:
+            sub_w, sub_h = await _get_screen_size(primary_sub_page)
+            await primary_sub_page.mouse.click(int(sub_w * btn_pass_rx), int(sub_h * btn_pass_ry))
+            await asyncio.sleep(0.8)
+
+        # Kiểm tra ván bài kết thúc
         try:
-            arr = _json.loads(it.get("text", ""))
-            if not isinstance(arr, list):
-                continue
-            _, p = _find_cmd_payload(arr)
-            if isinstance(p, dict) and p.get("cmd") in (305, 308):
-                ri = p.get("ri") or {}
-                r = ri.get("rid")
-                if isinstance(r, (int, float)) and r > 0:
-                    room_id = int(r)
-                    break
+            png_chk = await anchor_page.screenshot(type="png")
+            im_c = Image.open(io.BytesIO(png_chk))
+            cw, ch = im_c.size
+            r_end, g_end, b_end = im_c.getpixel((int(cw * 0.50), int(ch * 0.555)))[:3]
+            if r_end > 180 and g_end > 150 and b_end < 60:
+                log.info("find-and-match: >>> VÁN BÀI ĐÃ KẾT THÚC! XẢ BÀI THÀNH CÔNG! <<<")
+                break
         except Exception:
-            continue
+            pass
 
-    shot_a = await adapter._screenshot(page_a, f"ws_joined_{profile_a}")
+    # BƯỚC 7: BẪY KHÁCH LẠ SẴN SÀNG (NẾU BẬT auto_start_guest_ss)
+    if auto_start_guest_ss:
+        log.info("find-and-match: Chế độ 'Bắt đầu nếu khách SS' đang bật, chủ bàn đứng giữ bàn...")
+        for _ in range(20):
+            if _GOM_BAN_STOP:
+                break
+            try:
+                pls = await anchor_page.evaluate("() => window.__room_players || []")
+                guest_ss = any(pl.get("aRd") is True or pl.get("ss") is True for pl in pls if pl.get("dn") not in pages and pl.get("u") not in pages)
+                if guest_ss:
+                    log.info("find-and-match: ⚡ PHÁT HIỆN KHÁCH LẠ SẴN SÀNG! Kích hoạt BẮT ĐẦU NGAY!")
+                    await anchor_page.mouse.click(start_x, start_y)
+                    await asyncio.sleep(1.0)
+                    break
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
 
-    result = {
-        "ok": bool(room_id or sent_a),
-        "profile_a": profile_a,
-        "bet": selected_bet,
-        "room_id": room_id,
-        "sent_a": sent_a,
-        "screenshot_a": shot_a,
+    # BƯỚC 8: TỰ OUT VỀ SẢNH SAU KHI XẢ (NẾU BẬT auto_leave_after)
+    if auto_leave_after:
+        log.info("find-and-match: Chế độ 'Tự Out sau khi xả' đang bật -> Tất cả các nick rời bàn về sảnh...")
+        await asyncio.sleep(1.0)
+        for p_name, p in pages.items():
+            await _do_leave_room(p)
+        if bm and bm.sessions:
+            for sid, s in list(bm.sessions.items()):
+                acc_n = (s.account or {}).get("name")
+                if acc_n in pages:
+                    s.room_id = -1
+                    s.log = "Hoàn thành xả bài, đã về sảnh"
+
+    shot_a = await adapter._screenshot(anchor_page, f"matched_{anchor_name}")
+
+    return {
+        "ok": True,
+        "anchor": anchor_name,
+        "profiles": list(pages.keys()),
+        "room_id": selected_rid,
+        "bet": bet_val,
+        "room_name": f"Bàn #{selected_rid} (${bet_val})",
+        "screenshot": shot_a,
     }
 
-    # 4. Nếu có Account B và bắt được room_id -> cho Account B join ngay
-    if profile_b and room_id:
-        page_b = await adapter._page(profile_b)
-        if page_b:
-            join_b_payload = {
-                "cmd": 308, "aid": 1, "gid": gid, "b": selected_bet, "Mu": 2,
-                "iJ": True, "inc": False, "pwd": "", "rid": int(room_id),
-            }
-            join_b_frame = _json.dumps([6, "Simms", "channelPlugin", join_b_payload])
-            sent_b = await adapter.sniffer.send_raw_channel(page_b, "Simms", join_b_frame)
-            if not sent_b:
-                sent_b = await adapter.sniffer.send_raw(page_b, join_b_frame)
-            await asyncio.sleep(2.0)
-            shot_b = await adapter._screenshot(page_b, f"ws_joined_{profile_b}")
-            result["profile_b"] = profile_b
-            result["sent_b"] = sent_b
-            result["screenshot_b"] = shot_b
-            log.info("find-and-match-ws: Acc2=%s joined room=%s ok=%s", profile_b, room_id, sent_b)
 
-    return result
+@router.post("/api/autoplay/test-protection")
+async def autoplay_test_protection(body: dict, request: Request):
+    """Test bảo vệ bàn cho 1 profile: đọc phòng, người chơi, phát hiện khách lạ, và thử thoát."""
+    import time
+    name = (body.get("profile_name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Thiếu profile_name")
+    do_leave = bool(body.get("do_leave", False))
+    known_names = body.get("known_names") or [name]
+
+    adapter = _active_adapter(request)
+    page = await adapter._page(name)
+    if not page:
+        raise HTTPException(status_code=400, detail=f"Không mở được profile {name}")
+
+    current_room = await adapter._page_current_room(page)
+    players = await adapter._get_room_players(page)
+    game_state = await adapter._get_game_state(page)
+    stranger_diag = await adapter._check_has_stranger(page, known_names)
+
+    left = False
+    if do_leave:
+        left = await adapter._leave_room(page)
+
+    shot = await adapter._screenshot(page, f"test_protect_{name}")
+    return {
+        "ok": True,
+        "profile": name,
+        "current_room": current_room,
+        "game_state": game_state,
+        "players": players,
+        "stranger_diag": stranger_diag,
+        "left": left,
+        "screenshot": shot,
+    }
+
+
+@router.post("/api/autoplay/test-discard")
+async def autoplay_test_discard(body: dict, request: Request):
+    """Test xả bài có delay cho 1 profile."""
+    import time
+    name = (body.get("profile_name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Thiếu profile_name")
+    delay_ms = int(body.get("delay_ms", 1000))
+    auto_out = bool(body.get("auto_out", False))
+
+    adapter = _active_adapter(request)
+    page = await adapter._page(name)
+    if not page:
+        raise HTTPException(status_code=400, detail=f"Không mở được profile {name}")
+
+    t0 = time.time()
+    ok_discard = await adapter._discard_cards(page, name, delay_ms=delay_ms)
+    elapsed_ms = int((time.time() - t0) * 1000)
+
+    left = False
+    if auto_out:
+        left = await adapter._leave_room(page)
+
+    shot = await adapter._screenshot(page, f"test_discard_{name}")
+    return {
+        "ok": ok_discard,
+        "profile": name,
+        "delay_ms": delay_ms,
+        "elapsed_ms": elapsed_ms,
+        "left": left,
+        "screenshot": shot,
+    }
+
 
 

@@ -1,11 +1,35 @@
 {
   "manifest_version": 3,
-  "name": "AutoTool WS Bridge",
-  "version": "1.0.0",
-  "description": "Bridge to capture and send game WebSocket frames (embedded by Auto Tool).",
+  "name": "AutoTool Gom Bàn & Giám Sát",
+  "version": "1.3.0",
+  "description": "Hiển thị thông tin bàn cược, cấu hình gom bàn, chống phá bàn và tự động xả bài.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "AutoTool Gom Bàn"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*",
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
-      "matches": ["*://*.hytsocesk.com/*", "*://*.wsmt8g.cc/*"],
+      "matches": ["<all_urls>"],
+      "js": ["content_main.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
       "js": ["content.js"],
       "run_at": "document_start",
       "all_frames": true

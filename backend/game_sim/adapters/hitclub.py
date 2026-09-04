@@ -198,6 +198,10 @@ class HitClubAdapter(GameAdapter):
         if not page:
             return
         try:
+            cur_url = (getattr(page, "url", "") or "").lower()
+            if "hitclub" in cur_url:
+                log.info("Page đã ở trang hitclub (%s), bỏ qua reload để giữ nguyên phiên", cur_url)
+                return
             await page.goto(self.url, wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(float(self.game.get("load_wait", 4)))
         except Exception as e:
@@ -676,11 +680,20 @@ class HitClubAdapter(GameAdapter):
                     return int(r)
         return None
 
-    async def _room_has_others(self, page):
-        """Kiểm tra bàn hiện tại có người chơi KHÁC ngoài mình không (cmd=202 ps).
+    async def _get_room_players(self, page):
+        """Lấy danh sách người chơi trong phòng từ cmd=202 ps.
 
-        Trả True/False nếu có dữ liệu, None nếu chưa thấy cmd=202.
+        Trả về danh sách dict: [{'dn': display_name, 'u': username, ...}].
         """
+        # 1. Thử đọc trực tiếp từ window.__room_players (bắt bởi JS hook)
+        try:
+            players = await page.evaluate("() => window.__room_players || []")
+            if isinstance(players, list) and players:
+                return players
+        except Exception:
+            pass
+
+        # 2. Quét từ bộ đệm _PAGE_RECV
         from game_sim.ws_sniffer import _PAGE_RECV
 
         items = _PAGE_RECV.get(id(page), []) or []
@@ -689,6 +702,7 @@ class HitClubAdapter(GameAdapter):
                 items = items + (await page.evaluate("() => (window.__ws_capture || [])") or [])
             except Exception:
                 pass
+
         for it in reversed(items):
             if it.get("dir") != "recv":
                 continue
@@ -700,17 +714,119 @@ class HitClubAdapter(GameAdapter):
                 continue
             _, p = _find_cmd_payload(arr)
             if isinstance(p, dict) and p.get("cmd") == 202 and isinstance(p.get("ps"), list):
-                return len(p["ps"]) > 1
-        return None
+                return p["ps"]
+        return []
 
-    async def _leave_room(self, page):
-        """Rời bàn: gửi WS leave (frame học từ protocol) + click leave_btn (fallback)."""
+    async def _get_game_state(self, page):
+        """Lấy trạng thái ván game (cmd=202 gS). gS=0: chờ/sẵn sàng, gS=1: đang chơi."""
         try:
-            await self.sniffer.send_raw(page, self.proto.get("leave"))
+            gs = await page.evaluate("() => window.__room_state")
+            if gs is not None:
+                return gs
         except Exception:
             pass
+        from game_sim.ws_sniffer import _PAGE_RECV
+        items = _PAGE_RECV.get(id(page), []) or []
+        for it in reversed(items):
+            if it.get("dir") != "recv":
+                continue
+            try:
+                arr = json.loads(it.get("text", ""))
+                _, p = _find_cmd_payload(arr)
+                if isinstance(p, dict) and p.get("cmd") == 202 and "gS" in p:
+                    return p["gS"]
+            except Exception:
+                continue
+        return None
+
+    async def _check_has_stranger(self, page, known_names):
+        """Kiểm tra bàn có khách lạ (người không nằm trong known_names) không.
+
+        known_names: set/list tên các account phe mình (username, display name, profile name).
+        Trả về dict: {'has_stranger': bool, 'strangers': [...], 'players': [...], 'count': int}
+        """
+        ps = await self._get_room_players(page)
+        if not ps:
+            return {"has_stranger": False, "strangers": [], "players": [], "count": 0}
+
+        norm_known = {str(n).strip().lower() for n in (known_names or []) if n}
+        strangers = []
+        all_players = []
+
+        for p in ps:
+            if not isinstance(p, dict):
+                continue
+            dn = str(p.get("dn") or "").strip()
+            u = str(p.get("u") or "").strip()
+            all_players.append({"dn": dn, "u": u, "raw": p})
+
+            # So khớp dn và u với known_names
+            dn_lower = dn.lower()
+            u_lower = u.lower()
+            is_known = False
+            for k in norm_known:
+                if k and (k == dn_lower or k == u_lower or k in dn_lower or dn_lower in k):
+                    is_known = True
+                    break
+            if not is_known and (dn or u):
+                strangers.append(dn or u)
+
+        has_stranger = len(strangers) > 0
+        if has_stranger:
+            log.warning("PHÁT HIỆN KHÁCH LẠ trong bàn: %s (known=%s)", strangers, list(norm_known))
+        return {
+            "has_stranger": has_stranger,
+            "strangers": strangers,
+            "players": all_players,
+            "count": len(all_players),
+        }
+
+    async def _configure_inpage_protection(self, page, known_names, out_guest=True, chong_pha=True):
+        """Cấu hình bộ lọc bảo vệ thời gian thực ngay trong page cho Extension / JS hook."""
+        if not page:
+            return False
+        js = """
+        (cfg) => {
+            window.__auto_protect = {
+                enabled: true,
+                out_guest: !!cfg.out_guest,
+                chong_pha: !!cfg.chong_pha,
+                known_names: cfg.known_names || []
+            };
+            window.__stranger_detected = false;
+            return true;
+        }
+        """
+        try:
+            cfg = {
+                "out_guest": bool(out_guest),
+                "chong_pha": bool(chong_pha),
+                "known_names": list(known_names or []),
+            }
+            await page.evaluate(js, cfg)
+            return True
+        except Exception as e:
+            log.warning("configure_inpage_protection fail: %s", e)
+            return False
+
+    async def _room_has_others(self, page):
+        """Kiểm tra bàn hiện tại có người chơi KHÁC ngoài mình không (cmd=202 ps)."""
+        ps = await self._get_room_players(page)
+        return len(ps) > 1 if ps else None
+
+    async def _leave_room(self, page):
+        """Rời bàn: gửi frame WS leave [4,"Simms",-1] qua game socket + fallback click leave_btn."""
+        sent = False
+        try:
+            sent = await self.sniffer.send_raw_channel(page, "Simms", '[4,"Simms",-1]')
+            if not sent:
+                sent = await self.sniffer.send_raw(page, '[4,"Simms",-1]')
+        except Exception as e:
+            log.warning("leave room ws send fail: %s", e)
         await self._click_retry(page, "leave_btn", attempts=2)
         await asyncio.sleep(float(self.game.get("leave_wait", 1.5)))
+        log.info("leave_room called page=%s sent_ws=%s", id(page), sent)
+        return bool(sent)
 
     async def _find_empty_room(self, page, max_tries=6, wait=2, gid=1, strict=False):
         """Tìm 1 phòng qua WS.
@@ -796,11 +912,15 @@ class HitClubAdapter(GameAdapter):
             log.info("cmd=305/300 no suitable room (rooms=%d, strict=%s) attempt %s/%s", len(rooms), strict, i + 1, max_tries)
         return None
 
-    async def _discard_cards(self, page, member_name="x"):
-        """Xả bài: click nút xả (retry) và/hoặc gửi ws discard_cmd, chụp ảnh sau.
+    async def _discard_cards(self, page, member_name="x", delay_ms=0):
+        """Xả bài: chờ delay_ms (nếu có), click nút xả và/hoặc gửi ws discard_cmd, chụp ảnh sau.
 
         Trả True nếu có ít nhất 1 cách thành công (click được / gửi được message).
         """
+        if delay_ms and delay_ms > 0:
+            log.info("discard %s: chờ delay %d ms trước khi xả", member_name, delay_ms)
+            await asyncio.sleep(float(delay_ms) / 1000.0)
+
         ok = False
         if self.clicks.get("discard_btn"):
             ok = await self._click_retry(page, "discard_btn", attempts=2, delay=0.8)
@@ -855,12 +975,14 @@ class HitClubAdapter(GameAdapter):
         acc = self.account_lookup.get(account_name) or {}
         uname = (acc.get("username") or acc.get("name") or "").strip()
         pwd = (acc.get("password") or "").strip()
-        # MAIN: login + tạo/vào phòng + bắt room id
-        # SUPPORT: cũng cần login riêng (profile khác) trước khi join chung phòng
-        await self._type(page, "username_input", uname)
-        await self._type(page, "password_input", pwd)
-        await self._click(page, "login_btn")
-        await asyncio.sleep(float(self.game.get("login_wait", 1.5)))
+
+        if not pwd:
+            log.info("Account %s không cấu hình password — người dùng tự đăng nhập tay hoặc dùng session/token có sẵn, bỏ qua auto login", account_name)
+        else:
+            await self._type(page, "username_input", uname)
+            await self._type(page, "password_input", pwd)
+            await self._click(page, "login_btn")
+            await asyncio.sleep(float(self.game.get("login_wait", 1.5)))
         # ---- capture token MỚI ngay sau login (tránh lưu token cũ/hết hạn) ----
         new_tok = await self._read_token(page)
         if new_tok and new_tok.startswith("1-"):

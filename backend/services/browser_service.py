@@ -31,18 +31,42 @@ CHROME_PROCESS_NAMES = ("chrome.exe", "chrome", "chromium.exe", "chromium")
 
 
 def _find_hwnd_by_pid(pid):
-    hwnds = []
+    """Tìm HWND cửa sổ chính (Chrome_WidgetWin_1) thuộc PID hoặc các process con của PID."""
+    if not pid:
+        return None
+    pids = {pid}
+    try:
+        proc = psutil.Process(pid)
+        for child in proc.children(recursive=True):
+            pids.add(child.pid)
+    except Exception:
+        pass
+
+    candidates = []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def _cb(hwnd, lparam):
-        pid_value = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_value))
-        if pid_value.value == pid and user32.IsWindowVisible(hwnd):
-            hwnds.append(hwnd)
+        pid_val = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_val))
+        if pid_val.value in pids and user32.GetParent(hwnd) == 0:
+            c_buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, c_buf, 256)
+            # CHỈ lấy Chrome_WidgetWin_1 (cửa sổ trình duyệt thực tế), bỏ qua overlay 50x50
+            if c_buf.value == "Chrome_WidgetWin_1":
+                candidates.append(hwnd)
         return True
 
-    user32.EnumWindows(_cb, 0)
-    return hwnds[0] if hwnds else None
+    h_desk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+    if h_desk:
+        user32.EnumDesktopWindows(h_desk, _cb, 0)
+        user32.CloseDesktop(h_desk)
+    else:
+        user32.EnumWindows(_cb, 0)
+
+    for h in candidates:
+        if user32.IsWindowVisible(h):
+            return h
+    return candidates[0] if candidates else None
 
 
 def _chrome_pids():
@@ -66,10 +90,33 @@ def _pid_alive(pid):
 
 def _clear_profile_lock(profile_dir):
     """Chromium để lại SingletonLock/SingletonCookie/SingletonSocket khi bị kill
-    đột ngột. Nếu không xóa, lần mở lại profile có thể bị từ chối ("profile in
-    use"). Xóa lock cũ trước khi launch persistent context."""
+    đột ngột hoặc process mồ côi chạy ngầm không hiển thị cửa sổ.
+    Diệt sạch process mồ côi đang chiếm user-data-dir này và xóa lockfile."""
     if not profile_dir:
         return
+    try:
+        norm_dir = os.path.normcase(os.path.abspath(profile_dir))
+        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+            try:
+                name = (proc.info["name"] or "").lower()
+                if name in CHROME_PROCESS_NAMES:
+                    cmd = " ".join(proc.info["cmdline"] or [])
+                    if norm_dir in os.path.normcase(cmd):
+                        try:
+                            for c in proc.children(recursive=True):
+                                c.kill()
+                        except Exception:
+                            pass
+                        proc.kill()
+                        try:
+                            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     for name in ("SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"):
         try:
             p = Path(profile_dir) / name
@@ -164,6 +211,8 @@ class TabSession:
         self.fp_os = fp_os
         self.url = account["url"] if account and account.get("url") else "about:blank"
         self.temp_dir = None
+        self.room_id = -1
+        self.log = ""
 
     def to_dict(self):
         return {
@@ -175,6 +224,8 @@ class TabSession:
             "pid": self.pid,
             "ua": self.ua,
             "fp_os": self.fp_os,
+            "room_id": self.room_id,
+            "log": self.log,
         }
 
 
@@ -407,6 +458,15 @@ class BrowserManager:
         open_account_ids = {
             s.account["id"] for s in self.sessions.values() if s.account
         }
+        for a in pool:
+            if a["id"] in open_account_ids:
+                for s in self.sessions.values():
+                    if s.account and s.account["id"] == a["id"]:
+                        await self._bring_page_to_front(s)
+                        if s.hwnd:
+                            user32.ShowWindow(s.hwnd, SW_RESTORE)
+                            user32.ShowWindow(s.hwnd, SW_SHOW)
+                            user32.SetForegroundWindow(s.hwnd)
         pool = [a for a in pool if a["id"] not in open_account_ids]
         if count is None:
             count = len(pool)
@@ -468,24 +528,45 @@ class BrowserManager:
             # --window-position=100,100: đặt vị trí khởi đầu trên màn hình.
             # --window-size=1280,800: kích thước mặc định nếu chưa có config.
             # --disable-session-crashed-bubble: bỏ popup "Chrome không tắt đúng cách".
+            win_cfg = self.config.get("window", {})
+            win_w = win_cfg.get("width") or 1024
+            win_h = win_cfg.get("height") or 768
+            offset = len(self.sessions) * 40
+            pos_x = 100 + offset
+            pos_y = 100 + offset
+            # Cấp phát / sử dụng User-Agent riêng cho profile
+            ua = (account.get("user_agent") or "").strip() if account else ""
+            if not ua:
+                from core.device_profiles import get_random_user_agent
+                ua = get_random_user_agent()
+                if account:
+                    account["user_agent"] = ua
+
             args += [
-                "--start-maximized",
-                "--window-position=100,100",
+                f"--window-position={pos_x},{pos_y}",
+                f"--window-size={win_w},{win_h}",
+                f"--user-agent={ua}",
                 "--disable-session-crashed-bubble",
                 "--disable-infobars",
                 "--no-first-run",
-                "--disable-restore-session-state",
             ]
             launch_kwargs = {
                 "user_data_dir": user_data_dir,
                 "headless": False,
                 "no_viewport": True,
+                "user_agent": ua,
                 "args": args,
             }
             if locale and locale != "random":
                 launch_kwargs["locale"] = locale
             if proxy_dict:
                 launch_kwargs["proxy"] = proxy_dict
+            try:
+                h_desk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+                if h_desk:
+                    user32.SetThreadDesktop(h_desk)
+            except Exception:
+                pass
             context = await pw.chromium.launch_persistent_context(**launch_kwargs)
             browser = context.browser
             pages = context.pages
@@ -596,24 +677,29 @@ class BrowserManager:
             self._emit("opened", session_id=session_id)
 
     async def _wait_new_window(self, before, timeout=25):
-        """Tìm PID + HWND của cửa sổ Chromium mới vừa mở.
+        """Tìm PID + HWND của cửa sổ Chromium mới vừa mở."""
+        def _is_browser_main(p_id):
+            try:
+                p = psutil.Process(p_id)
+                return not any(arg.startswith("--type=") for arg in (p.cmdline() or []))
+            except Exception:
+                return False
 
-        Khi backend chạy với elevated privileges (Admin), UIPI ngăn
-        EnumWindows/IsWindowVisible thấy cửa sổ của Chromium (chạy ở user
-        level). Trong trường hợp đó hàm vẫn trả về pid tìm được (không có
-        hwnd) để session vẫn được tạo — bring_to_front sẽ dùng Playwright
-        API thay vì Win32.
-        """
         deadline = time.monotonic() + timeout
-        new_pid = None
+        main_pid = None
         while time.monotonic() < deadline:
-            new_pids = _chrome_pids() - before
-            for pid in new_pids:
+            new_pids = list(_chrome_pids() - before)
+            # Sắp xếp để process chính (không có --type=) lên đầu
+            main_candidates = [p for p in new_pids if _is_browser_main(p)]
+            for pid in (main_candidates or new_pids):
                 hwnd = _find_hwnd_by_pid(pid)
                 if hwnd:
                     return pid, hwnd
-                new_pid = pid  # ghi nhớ pid kể cả khi không tìm được hwnd
+                if _is_browser_main(pid):
+                    main_pid = pid
             await asyncio.sleep(0.5)
+        if main_pid:
+            return main_pid, _find_hwnd_by_pid(main_pid)
         # Fallback: trả pid (không có hwnd) — cửa sổ vẫn chạy,
         # bring_to_front sẽ dùng page.bring_to_front() thay vì Win32.
         if new_pid:
@@ -630,10 +716,17 @@ class BrowserManager:
         if not hwnd:
             return False
         x, y, w, h = rect
-        # Restore trước (khỏi động minimized ở taskbar) rồi di chuyển ra đúng vị trí.
-        # Đây là nguyên nhân chính khiến Chrome thấy trong taskbar nhưng
-        # không hiện trên màn hình: SetWindowPos với SWP_NOZORDER đơn thuần
-        # không show window nếu nó đang ở trạng thái minimized/hidden.
+        # Ép buộc kiểu cửa sổ WS_EX_APPWINDOW để hiện icon trên thanh Taskbar
+        GWL_EXSTYLE = -20
+        WS_EX_APPWINDOW = 0x00040000
+        WS_EX_TOOLWINDOW = 0x00000080
+        try:
+            ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            ex = (ex | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
+            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex)
+        except Exception:
+            pass
+
         user32.ShowWindow(hwnd, SW_RESTORE)   # restore từ minimize
         user32.ShowWindow(hwnd, SW_SHOW)      # đảm bảo visible
         user32.SetWindowPos(
@@ -641,7 +734,7 @@ class BrowserManager:
             int(x), int(y), int(w), int(h),
             SWP_NOZORDER | SWP_SHOWWINDOW,    # vừa move vừa show
         )
-        user32.SetForegroundWindow(hwnd)      # đưa lên trước mọn
+        user32.SetForegroundWindow(hwnd)      # đưa lên trước màn hình
         session.hwnd = hwnd
         return True
 

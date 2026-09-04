@@ -4,6 +4,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 import sys
 
+# Ép buộc gắn vào desktop vật lý 'Default' của người dùng (màn hình hiển thị thật)
+try:
+    import ctypes
+    user32 = ctypes.windll.user32
+    h_desk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+    if h_desk:
+        user32.SetThreadDesktop(h_desk)
+except Exception:
+    pass
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -17,7 +27,6 @@ from controllers import (
     auto_flow_controller,
     browser_controller,
     config_controller,
-    game_sim_controller,
     info_controller,
     license_controller,
     proxy_controller,
@@ -58,9 +67,6 @@ def create_app() -> FastAPI:
         app.state.hub = hub
         app.state.manager = manager
         app.state.events = emitter
-        game_sim = GameSimManager(browser_manager=manager)
-        game_sim.set_event_sink(lambda ev: emitter.publish(ev))
-        app.state.game_sim = game_sim
 
         # Migration: bật lưu session (save_session) cho mọi profile cũ + tạo
         # profile_dir nếu thiếu, để login được giữ lại khi mở lại.
@@ -102,13 +108,14 @@ def create_app() -> FastAPI:
         allow_origins=["*"],
         allow_methods=["*"],
         allow_headers=["*"],
+        allow_credentials=False,
+        allow_private_network=True,
     )
 
     app.include_router(info_controller.router)
     app.include_router(config_controller.router)
     app.include_router(account_controller.router)
     app.include_router(browser_controller.router)
-    app.include_router(game_sim_controller.router)
     app.include_router(auto_flow_controller.router)
     app.include_router(proxy_controller.router)
     app.include_router(license_controller.router)
