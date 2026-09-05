@@ -161,25 +161,21 @@
     return "winner";
   }
 
-  function findBestPlay(myCards, tableCards, role, isPartnerTurn, partnerCardsCount = 13) {
+  function findBestPlay(myCards, tableCards, role, isPartnerTurn) {
     if (!myCards || !myCards.length) return null;
     const combs = findCombinations(myCards);
 
-    // 1. LƯỢT TỰ DO (Free Turn / Mở ván hoặc đối phương vừa Pass) -> BẮT BUỘC ĐÁNH RA BÀI (KHÔNG BAO GIỜ NULL)
+    // 1. LƯỢT TỰ DO (Free Turn / Mở ván hoặc đối phương vừa Bỏ lượt) -> BẮT BUỘC ĐÁNH BÀI RA
     if (!tableCards || tableCards.length === 0) {
       if (role === "dump") {
-        // Ưu tiên xả: Sảnh dài nhất -> Tứ quý -> Ba -> Đôi -> Heo -> Rác to nhất
-        if (combs.straights.length > 0) return combs.straights[0];
-        if (combs.quads.length > 0) return combs.quads[combs.quads.length - 1];
-        if (combs.triples.length > 0) return combs.triples[combs.triples.length - 1];
-        if (combs.pairs.length > 0) return combs.pairs[combs.pairs.length - 1];
-        const heos = myCards.filter((c) => getCardVal(c) === 15);
-        if (heos.length > 0) return [heos[0]];
+        // Account 2 (Phụ): LUÔN LUÔN ĐÁNH 1 LÁ RÁC NHỎ NHẤT TRÊN TAY ĐỂ MỒI CHO ACCOUNT 1 ĐÈ & GIÀNH LƯỢT!
         const sorted = sortCards(myCards);
-        return [sorted[sorted.length - 1]];
+        console.log(`[AutoTool V3] [Role: DUMP] Mồi lá rác nhỏ nhất: [${sorted[0]}]`);
+        return [sorted[0]];
       } else {
-        // Winner: Đánh từ nhóm nhỏ nhất để xả sạch bài về Nhất
-        if (combs.straights.length > 0) return combs.straights[combs.straights.length - 1];
+        // Account 1 (Chính): XẢ SẠCH BÀI VỀ NHẤT! Ưu tiên tổ hợp dài: Sảnh -> Tứ quý -> Ba -> Đôi -> Rác nhỏ
+        if (combs.straights.length > 0) return combs.straights[0];
+        if (combs.quads.length > 0) return combs.quads[0];
         if (combs.triples.length > 0) return combs.triples[0];
         if (combs.pairs.length > 0) return combs.pairs[0];
         return [sortCards(myCards)[0]];
@@ -188,37 +184,51 @@
 
     // 2. LƯỢT ĐÈ BÀI (Follow Turn)
     if (isPartnerTurn) {
-      if (role === "winner") {
-        // Đồng đội (Dump) vừa xả bài:
-        if (partnerCardsCount > 1) {
-          // Đồng đội còn nhiều bài -> Winner PASS để đồng đội có lượt tự do xả tiếp!
-          console.log(`[AutoTool V3] [Role: WINNER] Đồng đội còn ${partnerCardsCount} lá bài -> PASS nhường xả tiếp!`);
-          return null;
-        } else {
-          // Đồng đội chỉ còn 1 lá bài -> Winner đè để giành lượt và về Nhất!
-          for (const cat of ["singles", "pairs", "triples", "straights"]) {
-            for (const cand of combs[cat]) {
-              if (canBeat(cand, tableCards)) return cand;
-            }
-          }
-          return null;
-        }
+      if (role === "dump") {
+        // Account 2 (Phụ): LUÔN LUÔN BỎ LƯỢT (PASS) để nhường quyền cho Account 1 xả tiếp!
+        console.log("[AutoTool V3] [Role: DUMP] Đồng đội vừa đánh -> BỎ LƯỢT (Pass) nhường quyền cho Account 1 xả tiếp!");
+        return null;
       } else {
-        // Role là Dump: Đồng đội (Winner) vừa đánh bài -> Dump cố gắng đè bằng bài to nhất để giành lượt xả tiếp
-        for (const cat of ["straights", "triples", "pairs", "singles"]) {
-          const list = combs[cat].slice().reverse();
-          for (const cand of list) {
-            if (canBeat(cand, tableCards)) return cand;
+        // Account 1 (Chính): BẮT BUỘC ĐÈ BÀI ĐỒNG ĐỘI ĐỂ GIÀNH LƯỢT ĐI TỰ DO!
+        const tLen = tableCards.length;
+        let cands = [];
+        if (tLen === 1) {
+          cands = combs.singles;
+        } else if (tLen === 2) {
+          cands = combs.pairs;
+        } else if (tLen === 3) {
+          cands = combs.triples;
+        } else if (tLen >= 3 && isStraight(tableCards)) {
+          cands = combs.straights.filter((s) => s.length === tLen);
+        }
+
+        for (const cand of cands) {
+          if (canBeat(cand, tableCards)) {
+            console.log(`[AutoTool V3] [Role: WINNER] Đè bài đồng đội bằng [${cand.join(", ")}] để giành lượt!`);
+            return cand;
           }
         }
+
+        // Tứ quý chặt Heo đơn nếu đồng đội lỡ đánh Heo
+        if (tLen === 1 && getCardVal(tableCards[0]) === 15 && combs.quads.length > 0) {
+          console.log("[AutoTool V3] [Role: WINNER] Dùng Tứ quý chặt Heo đơn đồng đội để giành lượt!");
+          return combs.quads[0];
+        }
+
+        console.log("[AutoTool V3] [Role: WINNER] Không có bài đè được -> Bỏ lượt.");
         return null;
       }
     } else {
       // Đánh với khách lạ: Tìm nhóm nhỏ nhất đè được
-      for (const cat of ["singles", "pairs", "triples", "straights"]) {
-        for (const cand of combs[cat]) {
-          if (canBeat(cand, tableCards)) return cand;
-        }
+      const tLen = tableCards.length;
+      let cands = [];
+      if (tLen === 1) cands = combs.singles;
+      else if (tLen === 2) cands = combs.pairs;
+      else if (tLen === 3) cands = combs.triples;
+      else if (tLen >= 3 && isStraight(tableCards)) cands = combs.straights.filter((s) => s.length === tLen);
+
+      for (const cand of cands) {
+        if (canBeat(cand, tableCards)) return cand;
       }
       return null;
     }
@@ -232,17 +242,17 @@
     if (!G.__AUTOTOOL_AUTO_DISCARD) return;
     if (!G.__my_cards || !G.__my_cards.length) return;
 
-    // Giãn cách an toàn 400ms - 750ms để mô phỏng tự nhiên và chống phát hiện bot
-    const delay = 400 + Math.floor(Math.random() * 350);
+    // Giãn cách an toàn 500ms - 850ms để mô phỏng tự nhiên và chống phát hiện bot
+    const delay = 500 + Math.floor(Math.random() * 350);
     G.__auto_turn_timer = setTimeout(() => {
       if (!G.__my_cards || !G.__my_cards.length) return;
       const role = getMyRole();
-      const isPartnerActor = G.__last_table_player ? isPartner(G.__last_table_player) : false;
-      const partnerCardsCount = G.__partner_cards_count || 13;
+      const hasTableCards = Array.isArray(G.__last_table_cards) && G.__last_table_cards.length > 0;
+      const isPartnerActor = (hasTableCards && G.__last_table_player) ? isPartner(G.__last_table_player) : false;
 
-      console.log(`[AutoTool V3] Tới lượt của tôi! Role=${role}, Bài trên tay: ${G.__my_cards.length} lá, Bàn: ${JSON.stringify(G.__last_table_cards)}`);
+      console.log(`[AutoTool V3] Tới lượt của tôi! Role=${role}, Bài trên tay: ${G.__my_cards.length} lá, Bàn: ${JSON.stringify(G.__last_table_cards)}, isPartnerActor=${isPartnerActor}`);
 
-      const play = findBestPlay(G.__my_cards, G.__last_table_cards, role, isPartnerActor, partnerCardsCount);
+      const play = findBestPlay(G.__my_cards, hasTableCards ? G.__last_table_cards : null, role, isPartnerActor);
 
       if (play && play.length > 0) {
         const cardLabels = play.map((c) => {
@@ -357,37 +367,44 @@
             // Hàm kiểm tra người chơi là chính mình
             function isMe(x) {
               if (!x) return false;
-              if (x.cs !== undefined) return true; // Trong phòng, chỉ có tab local mới có mảng bài cs
+              if (x.C === true || x.C === "true" || x.cs !== undefined) return true; // C: cờ native của Cocos cho tab local
               if (G.__my_uid && x.uid && String(x.uid) === String(G.__my_uid)) return true;
               if (G.__my_dn) {
                 const d1 = String(x.dn || x.u || "").trim().toLowerCase();
                 const d2 = String(G.__my_dn).trim().toLowerCase();
                 if (d1 && d1 === d2) return true;
               }
-              const pName = (getProfileName() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-              const dn = (x.dn || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-              const u = (x.u || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-              if (pName && (dn === pName || u === pName)) return true;
+              const pName = (getProfileName() || "").toLowerCase();
+              const dn = String(x.dn || x.u || "").toLowerCase();
+              const cMy = pName.replace(/[^a-z0-9]/g, "");
+              const cTarget = dn.replace(/[^a-z0-9]/g, "");
+              if (cMy && cTarget) {
+                if (cMy === cTarget) return true;
+                // Đối chiếu theo hậu tố số 1 vs 2 (Account 1 vs Account 2)
+                if (cMy.endsWith("1") && cTarget.endsWith("1")) return true;
+                if (cMy.endsWith("2") && cTarget.endsWith("2")) return true;
+              }
               return false;
             }
 
             // Hàm kiểm tra người chơi là đồng đội
             function isPartner(x) {
               if (!x || isMe(x)) return false;
-              const dn = (x.dn || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-              const u = (x.u || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+              const pName = (G.__my_dn || getProfileName() || "").toLowerCase();
+              const dn = String(x.dn || x.u || "").toLowerCase();
+              const cMy = pName.replace(/[^a-z0-9]/g, "");
+              const cTarget = dn.replace(/[^a-z0-9]/g, "");
+
+              // Đối chiếu đối nghịch giữa Slot 1 và Slot 2
+              if (cMy.endsWith("1") && cTarget.endsWith("2")) return true;
+              if (cMy.endsWith("2") && cTarget.endsWith("1")) return true;
+
               const partnerList = (G.__autotool_partners || []).map((pt) => (pt || "").toLowerCase().replace(/[^a-z0-9]/g, ""));
               for (const pt of partnerList) {
                 if (!pt) continue;
-                if (dn === pt || u === pt) return true;
-                if (dn.length >= 5 && pt.length >= 5 && (dn.includes(pt) || pt.includes(dn))) return true;
+                if (cTarget === pt) return true;
+                if (cTarget.length >= 5 && pt.length >= 5 && (cTarget.includes(pt) || pt.includes(cTarget))) return true;
               }
-              // Heuristic dự phòng: Nếu cả 2 account cùng prefix nick test
-              const myName = (G.__my_dn || getProfileName() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-              if (myName.length >= 6 && dn.length >= 6 && dn.slice(0, 6) === myName.slice(0, 6)) {
-                return true;
-              }
-              // Nếu đã có xác nhận khớp bàn từ Extension Hub
               if (G.__is_matched_locked && G.__last_room_info && G.__last_room_info.partner_found) {
                 return true;
               }
@@ -515,8 +532,8 @@
               G.__room_players = p.ps || [];
               G.__room_state = p.gS;
 
-              // Trích xuất chính xác 100% "Chính mình" từ cờ cs (chỉ tab local mới có cs)
-              const me = (p.ps || []).find((x) => x && x.cs !== undefined) || (p.ps || []).find(isMe) || (p.ps && p.ps[0]);
+              // Trích xuất chính xác 100% "Chính mình" từ cờ native C hoặc cs (chỉ tab local mới có C=true / cs)
+              const me = (p.ps || []).find((x) => x && (x.C === true || x.C === "true" || x.cs !== undefined)) || (p.ps || []).find(isMe) || (p.ps && p.ps[0]);
               if (me) {
                 G.__my_uid = me.uid;
                 G.__my_dn = me.dn || me.u;
@@ -756,6 +773,12 @@
                 if (!isMe(fp)) {
                   // Đối phương bỏ lượt -> bàn trống, chuẩn bị vòng tự do mới!
                   G.__last_table_cards = null;
+                  G.__last_table_player = null;
+                  window.postMessage({
+                    type: "AUTOTOOL_PARTNER_PASSED",
+                    profile_name: getProfileName(),
+                    partner_name: fp.dn || fp.u,
+                  }, "*");
                 }
               }
 

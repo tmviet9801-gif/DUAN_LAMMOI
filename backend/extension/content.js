@@ -767,6 +767,23 @@
       }, "POST").catch(() => {});
     }
 
+    // HIỂN THỊ HÀNH ĐỘNG ĐỒNG ĐỘI VỪA ĐÁNH BÀI
+    else if (ev.data.type === "AUTOTOOL_PARTNER_PLAYED") {
+      const pName = ev.data.partner_name || "Đồng đội";
+      const played = ev.data.played_cards || [];
+      const playedText = played.map((c) => {
+        const inf = parseCardInfo(c);
+        return inf ? inf.text : c;
+      }).join(" ");
+      updateViewBanner(`⚡ <b>${pName}</b>: Đã đánh [${playedText}]`, "joining");
+    }
+
+    // HIỂN THỊ ĐỒNG ĐỘI / ĐỐI PHƯƠNG BỎ LƯỢT
+    else if (ev.data.type === "AUTOTOOL_PARTNER_PASSED") {
+      const pName = ev.data.partner_name || "Đồng đội";
+      updateViewBanner(`🟡 <b>${pName}</b>: Đã BỎ LƯỢT! Đến lượt bạn xả tiếp!`, "active");
+    }
+
     // HIỂN THỊ BÀI ĐỒNG ĐỘI (CHIA SẺ TỪ EXTENSION HUB)
     else if (ev.data.type === "AUTOTOOL_PARTNER_CARDS_UPDATE") {
       const pName = ev.data.partner_name || "Đồng đội";
