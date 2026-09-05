@@ -17,10 +17,10 @@
     "alarms"
   ],
   "host_permissions": [
-    "http://127.0.0.1:8000/*",
-    "http://localhost:8000/*",
-    "ws://127.0.0.1:8000/*",
-    "ws://localhost:8000/*",
+    "http://127.0.0.1:17832/*",
+    "http://localhost:17832/*",
+    "ws://127.0.0.1:17832/*",
+    "ws://localhost:17832/*",
     "<all_urls>"
   ],
   "content_scripts": [

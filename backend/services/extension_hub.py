@@ -1,7 +1,7 @@
 """ExtensionHubManager — Quản lý kết nối WebSocket và điều phối 2 chiều với Chrome Extension.
 
 Kiến trúc V3:
-- Mỗi Chrome Profile mở 1 kết nối WebSocket riêng về: ws://127.0.0.1:8000/ws/bridge?profile=<Tên_Profile>
+- Mỗi Chrome Profile mở 1 kết nối WebSocket riêng về: ws://127.0.0.1:17832/ws/bridge?profile=<Tên_Profile>
 - ExtensionHubManager lưu trữ kết nối, định tuyến gói tin hai chiều không độ trễ (<2ms).
 - Gửi lệnh tức thời: JOIN_ROOM, LEAVE_ROOM, READY, START, DISCARD_CARDS.
 - Lưu cache trạng thái phòng, người chơi và bài của từng profile.

@@ -19,15 +19,15 @@ if (-not $profile) { $profile = "Account01" }
 
 # 1) kiểm tra backend
 try {
-    Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 5 | Out-Null
+    Invoke-RestMethod -Uri "http://127.0.0.1:17832/health" -TimeoutSec 5 | Out-Null
 } catch {
-    Write-Host "Backend KHONG chay (port 8000). Hay mo app truoc." -ForegroundColor Red
+    Write-Host "Backend KHONG chay (port 17832). Hay mo app truoc." -ForegroundColor Red
     exit 1
 }
 
 # 2) bật hook + reload (capture từ đầu)
 $body = @{ profile_name = $profile; reload = $true } | ConvertTo-Json
-$r = Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/autoplay/debug-ws-hook" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 30
+$r = Invoke-RestMethod -Uri "http://127.0.0.1:17832/api/autoplay/debug-ws-hook" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 30
 Write-Host "Hook da bat cho $profile (reload)." -ForegroundColor Green
 
 Write-Host ""
@@ -36,7 +36,7 @@ Write-Host ">>> Khi da vao duoc phong (thay ban choi), quay lai day va bam Enter
 Read-Host ""
 
 # 3) đọc capture
-$uri = "http://127.0.0.1:8000/api/autoplay/join-capture?profile_name=$([uri]::EscapeDataString($profile))"
+$uri = "http://127.0.0.1:17832/api/autoplay/join-capture?profile_name=$([uri]::EscapeDataString($profile))"
 $cap = Invoke-RestMethod -Uri $uri -TimeoutSec 20
 
 Write-Host ""

@@ -16,7 +16,7 @@ async def websocket_bridge(
     """Kênh kết nối WebSocket 2 chiều thời gian thực giữa Chrome Extension và Backend.
 
     Mỗi Chrome Profile khi khởi chạy sẽ tự động kết nối về:
-    ws://127.0.0.1:8000/ws/bridge?profile=<Tên_Profile>
+    ws://127.0.0.1:17832/ws/bridge?profile=<Tên_Profile>
     """
     await websocket.accept()
 

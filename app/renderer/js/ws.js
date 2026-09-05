@@ -4,7 +4,10 @@
   const $ = App.$;
 
   function connectWs() {
-    const ws = new WebSocket(`ws://127.0.0.1:8000/ws`);
+    const wsUrl = window.desktop && window.desktop.backendUrl
+      ? window.desktop.backendUrl.replace(/^http/, "ws") + "/ws"
+      : "ws://127.0.0.1:17832/ws";
+    const ws = new WebSocket(wsUrl);
     ws.onopen = () => App.setBackend(true);
     ws.onmessage = (e) => {
       const ev = JSON.parse(e.data);

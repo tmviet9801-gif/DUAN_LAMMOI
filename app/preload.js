@@ -10,7 +10,7 @@ const isPackaged = (() => {
 
 contextBridge.exposeInMainWorld("desktop", {
   platform: process.platform,
-  backendUrl: "http://127.0.0.1:8000",
+  backendUrl: "http://127.0.0.1:17832",
   isPackaged,
   selectFolder: (defaultPath) => ipcRenderer.invoke("select-folder", defaultPath),
   openFolder: (folder) => ipcRenderer.invoke("open-folder", folder),

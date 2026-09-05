@@ -6,7 +6,7 @@ const fs = require("fs");
 
 const isPackaged = app.isPackaged;
 const BACKEND_DIR = path.join(__dirname, "..", "backend");
-const PORT = 8000;
+const PORT = 17832;
 const HEALTH_URL = `http://127.0.0.1:${PORT}/health`;
 
 let backend = null;

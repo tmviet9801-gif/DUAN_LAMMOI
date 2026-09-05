@@ -1,4 +1,4 @@
-const BACKEND_URL = "http://127.0.0.1:8000";
+const BACKEND_URL = "http://127.0.0.1:17832";
 
 let currentProfile = "Account01";
 let autoDetected = false;
@@ -248,7 +248,7 @@ async function refreshStatus() {
       if (r.ok) isConnected = true;
     } catch (_) {
       try {
-        const r2 = await fetch(`http://localhost:8000/health`, { signal: AbortSignal.timeout(1500) });
+        const r2 = await fetch(`http://localhost:17832/health`, { signal: AbortSignal.timeout(1500) });
         if (r2.ok) isConnected = true;
       } catch (_) {}
     }

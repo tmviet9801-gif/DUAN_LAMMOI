@@ -2,7 +2,7 @@
   // API client - gọi REST backend
   window.App = window.App || {};
 
-  const API_BASE = window.desktop ? window.desktop.backendUrl : "http://127.0.0.1:8000";
+  const API_BASE = window.desktop ? window.desktop.backendUrl : "http://127.0.0.1:17832";
 
   window.App.api = async function api(path, options = {}) {
     const res = await fetch(API_BASE + path, {
