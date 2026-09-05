@@ -23,3 +23,16 @@ def test_find_and_match_ws_requires_open_profiles():
     })
     assert response.status_code == 400
     assert "FakeProfile_01" in response.json()["detail"]
+
+def test_stop_endpoint_cancels_active_match_task():
+    from unittest.mock import MagicMock
+    mock_task = MagicMock()
+    mock_task.done.return_value = False
+
+    main.app.state.active_match_task = mock_task
+
+    response = client.post("/api/autoplay/stop", json={})
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    mock_task.cancel.assert_called_once()
+    assert getattr(main.app.state, "active_match_task", None) is None
