@@ -207,14 +207,24 @@
                     partner_name: partner.dn || partner.u,
                   }, "*");
 
-                  // Tự động gửi lệnh Sẵn Sàng (cmd 363) để server game kích hoạt bắt đầu và đồng bộ 2 bên
+                  // 1. Tự động gửi lệnh Sẵn Sàng (cmd 363)
                   setTimeout(() => {
+                    console.log("[AutoTool V3] Tự động gửi lệnh SẴN SÀNG (cmd 363)...");
                     G.__autotool_exec_ready();
-                  }, 300);
+                  }, 250);
+
+                  // 2. Tự động gửi lệnh BẮT ĐẦU VÁN (cmd 364) nếu là Chủ Bàn (hoặc Account 1)
+                  const isHost = me && (me.C === true || me.sit === 0 || (getProfileName() || "").toLowerCase().includes("1"));
+                  if (isHost) {
+                    setTimeout(() => {
+                      console.log("[AutoTool V3] Là chủ bàn -> Tự động gửi lệnh BẮT ĐẦU VÁN (cmd 364)!");
+                      G.__autotool_exec_start();
+                    }, 650);
+                  }
                 } else if (strangers.length > 0) {
-                  // CÓ KHÁCH LẠ -> TỰ ĐỘNG OUT BÀN TỨC THÌ (350ms)
+                  // CÓ KHÁCH LẠ -> TỰ ĐỘNG OUT BÀN TỨC THÌ (300ms)
                   const guestNames = strangers.map((g) => g.dn || g.u || "Khách").join(", ");
-                  console.warn(`[AutoTool V3] Phát hiện khách lạ: ${guestNames} -> Tự động out sau 350ms!`);
+                  console.warn(`[AutoTool V3] Phát hiện khách lạ: ${guestNames} -> Tự động out sau 300ms!`);
                   window.postMessage({
                     type: "AUTOTOOL_AUTO_LEAVING",
                     profile_name: getProfileName(),
@@ -222,7 +232,7 @@
                   }, "*");
                   setTimeout(() => {
                     G.__autotool_exec_leave();
-                  }, 350);
+                  }, 300);
                 } else {
                   // ĐANG NGỒI 1 MÌNH CHỜ ĐỒNG ĐỘI -> Chờ 5.0s, nếu quá 5.0s không ai vào thì out tìm lại
                   console.log("[AutoTool V3] Đang ngồi một mình, chờ đồng đội trong 5.0 giây...");
@@ -256,19 +266,24 @@
                 profile_name: getProfileName(),
               }, "*");
 
-              // Nếu đang bật Auto Hunt và là Account 1 (Anchor): Tự động tìm lại lượt mới sau 700ms
+              // Nếu đang bật Auto Hunt và là Account 1 (Anchor): Tự động tìm lại lượt mới với ANTI-FLOOD JITTER
               if (G.__AUTOTOOL_AUTO_HUNT) {
                 const pName = (getProfileName() || "").toLowerCase();
                 if (pName.includes("1") || G.__is_hunt_initiator) {
                   if (G.__hunt_retry_timer) clearTimeout(G.__hunt_retry_timer);
+
+                  // ANTI-FLOOD JITTER: Giãn cách ngẫu nhiên an toàn 850ms - 1400ms
+                  const jitterDelay = 850 + Math.floor(Math.random() * 550);
+                  console.log(`[AutoTool V3] [Anti-Flood Jitter] Tự động thử lại lượt ghép mới sau ${jitterDelay}ms...`);
+
                   G.__hunt_retry_timer = setTimeout(() => {
-                    console.log("[AutoTool V3] Tự động thử lại lượt ghép mới Bàn Solo 100...");
                     window.postMessage({
                       type: "AUTOTOOL_HUNT_RETRYING",
                       profile_name: getProfileName(),
+                      delay_ms: jitterDelay,
                     }, "*");
                     G.__autotool_exec_join(2, 100, 2);
-                  }, 700);
+                  }, jitterDelay);
                 }
               }
             }
@@ -501,13 +516,24 @@
     }
 
     if (event.data.type === "AUTOTOOL_CONFIRM_MATCH") {
-      console.log("[AutoTool V3] >>> NHẬN TÍN HIỆU CONFIRM_MATCH TỪ ĐỒNG ĐỘI! HỦY TIMEOUT OUT BÀN! <<<");
+      console.log("[AutoTool V3] >>> NHẬN TÍN HIỆU CONFIRM_MATCH TỪ ĐỒNG ĐỘI! HỦY TIMEOUT & AUTO START! <<<");
       if (G.__hunt_wait_timer) {
         clearTimeout(G.__hunt_wait_timer);
         G.__hunt_wait_timer = null;
       }
       if (G.__last_room_info) {
         G.__last_room_info.partner_found = true;
+      }
+      // Tự động Sẵn Sàng và Bắt Đầu ván
+      setTimeout(() => {
+        G.__autotool_exec_ready();
+      }, 250);
+      const pName = (getProfileName() || "").toLowerCase();
+      if (pName.includes("1") || G.__is_hunt_initiator) {
+        setTimeout(() => {
+          console.log("[AutoTool V3] Tự động BẮT ĐẦU VÁN (cmd 364) sau khi đồng đội vào bàn!");
+          G.__autotool_exec_start();
+        }, 650);
       }
       return;
     }
@@ -517,13 +543,23 @@
     console.log(`[AutoTool V3] Nhận lệnh từ Hub qua Extension Bridge: action=${action}`, data);
 
     if (action === "CONFIRM_MATCH") {
-      console.log("[AutoTool V3] >>> HUB XÁC NHẬN: ĐỒNG ĐỘI ĐÃ VÀO BÀN! HỦY LỆNH OUT! <<<");
+      console.log("[AutoTool V3] >>> HUB XÁC NHẬN: ĐỒNG ĐỘI ĐÃ VÀO BÀN! HỦY LỆNH OUT & AUTO START! <<<");
       if (G.__hunt_wait_timer) {
         clearTimeout(G.__hunt_wait_timer);
         G.__hunt_wait_timer = null;
       }
       if (G.__last_room_info) {
         G.__last_room_info.partner_found = true;
+      }
+      setTimeout(() => {
+        G.__autotool_exec_ready();
+      }, 250);
+      const pName = (getProfileName() || "").toLowerCase();
+      if (pName.includes("1") || G.__is_hunt_initiator) {
+        setTimeout(() => {
+          console.log("[AutoTool V3] Tự động BẮT ĐẦU VÁN (cmd 364) sau khi đồng đội vào bàn!");
+          G.__autotool_exec_start();
+        }, 650);
       }
     } else if (action === "JOIN_ROOM" && data && data.rid) {
       G.__autotool_exec_join(data.rid, data.bet || 100, data.mu || 2);

@@ -474,12 +474,12 @@
       updatePill();
     }
 
-    // KHỚP BÀN THÀNH CÔNG (CẢ 2 NICK Ở CÙNG NHAU)
+    // KHỚP BÀN THÀNH CÔNG (CẢ 2 NICK Ở CÙNG NHAU) -> TỰ ĐỘNG SẴN SÀNG & BẮT ĐẦU VÁN
     else if (ev.data.type === "AUTOTOOL_MATCH_SUCCESS") {
       const partner = ev.data.partner_name || "Đồng đội";
       const pLabel = activeProfileName || "Tool V3";
-      updateViewBanner(`🟢 <b>ĐÃ VÀO CÙNG NHAU THÀNH CÔNG! (${pLabel} & ${partner})</b> - ĐANG KHÓA BÀN!`, "active");
-      showToast(`🟢 <b>KHỚP BÀN THÀNH CÔNG!</b><br>${pLabel} & ${partner}`, "success");
+      updateViewBanner(`🟢 <b>ĐÃ VÀO CÙNG NHAU THÀNH CÔNG! (${pLabel} & ${partner})</b> - ĐANG BẮT ĐẦU VÁN!`, "active");
+      showToast(`🟢 <b>KHỚP BÀN THÀNH CÔNG!</b><br>${pLabel} & ${partner}<br>⚡ Tự động Sẵn Sàng & Bắt Đầu!`, "success");
 
       // Báo ngay lên Extension Hub để cứu hẹn giờ của đồng đội
       safeSendMessage({
@@ -490,7 +490,7 @@
 
       requestControl("/api/accounts/update-log", {
         profile_name: activeProfileName,
-        log: `🟢 Đã khớp bàn cùng ${partner}`,
+        log: `🟢 Đã khớp bàn cùng ${partner} -> Đang bắt đầu ván`,
       }, "POST").catch(() => {});
     }
 
@@ -507,14 +507,15 @@
       }, "POST").catch(() => {});
     }
 
-    // TỰ ĐỘNG THỬ LẠI LƯỢT GHÉP MỚI
+    // TỰ ĐỘNG THỬ LẠI LƯỢT GHÉP MỚI (ANTI-FLOOD JITTER)
     else if (ev.data.type === "AUTOTOOL_HUNT_RETRYING") {
       const pLabel = activeProfileName || "Tool V3";
-      updateViewBanner(`🔄 <b>${pLabel}</b>: Đang tự động tìm lượt ghép Bàn Solo 100 mới...`, "joining");
+      const delayMs = ev.data.delay_ms ? ` (${ev.data.delay_ms}ms)` : "";
+      updateViewBanner(`🔄 <b>${pLabel}</b>: Đang tìm lượt ghép mới${delayMs}... [Anti-Flood]`, "joining");
 
       requestControl("/api/accounts/update-log", {
         profile_name: activeProfileName,
-        log: "Đang tự động tìm lượt ghép mới...",
+        log: `Đang tìm lượt ghép mới${delayMs}...`,
       }, "POST").catch(() => {});
     }
 
