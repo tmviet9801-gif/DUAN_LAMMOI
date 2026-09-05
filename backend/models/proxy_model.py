@@ -15,6 +15,7 @@ def parse_proxy(raw: str) -> dict | None:
     if not raw:
         return None
 
+    proxy = None
     # user:pass@host:port
     if "@" in raw:
         creds, hostport = raw.rsplit("@", 1)
