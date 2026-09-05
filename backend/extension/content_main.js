@@ -267,26 +267,55 @@
 
   // 4. API điều khiển game trực tiếp từ Extension Hub
   G.__autotool_exec_join = function (rid, bet = 100, mu = 2) {
-    console.log(`[AutoTool V3] Thực thi lệnh JOIN phòng: ${rid} ($${bet})...`);
+    console.log(`[AutoTool V3] Thực thi lệnh JOIN phòng: rid=${rid}, bet=${bet}, mu=${mu}...`);
     const simms = G.__ws_get_simms();
     if (!simms) {
       console.warn("[AutoTool V3] Chưa tìm thấy socket Simms của game bài!");
       return false;
     }
 
-    let joinMsg;
-    if (rid && !isNaN(Number(rid)) && Number(rid) > 0 && Number(rid) !== 100) {
-      // Vào bàn cụ thể có ID (ví dụ Bàn 133)
-      joinMsg = JSON.stringify([3, "Simms", 1, String(rid)]);
+    // Bản đồ mức cược sang room id cố định của Hitclub Tiến Lên Đếm Lá (từ cmd 300)
+    const betRoomMap = {
+      "100_2": 2,  "100_4": 1,
+      "500_2": 4,  "500_4": 3,
+      "1000_2": 6, "1000_4": 5,
+      "2000_2": 8, "2000_4": 7,
+      "5000_2": 10, "5000_4": 9,
+      "10000_2": 12, "10000_4": 11,
+      "20000_2": 14, "20000_4": 13,
+      "50000_2": 16, "50000_4": 15,
+      "100000_2": 18, "100000_4": 17,
+      "200000_2": 20, "200000_4": 19,
+      "500000_2": 22, "500000_4": 21,
+      "1000000_2": 24, "1000000_4": 23,
+      "2000000_2": 26, "2000000_4": 25,
+      "5000000_2": 28, "5000000_4": 27,
+    };
+
+    let targetRoomId = -1;
+    const betKey = `${Number(bet || 100)}_${Number(mu || 2)}`;
+
+    if (rid && !isNaN(Number(rid)) && Number(rid) >= 1 && Number(rid) <= 28) {
+      // Room ID thuộc danh mục cược cố định (ví dụ 2 = Solo 100, 1 = 4 người 100)
+      targetRoomId = Number(rid);
+    } else if (betRoomMap[betKey]) {
+      // Tra theo mức cược và số người (Solo 2 người hay 4 người)
+      targetRoomId = betRoomMap[betKey];
+    } else if (rid && !isNaN(Number(rid)) && Number(rid) > 28 && Number(rid) !== 100) {
+      // Bàn có ID cụ thể từ danh sách
+      targetRoomId = Number(rid);
     } else {
-      // Vào bàn Chống Vây / Quick Play
-      joinMsg = JSON.stringify([3, "Simms", -1, ""]);
+      // Mặc định Bàn Solo 100 (rid = 2)
+      targetRoomId = 2;
     }
+
+    // Packet chuẩn xác 100% của Hitclub: [3, "Simms", roomId, password]
+    const joinMsg = JSON.stringify([3, "Simms", targetRoomId, ""]);
 
     try {
       simms.send(joinMsg);
       push("inject", joinMsg);
-      console.log(`[AutoTool V3] Đã gửi lệnh vào bàn (${rid}) thành công:`, joinMsg);
+      console.log(`[AutoTool V3] Đã gửi lệnh vào bàn [3, "Simms", ${targetRoomId}, ""] thành công!`);
       return true;
     } catch (e) {
       console.error("[AutoTool V3] Lỗi gửi lệnh vào bàn:", e);

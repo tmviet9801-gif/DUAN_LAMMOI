@@ -195,6 +195,27 @@
     }, 4000);
   }
 
+  function isExtensionValid() {
+    try {
+      return !!(window.chrome && chrome.runtime && chrome.runtime.id);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function safeSendMessage(msg, callback) {
+    if (!isExtensionValid()) return;
+    try {
+      chrome.runtime.sendMessage(msg, (res) => {
+        if (chrome.runtime.lastError) {
+          // Context bị reload
+          return;
+        }
+        if (typeof callback === "function") callback(res);
+      });
+    } catch (_) {}
+  }
+
   function initOverlay() {
     if (document.getElementById("autotool-connect-btn") || window !== window.top) return;
     ensureStyles();
@@ -205,7 +226,7 @@
     btn.innerHTML = `<span class="at-dot"></span><span id="autotool-btn-text">V3: Đang kết nối...</span>`;
     btn.addEventListener("click", () => {
       const pName = activeProfileName || localStorage.getItem("AUTOTOOL_PROFILE_NAME") || localStorage.getItem("KEY_USER_NAME") || document.title || "";
-      chrome.runtime.sendMessage({ type: "RECONNECT_HUB", profile_name: pName }, () => {
+      safeSendMessage({ type: "RECONNECT_HUB", profile_name: pName }, () => {
         updatePill();
       });
     });
@@ -223,8 +244,14 @@
     const txt = document.getElementById("autotool-btn-text");
     if (!btn || !txt) return;
 
-    chrome.runtime.sendMessage({ type: "CHECK_HEALTH" }, (res) => {
-      if (chrome.runtime.lastError || !res || !res.ok) {
+    if (!isExtensionValid()) {
+      btn.className = "err";
+      txt.textContent = "🔄 Cần F5 trang game";
+      return;
+    }
+
+    safeSendMessage({ type: "CHECK_HEALTH" }, (res) => {
+      if (!res || !res.ok) {
         isHubConnected = false;
         btn.className = "err";
         txt.textContent = "🔴 Mất kết nối Hub";
@@ -241,7 +268,7 @@
       } else {
         btn.className = "on";
         if (lastRoomInfo && lastRoomInfo.rid) {
-          txt.textContent = `🟢 Bàn #${lastRoomInfo.rid} (${pLabel})`;
+          txt.textContent = `🟢 ${lastRoomInfo.rn || 'Bàn ' + lastRoomInfo.rid} (${pLabel})`;
         } else {
           txt.textContent = `🟢 Online (${pLabel})`;
         }
@@ -315,7 +342,7 @@
     // Khởi tạo Profile
     if (ev.data.type === "AUTOTOOL_INIT_PROFILE" && ev.data.profile_name) {
       activeProfileName = ev.data.profile_name;
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         type: "REGISTER_PROFILE",
         profile_name: ev.data.profile_name,
       });
@@ -327,7 +354,7 @@
     else if (ev.data.type === "AUTOTOOL_BALANCE_UPDATE") {
       const bal = ev.data.balance;
       if (bal !== undefined && bal !== null) {
-        chrome.runtime.sendMessage({
+        safeSendMessage({
           type: "BALANCE_UPDATE",
           profile_name: activeProfileName || ev.data.profile_name,
           balance: bal,
@@ -386,7 +413,7 @@
 
       updatePill();
 
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         type: "ROOM_UPDATE",
         profile_name: activeProfileName,
         room_info: ev.data.room_info,
@@ -409,7 +436,7 @@
         log: "Đang ở sảnh",
       }, "POST").catch(() => {});
 
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         type: "ROOM_LEFT",
         profile_name: activeProfileName,
       });
@@ -418,7 +445,7 @@
 
     // GÓI TIN CHUYỂN TIẾP
     else if (ev.data.type === "AUTOTOOL_BRIDGE_PACKET") {
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         type: "BRIDGE_PACKET",
         profile_name: activeProfileName,
         action: ev.data.action,
