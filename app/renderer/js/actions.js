@@ -505,13 +505,12 @@
       const game = $("gcGameSelect") ? $("gcGameSelect").value : "TLDL";
       const bet = $("gcBetSelect") ? $("gcBetSelect").value : "100";
       const slot = $("gcSlotCount") ? $("gcSlotCount").value : "2";
-      const pwd = $("gcRoomCode") ? $("gcRoomCode").value : "2222";
 
       const selected = Array.from(document.querySelectorAll("#accTbody tr.selected"));
       const mainProfile = $("gcProfileMain") ? $("gcProfileMain").value : "";
       const profile_name = (selected.length > 0 ? selected[0].dataset.name : "") || mainProfile || (App.profiles && App.profiles[0] ? App.profiles[0].name : "Account 1");
 
-      App.toast(`Đang tạo bàn ${game} cược ${bet} (Bàn ${slot} người, Pass: ${pwd}) cho ${profile_name}...`, "info");
+      App.toast(`Đang tìm bàn công cộng mới trống ${game} cược ${bet} cho ${profile_name}...`, "info");
       try {
         const res = await App.api("/api/autoplay/create-table", {
           method: "POST",
@@ -520,12 +519,12 @@
             game,
             bet: Number(bet),
             mu: Number(slot),
-            pwd: String(pwd)
+            pwd: ""
           }),
         });
         const room_id = res.room_id || bet;
         if ($("gcTargetRoomId")) $("gcTargetRoomId").value = room_id;
-        App.toast(`✅ Tạo/vào bàn thành công: Phòng #${room_id} (Cược ${bet})!`, "success");
+        App.toast(`✅ Vào bàn công cộng thành công: Phòng #${room_id} (Cược ${bet})!`, "success");
 
         // Cập nhật tức thì dòng tài khoản trên bảng
         const row = document.querySelector(`#accTbody tr[data-name="${profile_name}"]`);

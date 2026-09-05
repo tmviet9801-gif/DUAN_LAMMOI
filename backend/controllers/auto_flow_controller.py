@@ -568,7 +568,7 @@ async def autoplay_create_table(body: dict, request: Request):
         raise HTTPException(status_code=400, detail="Thiếu profile_name")
     bet = int(body.get("bet", 100) or 100)
     mu = int(body.get("mu", 2) or 2)
-    pwd = str(body.get("pwd", "2222") or "2222")
+    pwd = ""
 
     adapter = _build_adapter(request, {"game": {"adapter": "hitclub", "clicks": {}}})
     page = await adapter._page(name)
@@ -661,7 +661,7 @@ async def autoplay_join_rid(body: dict, request: Request):
     mu = int(body.get("mu", 2))
     payload = {
         "cmd": 308, "aid": 1, "gid": gid, "b": bet, "Mu": mu,
-        "iJ": True, "inc": False, "pwd": "1", "rid": int(rid),
+        "iJ": True, "inc": False, "pwd": "", "rid": int(rid),
     }
     import json as _json
     text = _json.dumps([6, "Simms", "channelPlugin", payload])
@@ -1352,70 +1352,46 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             except Exception:
                 pass
 
-            # BƯỚC 1: DUY NHẤT ACCOUNT 1 TÌM HOẶC TẠO BÀN TRỐNG (CÁC NICK PHỤ KHÔNG TỰ Ý TÌM)
+            # BƯỚC 1: DUY NHẤT ACCOUNT 1 TÌM BÀN CÔNG CỘNG MỚI TRỐNG (KHÔNG TẠO BÀN CÓ PASS)
             found_anchor = False
             anchor_rid = None
 
-            # Thử gửi packet tạo phòng cược trước (lần đầu hoặc chu kỳ mỗi 5 lần)
-            if attempt == 1 or attempt % 5 == 0:
-                try:
-                    create_payload = {
-                        "cmd": 308, "aid": 1, "gid": gid, "b": bet_val, "Mu": target_mu,
-                        "iJ": False, "inc": False, "pwd": "1", "rid": 0
-                    }
-                    await adapter.sniffer.send_raw(first_page, _json.dumps([6, "Simms", "channelPlugin", create_payload]))
-                    await asyncio.sleep(1.2)
-                    if not await _is_in_tldl_lobby(first_page):
-                        png_test = await first_page.screenshot(type="png")
-                        im_test = Image.open(io.BytesIO(png_test))
-                        w_curr, h_curr = im_test.size
-                        r_c, g_c, b_c = im_test.getpixel((int(w_curr * 0.50), int(h_curr * 0.238)))[:3]
-                        if r_c > 180 and g_c > 150 and b_c < 110:
-                            found_anchor = True
-                            log.info("find-and-match: >>> TẠO BÀN TRỐNG THÀNH CÔNG CHO ACCOUNT 1 (%s)! <<<", first_name)
-                except Exception as e:
-                    log.info("find-and-match: Thử tạo bàn: %s", e)
+            # Account 1 click trực tiếp vào ô bàn cược trong sảnh TLDL để tìm bàn công cộng của hệ thống
+            w_p, h_p = await _get_screen_size(first_page)
+            cx_p = int(w_p * rx)
+            cy_p = int(h_p * ry)
+            await first_page.mouse.click(cx_p, cy_p)
+            await asyncio.sleep(1.6)
 
-            # Nếu chưa tạo được -> Account 1 click vào bàn cược để tìm bàn trống
-            if not found_anchor:
-                w_p, h_p = await _get_screen_size(first_page)
-                cx_p = int(w_p * rx)
-                cy_p = int(h_p * ry)
-                await first_page.mouse.click(cx_p, cy_p)
-                await asyncio.sleep(1.8)
+            if _GOM_BAN_STOP:
+                break
 
-                if _GOM_BAN_STOP:
-                    break
-
-                if await _is_in_tldl_lobby(first_page):
-                    continue
-
-                # Kiểm tra xem bàn Account 1 vừa vào có phải bàn trống không
-                try:
-                    png_bytes = await first_page.screenshot(type="png")
-                    im = Image.open(io.BytesIO(png_bytes))
-                    w_curr, h_curr = im.size
-                    check_x = int(w_curr * 0.50)
-                    check_y = int(h_curr * 0.238)
-                    r, g, b = im.getpixel((check_x, check_y))[:3]
-                    is_empty = (r > 180 and g > 150 and b < 110)
-                except Exception:
-                    is_empty = False
-
-                if not is_empty:
-                    log.info("find-and-match: Account 1 vào bàn có người lạ (RGB=%s,%s,%s) -> out về sảnh ngay", r, g, b)
-                    await _do_leave_room(first_page)
-                    await asyncio.sleep(0.6)
-                    continue
-                else:
-                    found_anchor = True
-                    log.info("find-and-match: >>> ACCOUNT 1 (%s) ĐÃ VÀO BÀN TRỐNG! ĐỨNG LẠI GIỮ BÀN! <<<", first_name)
-
-            if not found_anchor:
+            if await _is_in_tldl_lobby(first_page):
                 continue
 
-            # BƯỚC 2: TRÍCH XUẤT ROOM ID (RID) CHÍNH XÁC CỦA ACCOUNT 1
-            for _ in range(14):
+            # Kiểm tra xem bàn Account 1 vừa vào có phải bàn trống không
+            try:
+                png_bytes = await first_page.screenshot(type="png")
+                im = Image.open(io.BytesIO(png_bytes))
+                w_curr, h_curr = im.size
+                check_x = int(w_curr * 0.50)
+                check_y = int(h_curr * 0.238)
+                r, g, b = im.getpixel((check_x, check_y))[:3]
+                is_empty = (r > 180 and g > 150 and b < 110)
+            except Exception:
+                is_empty = False
+
+            if not is_empty:
+                log.info("find-and-match: Account 1 vào bàn có người lạ (RGB=%s,%s,%s) -> out về sảnh ngay để tìm bàn mới trống", r, g, b)
+                await _do_leave_room(first_page)
+                await asyncio.sleep(0.5)
+                continue
+            else:
+                found_anchor = True
+                log.info("find-and-match: >>> ACCOUNT 1 (%s) ĐÃ VÀO BÀN CÔNG CỘNG MỚI TRỐNG (KHÔNG PASS)! ĐỨNG LẠI GIỮ BÀN! <<<", first_name)
+
+            # BƯỚC 2: TRÍCH XUẤT ROOM ID (RID) NHANH CHÓNG TỪ ACCOUNT 1
+            for _ in range(16):
                 if _GOM_BAN_STOP:
                     break
                 try:
@@ -1430,16 +1406,16 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     if cur and int(cur) > 0 and int(cur) != 100:
                         anchor_rid = int(cur)
                         break
-                await asyncio.sleep(0.25)
+                await asyncio.sleep(0.12)
 
             if not anchor_rid:
                 log.warning("find-and-match: Không đọc được RID của Account 1 -> Account 1 out về sảnh để tìm lại!")
                 await _do_leave_room(anchor_page)
-                await asyncio.sleep(0.6)
+                await asyncio.sleep(0.5)
                 continue
 
             selected_rid = anchor_rid
-            log.info("find-and-match: Account 1 đang giữ bàn trống #%s ($%s). Điều phối các nick phụ join vào...", 
+            log.info("find-and-match: Account 1 đang giữ bàn công cộng trống #%s ($%s). Điều phối các nick phụ join vào nhanh chóng...", 
                      selected_rid, bet_val)
             await _set_hud_status(anchor_page, f"Đang giữ bàn #{selected_rid}! Đợi đồng đội vào...")
 
@@ -1455,18 +1431,18 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             anchor_u = str(anchor_user_info.get("u") or "").lower().strip()
             anchor_dn = str(anchor_user_info.get("dn") or "").lower().strip()
 
-            # BƯỚC 3: ĐIỀU PHỐI CÁC TÀI KHOẢN PHỤ JOIN VÀO BẰNG ID PHÒNG (TUYỆT ĐỐI KHÔNG CLICK RANDOM)
+            # BƯỚC 3: ĐIỀU PHỐI CÁC TÀI KHOẢN PHỤ JOIN VÀO NHANH CHÓNG THEO ID (BÀN CÔNG CỘNG KHÔNG PASS)
             all_subs_matched = True
             for sub_name in other_profiles:
                 if _GOM_BAN_STOP:
                     break
                 sub_p = pages[sub_name]
-                log.info("find-and-match: Gửi lệnh join bàn #%s cho %s...", selected_rid, sub_name)
+                log.info("find-and-match: Gửi lệnh join bàn công cộng #%s cho %s nhanh chóng...", selected_rid, sub_name)
                 await _set_hud_status(sub_p, f"Đang join vào bàn #{selected_rid} của {anchor_name}...")
 
                 payload_join = {
                     "cmd": 308, "aid": 1, "gid": gid, "b": bet_val, "Mu": target_mu,
-                    "iJ": True, "inc": False, "pwd": "1", "rid": int(selected_rid)
+                    "iJ": True, "inc": False, "pwd": "", "rid": int(selected_rid)
                 }
                 try:
                     await adapter.sniffer.send_raw(sub_p, _json.dumps([6, "Simms", "channelPlugin", payload_join]))
