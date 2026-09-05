@@ -212,11 +212,18 @@
   }
 
   // 3. Helper gửi WS qua game socket
-  G.__ws_send = function (text) {
+  G.__ws_get_simms = function () {
     try {
       const list = (G.__ws_instances || []).filter((s) => s && s.readyState === 1);
-      const simms = list.find((s) => (s.url || "").includes("carkgwaiz") || (s.url || "").includes("simms"));
-      const target = simms || list[0];
+      return list.find((s) => (s.url || "").includes("carkgwaiz") || (s.url || "").includes("simms")) || null;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  G.__ws_send = function (text) {
+    try {
+      const target = G.__ws_get_simms();
       if (target) {
         target.send(text);
         push("inject", text);
@@ -230,7 +237,7 @@
     try {
       const list = (G.__ws_instances || []).filter((s) => s && s.readyState === 1);
       const hint = channel === "Simms" ? "carkgwaiz" : "mynisketgw";
-      const target = list.find((s) => (s.url || "").includes(hint)) || list[0];
+      const target = list.find((s) => (s.url || "").includes(hint));
       if (target) {
         target.send(text);
         push("inject", text);
@@ -243,23 +250,36 @@
   // 4. API điều khiển game trực tiếp từ Extension Hub
   G.__autotool_exec_join = function (rid, bet = 100, mu = 2) {
     console.log(`[AutoTool V3] Thực thi lệnh JOIN phòng #${rid} ($${bet})...`);
-    const payload = {
-      cmd: 308, aid: 1, gid: 1, b: Number(bet), Mu: Number(mu),
-      iJ: true, inc: false, pwd: "", rid: Number(rid)
-    };
-    G.__ws_send_channel("Simms", JSON.stringify([6, "Simms", "channelPlugin", payload]));
-    G.__ws_send_channel("Simms", JSON.stringify([3, "Simms", 1, { rid: Number(rid) }]));
-    G.__ws_send_channel("Simms", JSON.stringify([3, "Simms", 1, String(rid)]));
-    G.__ws_send(JSON.stringify([6, "Simms", "channelPlugin", payload]));
-    return true;
+    const simms = G.__ws_get_simms();
+    if (!simms) {
+      console.warn("[AutoTool V3] Chưa tìm thấy socket Simms của game bài!");
+      return false;
+    }
+
+    // Hitclub Protocol: Gửi đúng chuẩn packet của Simms (KHÔNG spam gói tin rác)
+    const joinMsg = JSON.stringify([3, "Simms", 1, String(rid)]);
+    try {
+      simms.send(joinMsg);
+      push("inject", joinMsg);
+      console.log(`[AutoTool V3] Đã gửi lệnh vào bàn #${rid} thành công:`, joinMsg);
+      return true;
+    } catch (e) {
+      console.error("[AutoTool V3] Lỗi gửi lệnh vào bàn:", e);
+      return false;
+    }
   };
 
   G.__autotool_exec_leave = function () {
     console.log("[AutoTool V3] Thực thi lệnh RỜI BÀN về sảnh...");
-    G.__ws_send_channel("Simms", '[4,"Simms",-1]');
-    G.__ws_send_channel("Simms", '[6,"Simms","channelPlugin",{"cmd":203}]');
-    G.__ws_send('[4,"Simms",-1]');
-    return true;
+    const simms = G.__ws_get_simms();
+    if (simms) {
+      try {
+        simms.send('[4,"Simms",-1]');
+        push("inject", '[4,"Simms",-1]');
+        return true;
+      } catch (_) {}
+    }
+    return false;
   };
 
   G.__autotool_exec_ready = function () {
