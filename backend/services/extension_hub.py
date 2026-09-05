@@ -294,7 +294,19 @@ class ExtensionHubManager:
                                 "source_profile": profile_name,
                             }))
 
-        # 4. Cập nhật danh sách người chơi
+        # 4. Xác nhận khớp bàn thành công giữa các đối tác (Cứu hẹn giờ out)
+        elif msg_type in ("PARTNER_MATCHED", "AUTOTOOL_MATCH_SUCCESS"):
+            partner_name = msg.get("partner_name")
+            log.info("ExtensionHub V3: >>> PROFILE '%s' XÁC NHẬN KHỚP BÀN VỚI '%s' -> PHÁT LỆNH CONFIRM_MATCH TỨC THÌ! <<<",
+                     profile_name, partner_name)
+            for other_profile in list(self.active_sockets.keys()):
+                if other_profile != profile_name:
+                    asyncio.create_task(self.send_command(other_profile, "CONFIRM_MATCH", {
+                        "source": profile_name,
+                        "partner": partner_name,
+                    }))
+
+        # 5. Cập nhật danh sách người chơi
         elif msg_type in ("PLAYER_LIST", "PLAYERS"):
             pls = msg.get("players") or msg.get("ps") or msg.get("data")
             if isinstance(pls, list):

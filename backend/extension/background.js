@@ -118,7 +118,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.type === "ROOM_UPDATE" || 
       message.type === "ROOM_LEFT" || 
       message.type === "BALANCE_UPDATE" || 
-      message.type === "LOG_UPDATE") {
+      message.type === "LOG_UPDATE" ||
+      message.type === "PARTNER_MATCHED") {
     if (hubSocket && hubSocket.readyState === WebSocket.OPEN) {
       hubSocket.send(JSON.stringify({
         type: message.type,

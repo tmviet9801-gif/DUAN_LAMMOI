@@ -337,6 +337,20 @@
           profile_name: activeProfileName,
           log: `Bàn ${rid} (Đã gửi ID cho Acc 2)`,
         }, "POST").catch(() => {});
+      } else if (action === "CONFIRM_MATCH") {
+        const partner = data.source || data.partner || "Đồng đội";
+        updateViewBanner(`🟢 <b>ĐÃ VÀO CÙNG NHAU THÀNH CÔNG! (${activeProfileName} & ${partner})</b> - ĐANG KHÓA BÀN!`, "active");
+        showToast(`🟢 <b>ĐỒNG ĐỘI ĐÃ VÀO BÀN!</b><br>Đã khóa bàn thành công!`, "success");
+
+        requestControl("/api/accounts/update-log", {
+          profile_name: activeProfileName,
+          log: `🟢 Đã khớp bàn cùng ${partner}`,
+        }, "POST").catch(() => {});
+
+        window.postMessage({
+          type: "AUTOTOOL_CONFIRM_MATCH",
+          partner: partner,
+        }, "*");
       } else {
         window.postMessage({
           type: "AUTOTOOL_EXEC_COMMAND",
@@ -466,6 +480,13 @@
       const pLabel = activeProfileName || "Tool V3";
       updateViewBanner(`🟢 <b>ĐÃ VÀO CÙNG NHAU THÀNH CÔNG! (${pLabel} & ${partner})</b> - ĐANG KHÓA BÀN!`, "active");
       showToast(`🟢 <b>KHỚP BÀN THÀNH CÔNG!</b><br>${pLabel} & ${partner}`, "success");
+
+      // Báo ngay lên Extension Hub để cứu hẹn giờ của đồng đội
+      safeSendMessage({
+        type: "PARTNER_MATCHED",
+        profile_name: activeProfileName,
+        partner_name: partner,
+      });
 
       requestControl("/api/accounts/update-log", {
         profile_name: activeProfileName,
