@@ -218,24 +218,24 @@ class ExtensionHubManager:
         elif msg_type in ("ROOM_INFO", "ROOM_UPDATE"):
             ri = msg.get("room_info") or msg.get("data")
             if ri and isinstance(ri, dict):
-                rid = ri.get("rid")
+                rid = ri.get("rid") or "Chống Vây"
                 state["room_info"] = ri
-                if rid and int(rid) > 0 and int(rid) != 100:
-                    state["room_id"] = int(rid)
-                    state["log"] = f"Bàn #{rid} (${ri.get('b', 100)})"
-                    try:
-                        from models.config_model import load_accounts, save_accounts
-                        accounts = load_accounts()
-                        for a in accounts:
-                            if (a.get("name") == profile_name or 
-                                a.get("username") == profile_name or 
-                                str(a.get("id")) == str(profile_name)):
-                                a["room"] = int(rid)
-                                a["log"] = f"Bàn #{rid}"
-                                save_accounts(accounts)
-                                break
-                    except Exception:
-                        pass
+                state["room_id"] = rid
+                room_display = f"Bàn #{rid}" if str(rid).isdigit() else f"Bàn {rid}"
+                state["log"] = f"{room_display} (${ri.get('b', 100)})"
+                try:
+                    from models.config_model import load_accounts, save_accounts
+                    accounts = load_accounts()
+                    for a in accounts:
+                        if (a.get("name") == profile_name or 
+                            a.get("username") == profile_name or 
+                            str(a.get("id")) == str(profile_name)):
+                            a["room"] = rid
+                            a["log"] = room_display
+                            save_accounts(accounts)
+                            break
+                except Exception:
+                    pass
 
                 self._emit({
                     "type": "room_info_updated",
@@ -248,43 +248,42 @@ class ExtensionHubManager:
                     "room": rid,
                 })
 
-                # Tự động chia sẻ ID phòng cho các profile đối tác với độ trễ <2ms
-                if rid and int(rid) > 0 and int(rid) != 100:
-                    last_rid = getattr(self, "_last_broadcast_rid", None)
-                    now_t = time.time()
-                    last_t = getattr(self, "_last_broadcast_time", 0)
+                # Tự động chia sẻ thông tin phòng cho các profile đối tác với độ trễ <2ms
+                last_rid = getattr(self, "_last_broadcast_rid", None)
+                now_t = time.time()
+                last_t = getattr(self, "_last_broadcast_time", 0)
 
-                    # Tránh lặp lại cùng 1 rid trong 1.5 giây
-                    if rid != last_rid or (now_t - last_t > 1.5):
-                        self._last_broadcast_rid = rid
-                        self._last_broadcast_time = now_t
-                        self._last_shared_room = {
-                            "rid": int(rid),
-                            "b": ri.get("b", 100),
-                            "Mu": ri.get("Mu", 2),
-                            "source_profile": profile_name,
-                            "timestamp": now_t,
-                        }
+                # Tránh lặp lại cùng 1 rid trong 1.5 giây
+                if str(rid) != str(last_rid) or (now_t - last_t > 1.5):
+                    self._last_broadcast_rid = rid
+                    self._last_broadcast_time = now_t
+                    self._last_shared_room = {
+                        "rid": rid,
+                        "b": ri.get("b", 100),
+                        "Mu": ri.get("Mu", 2),
+                        "source_profile": profile_name,
+                        "timestamp": now_t,
+                    }
 
-                        # 1. Báo về cho Profile A (Chủ phòng) biết đã chia sẻ thành công khi có đồng đội online
-                        target_count = max(0, len(self.active_sockets) - 1)
-                        if target_count > 0:
-                            asyncio.create_task(self.send_command(profile_name, "ROOM_SHARED_CONFIRM", {
-                                "rid": int(rid),
-                                "target_count": target_count,
+                    # 1. Báo về cho Profile A (Chủ phòng) biết đã chia sẻ thành công khi có đồng đội online
+                    target_count = max(0, len(self.active_sockets) - 1)
+                    if target_count > 0:
+                        asyncio.create_task(self.send_command(profile_name, "ROOM_SHARED_CONFIRM", {
+                            "rid": rid,
+                            "target_count": target_count,
+                        }))
+
+                    # 2. Bắn lệnh JOIN_ROOM ngay lập tức (<2ms) tới tất cả các profile khác đang online!
+                    for other_profile in list(self.active_sockets.keys()):
+                        if other_profile != profile_name:
+                            log.info("ExtensionHub V3: >>> TỰ ĐỘNG CHUYỂN TIẾP BÀN '%s' TỪ '%s' SANG '%s' TỨC THỜI (<2ms)! <<<",
+                                     rid, profile_name, other_profile)
+                            asyncio.create_task(self.send_command(other_profile, "JOIN_ROOM", {
+                                "rid": rid,
+                                "bet": ri.get("b", 100),
+                                "mu": ri.get("Mu", 2),
+                                "source_profile": profile_name,
                             }))
-
-                        # 2. Bắn lệnh JOIN_ROOM ngay lập tức (<2ms) tới tất cả các profile khác đang online!
-                        for other_profile in list(self.active_sockets.keys()):
-                            if other_profile != profile_name:
-                                log.info("ExtensionHub V3: >>> TỰ ĐỘNG CHUYỂN TIẾP ID BÀN #%s TỪ '%s' SANG '%s' TỨC THỜI (<2ms)! <<<",
-                                         rid, profile_name, other_profile)
-                                asyncio.create_task(self.send_command(other_profile, "JOIN_ROOM", {
-                                    "rid": int(rid),
-                                    "bet": ri.get("b", 100),
-                                    "mu": ri.get("Mu", 2),
-                                    "source_profile": profile_name,
-                                }))
 
         # 4. Cập nhật danh sách người chơi
         elif msg_type in ("PLAYER_LIST", "PLAYERS"):

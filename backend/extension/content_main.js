@@ -91,16 +91,26 @@
             if (p.cmd === 202) {
               G.__room_players = p.ps || [];
               G.__room_state = p.gS;
-              const pName = (getProfileName() || "").toLowerCase();
-              const me = (p.ps || []).find(x => x && (
-                (x.dn && x.dn.toLowerCase() === pName) ||
-                (x.u && x.u.toLowerCase() === pName) ||
-                (x.uid && String(x.uid) === String(G.__AUTOTOOL_ACCOUNT_ID))
-              ));
 
-              // Chỉ kích hoạt bàn khi người chơi THỰC SỰ ĐANG NGỒI TẠI BÀN
-              if (me || (p.ps && p.ps.length > 0)) {
-                const meGold = me && me.As && me.As.gold !== undefined ? me.As.gold : (me && me.m !== undefined ? me.m : null);
+              function isMe(x) {
+                if (!x) return false;
+                const pName = (getProfileName() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                const dn = (x.dn || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                const u = (x.u || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                if (!pName) return false;
+                if (dn === pName || u === pName) return true;
+                if (dn.length >= 6 && pName.length >= 6) {
+                  if (dn.slice(0, 8) === pName.slice(0, 8)) return true;
+                }
+                return false;
+              }
+
+              const me = (p.ps || []).find(isMe) || (p.ps && p.ps[0]);
+              const guests = (p.ps || []).filter((x) => !isMe(x));
+
+              // Cập nhật số dư của tài khoản nếu có trong packet
+              if (me) {
+                const meGold = me.As && me.As.gold !== undefined ? me.As.gold : (me.m !== undefined ? me.m : null);
                 if (meGold !== null && !isNaN(Number(meGold))) {
                   window.postMessage({
                     type: "AUTOTOOL_BALANCE_UPDATE",
@@ -108,24 +118,32 @@
                     balance: Number(meGold),
                   }, "*");
                 }
-
-                const rid = (p.ri && p.ri.rid) || G.__ws_pending_rid || null;
-                G.__last_room_info = {
-                  rid: rid,
-                  rn: p.rn || (p.Mu === 2 ? `Bàn Solo $${p.b || 100}` : `Bàn $${p.b || 100}`),
-                  b: p.b || 100,
-                  Mu: p.Mu || 2,
-                };
-                G.__ws_last_room_id = rid;
-
-                window.postMessage({
-                  type: "AUTOTOOL_ROOM_INFO",
-                  profile_name: getProfileName(),
-                  room_info: G.__last_room_info,
-                  players: G.__room_players,
-                  state: G.__room_state,
-                }, "*");
               }
+
+              // Xác định mã bàn: Có ID cụ thể hoặc Bàn Chống Vây
+              let rid = (p.ri && p.ri.rid) || p.rid || G.__ws_pending_rid || null;
+              const isChongVay = !rid || rid === -1 || String(rid) === "100";
+              const roomLabel = isChongVay ? "Chống Vây" : String(rid);
+
+              G.__last_room_info = {
+                rid: isChongVay ? "Chống Vây" : Number(rid),
+                raw_rid: isChongVay ? null : Number(rid),
+                rn: p.rn || (isChongVay ? `Bàn Chống Vây $${p.b || 100}` : `Bàn #${rid}`),
+                b: p.b || 100,
+                Mu: p.Mu || 2,
+                is_chong_vay: isChongVay,
+              };
+              G.__ws_last_room_id = isChongVay ? "Chống Vây" : Number(rid);
+
+              // Bắn thông tin vào bàn lên isolated content.js
+              window.postMessage({
+                type: "AUTOTOOL_ROOM_INFO",
+                profile_name: getProfileName(),
+                room_info: G.__last_room_info,
+                players: G.__room_players,
+                guests: guests,
+                state: G.__room_state,
+              }, "*");
             }
 
             // cmd 203: Rời phòng -> Về lại sảnh
@@ -249,19 +267,26 @@
 
   // 4. API điều khiển game trực tiếp từ Extension Hub
   G.__autotool_exec_join = function (rid, bet = 100, mu = 2) {
-    console.log(`[AutoTool V3] Thực thi lệnh JOIN phòng #${rid} ($${bet})...`);
+    console.log(`[AutoTool V3] Thực thi lệnh JOIN phòng: ${rid} ($${bet})...`);
     const simms = G.__ws_get_simms();
     if (!simms) {
       console.warn("[AutoTool V3] Chưa tìm thấy socket Simms của game bài!");
       return false;
     }
 
-    // Hitclub Protocol: Gửi đúng chuẩn packet của Simms (KHÔNG spam gói tin rác)
-    const joinMsg = JSON.stringify([3, "Simms", 1, String(rid)]);
+    let joinMsg;
+    if (rid && !isNaN(Number(rid)) && Number(rid) > 0 && Number(rid) !== 100) {
+      // Vào bàn cụ thể có ID (ví dụ Bàn 133)
+      joinMsg = JSON.stringify([3, "Simms", 1, String(rid)]);
+    } else {
+      // Vào bàn Chống Vây / Quick Play
+      joinMsg = JSON.stringify([3, "Simms", -1, ""]);
+    }
+
     try {
       simms.send(joinMsg);
       push("inject", joinMsg);
-      console.log(`[AutoTool V3] Đã gửi lệnh vào bàn #${rid} thành công:`, joinMsg);
+      console.log(`[AutoTool V3] Đã gửi lệnh vào bàn (${rid}) thành công:`, joinMsg);
       return true;
     } catch (e) {
       console.error("[AutoTool V3] Lỗi gửi lệnh vào bàn:", e);

@@ -258,20 +258,20 @@
       const data = msg.data || {};
 
       // 1. NHẬN ID BÀN TỪ PROFILE A -> B HIỂN THỊ VÀ VÀO PHÒNG NGAY LẬP TỨC
-      if (action === "JOIN_ROOM" && data.rid) {
-        const rid = data.rid;
+      if (action === "JOIN_ROOM") {
+        const rid = data.rid || "Chống Vây";
         const source = data.source_profile || "A";
         matchedPartner = source;
         pendingJoinRid = rid;
 
         // HIỂN THỊ TRỰC TIẾP TRÊN MÀN HÌNH VIEW CỦA B
-        updateViewBanner(`⚡ <b>ĐÃ NHẬN ID PHÒNG ${rid} TỪ ${source}!</b> ĐANG VÀO BÀN...`, "joining");
-        showToast(`⚡ <b>ĐÃ NHẬN ID PHÒNG ${rid} TỪ ${source}!</b> Đang tự động vào bàn...`, "warn");
+        updateViewBanner(`⚡ <b>ĐÃ NHẬN BÀN ${rid} TỪ ${source}!</b> ĐANG VÀO BÀN...`, "joining");
+        showToast(`⚡ <b>ĐÃ NHẬN BÀN ${rid} TỪ ${source}!</b> Đang tự động vào bàn...`, "warn");
 
         // Ghi log lên App Desktop
         requestControl("/api/accounts/update-log", {
           profile_name: activeProfileName,
-          log: `Nhận ID #${rid} từ ${source} -> Vào bàn`,
+          log: `Nhận bàn ${rid} từ ${source} -> Vào bàn`,
         }, "POST").catch(() => {});
 
         // Gửi lệnh xuống Main World để game WS gửi packet join tức thì
@@ -284,14 +284,14 @@
 
       // 2. PROFILE A NHẬN XÁC NHẬN ĐÃ CHIA SẺ ID PHÒNG CHO B
       else if (action === "ROOM_SHARED_CONFIRM") {
-        const rid = data.rid;
-        updateViewBanner(`🟢 <b>BÀN #${rid} - ${activeProfileName}</b>: Đã gửi ID cho Account 2!`, "active");
-        showToast(`🟢 ĐÃ GỬI ID PHÒNG <b>#${rid}</b> CHO ACCOUNT 2!`, "info");
+        const rid = data.rid || "Chống Vây";
+        updateViewBanner(`🟢 <b>BÀN ${rid} - ${activeProfileName}</b>: Đã gửi ID cho Account 2!`, "active");
+        showToast(`🟢 ĐÃ GỬI BÀN <b>${rid}</b> CHO ACCOUNT 2!`, "info");
 
         // Ghi log lên App Desktop
         requestControl("/api/accounts/update-log", {
           profile_name: activeProfileName,
-          log: `Bàn #${rid} (Đã gửi ID cho Acc 2)`,
+          log: `Bàn ${rid} (Đã gửi ID cho Acc 2)`,
         }, "POST").catch(() => {});
       } else {
         window.postMessage({
@@ -344,23 +344,35 @@
       const prevRid = lastRoomInfo ? lastRoomInfo.rid : null;
       lastRoomInfo = ev.data.room_info;
 
-      if (lastRoomInfo && lastRoomInfo.rid) {
-        const rid = lastRoomInfo.rid;
+      if (lastRoomInfo) {
+        const rid = lastRoomInfo.rid || "Chống Vây";
         const betStr = lastRoomInfo.b ? ` ($${lastRoomInfo.b})` : "";
         const pLabel = activeProfileName || "Tool V3";
 
+        // Bóc tách thông tin khách lạ
+        let guestStr = "";
+        let guestNames = "";
+        if (ev.data.guests && ev.data.guests.length > 0) {
+          guestNames = ev.data.guests.map((g) => g.dn || g.u || "Khách").join(", ");
+          guestStr = ` | ⚠️ Khách: ${guestNames}`;
+        }
+
         // HIỂN THỊ RÕ RÀNG TRÊN VIEW GAME CỦA TÀI KHOẢN
-        if (pendingJoinRid && Number(rid) === Number(pendingJoinRid)) {
-          updateViewBanner(`🟢 <b>ĐÃ VÀO BÀN #${rid} CÙNG ${matchedPartner || 'A'} THÀNH CÔNG!</b>`, "active");
-          showToast(`🟢 <b>ĐÃ VÀO BÀN #${rid} CÙNG ${matchedPartner || 'A'} THÀNH CÔNG!</b>`, "success");
+        if (pendingJoinRid && String(rid) === String(pendingJoinRid)) {
+          updateViewBanner(`🟢 <b>ĐÃ VÀO BÀN ${rid} CÙNG ${matchedPartner || 'A'} THÀNH CÔNG!</b>${guestStr}`, "active");
+          showToast(`🟢 <b>ĐÃ VÀO BÀN ${rid} CÙNG ${matchedPartner || 'A'} THÀNH CÔNG!</b>`, "success");
         } else {
-          updateViewBanner(`📌 <b>BÀN #${rid} - ${pLabel}</b>${betStr}`, "active");
+          updateViewBanner(`📌 <b>BÀN ${rid}</b> - ${pLabel}${betStr}${guestStr}`, "active");
         }
 
         // Cập nhật log về App Desktop
+        const logMsg = guestNames 
+          ? `Bàn ${rid}${betStr} (Thấy khách lạ: ${guestNames})` 
+          : `Bàn ${rid}${betStr} (Bàn trống)`;
+
         requestControl("/api/accounts/update-log", {
           profile_name: activeProfileName,
-          log: `Bàn #${rid}${betStr}`,
+          log: logMsg,
         }, "POST").catch(() => {});
 
         requestControl("/api/autoplay/report-room", {
@@ -379,6 +391,7 @@
         profile_name: activeProfileName,
         room_info: ev.data.room_info,
         players: ev.data.players,
+        guests: ev.data.guests,
       });
     }
 
