@@ -571,6 +571,7 @@ class BrowserManager:
                 launch_kwargs["locale"] = locale
             if proxy_dict:
                 launch_kwargs["proxy"] = proxy_dict
+                args.append("--proxy-bypass-list=<-loopback>,127.0.0.1,localhost")
             try:
                 h_desk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
                 if h_desk:

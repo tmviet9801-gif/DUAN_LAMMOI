@@ -30,12 +30,16 @@ def parse_proxy(raw: str) -> dict | None:
 
     parts = raw.split(":")
     if len(parts) == 2 and parts[0] and parts[1]:
-        return {"server": f"http://{parts[0]}:{parts[1]}"}
-    if len(parts) == 4 and all(parts):
+        proxy = {"server": f"http://{parts[0]}:{parts[1]}"}
+    elif len(parts) == 4 and all(parts):
         host, port, user, pwd = parts
-        return {
+        proxy = {
             "server": f"http://{host}:{port}",
             "username": user,
             "password": pwd,
         }
+
+    if proxy:
+        proxy["bypass"] = "localhost,127.0.0.1,<-loopback>"
+        return proxy
     return None
