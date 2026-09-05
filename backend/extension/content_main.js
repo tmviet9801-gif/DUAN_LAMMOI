@@ -16,6 +16,7 @@
   G.__game_in_progress = false;
   G.__partner_cards_count = 13;
   G.__AUTOTOOL_AUTO_DISCARD = true;
+  G.__autotool_partners = ["nicktestxabai1", "nicktestxabai2", "nicktestxxabai1", "nicktestxxabai2", "account01", "account02", "profile1", "profile2"];
 
   // ---- MODULE PHÂN TÍCH & GIẢI MÃ 52 LÁ BÀI TIẾN LÊN (0..51) ----
   function getCardVal(c) {
@@ -946,15 +947,19 @@
 
   G.__autotool_exec_ready = function () {
     console.log("[AutoTool V3] Thực thi lệnh SẴN SÀNG...");
-    G.__ws_send_channel("Simms", '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]');
-    G.__ws_send('[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]');
+    const packet = '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]';
+    if (!G.__ws_send_channel("Simms", packet)) {
+      G.__ws_send(packet);
+    }
     return true;
   };
 
   G.__autotool_exec_start = function () {
     console.log("[AutoTool V3] Thực thi lệnh BẮT ĐẦU VÁN...");
-    G.__ws_send_channel("Simms", '[6,"Simms","channelPlugin",{"cmd":364}]');
-    G.__ws_send('[6,"Simms","channelPlugin",{"cmd":364}]');
+    const packet = '[6,"Simms","channelPlugin",{"cmd":364}]';
+    if (!G.__ws_send_channel("Simms", packet)) {
+      G.__ws_send(packet);
+    }
     return true;
   };
 
