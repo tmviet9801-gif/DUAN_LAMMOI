@@ -151,16 +151,55 @@ class ExtensionHubManager:
 
         msg_type = msg.get("type") or msg.get("action")
 
-        # Cập nhật thông tin bàn cược
+        # Cập nhật thông tin bàn cược & Tự động điều phối ID phòng tức thời (<2ms)
         if msg_type in ("ROOM_INFO", "ROOM_UPDATE"):
             ri = msg.get("room_info") or msg.get("data")
-            if ri:
+            if ri and isinstance(ri, dict):
+                rid = ri.get("rid")
                 state["room_info"] = ri
                 self._emit({
                     "type": "room_info_updated",
                     "profile_name": profile_name,
                     "room_info": ri,
                 })
+
+                # Tự động chia sẻ ID phòng cho các profile đối tác với độ trễ <2ms
+                if rid and int(rid) > 0 and int(rid) != 100:
+                    last_rid = getattr(self, "_last_broadcast_rid", None)
+                    now_t = time.time()
+                    last_t = getattr(self, "_last_broadcast_time", 0)
+
+                    # Tránh lặp lại cùng 1 rid trong 1.5 giây
+                    if rid != last_rid or (now_t - last_t > 1.5):
+                        self._last_broadcast_rid = rid
+                        self._last_broadcast_time = now_t
+                        self._last_shared_room = {
+                            "rid": int(rid),
+                            "b": ri.get("b", 100),
+                            "Mu": ri.get("Mu", 2),
+                            "source_profile": profile_name,
+                            "timestamp": now_t,
+                        }
+
+                        # 1. Báo về cho Profile A (Chủ phòng) biết đã chia sẻ thành công khi có đồng đội online
+                        target_count = max(0, len(self.active_sockets) - 1)
+                        if target_count > 0:
+                            asyncio.create_task(self.send_command(profile_name, "ROOM_SHARED_CONFIRM", {
+                                "rid": int(rid),
+                                "target_count": target_count,
+                            }))
+
+                        # 2. Bắn lệnh JOIN_ROOM ngay lập tức (<2ms) tới tất cả các profile khác đang online!
+                        for other_profile in list(self.active_sockets.keys()):
+                            if other_profile != profile_name:
+                                log.info("ExtensionHub V3: >>> TỰ ĐỘNG CHUYỂN TIẾP ID BÀN #%s TỪ '%s' SANG '%s' TỨC THỜI (<2ms)! <<<",
+                                         rid, profile_name, other_profile)
+                                asyncio.create_task(self.send_command(other_profile, "JOIN_ROOM", {
+                                    "rid": int(rid),
+                                    "bet": ri.get("b", 100),
+                                    "mu": ri.get("Mu", 2),
+                                    "source_profile": profile_name,
+                                }))
 
         # Cập nhật danh sách người chơi
         elif msg_type in ("PLAYER_LIST", "PLAYERS"):

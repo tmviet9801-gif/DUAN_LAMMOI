@@ -186,6 +186,7 @@
     };
     G.__ws_send_channel("Simms", JSON.stringify([6, "Simms", "channelPlugin", payload]));
     G.__ws_send_channel("Simms", JSON.stringify([3, "Simms", 1, { rid: Number(rid) }]));
+    G.__ws_send_channel("Simms", JSON.stringify([3, "Simms", 1, String(rid)]));
     G.__ws_send(JSON.stringify([6, "Simms", "channelPlugin", payload]));
     return true;
   };

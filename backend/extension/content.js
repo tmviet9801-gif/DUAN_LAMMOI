@@ -7,6 +7,10 @@
   let activeProfileName = "";
   let lastRoomInfo = null;
 
+  let matchedPartner = "";
+  let pendingJoinRid = null;
+  let customStatusMessage = "";
+
   // ---- 1. CƠ CHẾ HTTP_PROXY QUA BACKGROUND ----
   function requestControl(path, body = null, method = "GET") {
     return new Promise((resolve) => {
@@ -27,7 +31,26 @@
     });
   }
 
-  // ---- 2. GIAO DIỆN NÚT BẤM NỔI (#autotool-connect-btn) ----
+  // ---- 2. HIỂN THỊ TOAST THÔNG BÁO VIEW WEB ----
+  function showToast(text, type = "info") {
+    if (window !== window.top) return;
+    let toast = document.getElementById("autotool-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "autotool-toast";
+      (document.body || document.documentElement).appendChild(toast);
+    }
+
+    toast.className = `autotool-toast-visible ${type}`;
+    toast.innerHTML = text;
+
+    if (toast.__timer) clearTimeout(toast.__timer);
+    toast.__timer = setTimeout(() => {
+      if (toast) toast.className = "";
+    }, 4500);
+  }
+
+  // ---- 3. GIAO DIỆN NÚT BẤM NỔI (#autotool-connect-btn) ----
   function ensureStyles() {
     if (document.getElementById("autotool-pill-style")) return;
     const style = document.createElement("style");
@@ -82,6 +105,7 @@
         background: #451a03 !important;
         border-color: #f59e0b !important;
         color: #fde68a !important;
+        box-shadow: 0 0 14px rgba(245, 158, 11, 0.4) !important;
       }
       #autotool-connect-btn.wait .at-dot {
         background: #fbbf24 !important;
@@ -98,6 +122,43 @@
         opacity: 0.8 !important;
         border-color: #94a3b8 !important;
         color: #cbd5e1 !important;
+      }
+
+      /* TOAST BANNER TRÊN MÀN HÌNH */
+      #autotool-toast {
+        position: fixed !important;
+        top: -60px !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        z-index: 2147483647 !important;
+        padding: 9px 20px !important;
+        border-radius: 8px !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+        font-size: 13px !important;
+        font-weight: 700 !important;
+        box-shadow: 0 6px 22px rgba(0, 0, 0, 0.75) !important;
+        pointer-events: none !important;
+        opacity: 0 !important;
+        transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+      }
+      #autotool-toast.autotool-toast-visible {
+        top: 20px !important;
+        opacity: 1 !important;
+      }
+      #autotool-toast.warn {
+        background: #451a03 !important;
+        border: 1.5px solid #f59e0b !important;
+        color: #fde68a !important;
+      }
+      #autotool-toast.success {
+        background: #14532d !important;
+        border: 1.5px solid #22c55e !important;
+        color: #86efac !important;
+      }
+      #autotool-toast.info {
+        background: #0b1220 !important;
+        border: 1.5px solid #38bdf8 !important;
+        color: #bae6fd !important;
       }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -151,6 +212,13 @@
       if (res.profile_name) activeProfileName = res.profile_name;
 
       const pLabel = activeProfileName || "Tool V3";
+
+      // Ưu tiên hiển thị thông báo tức thời nếu có lệnh đang xử lý
+      if (customStatusMessage) {
+        txt.textContent = customStatusMessage;
+        return;
+      }
+
       const roomStr = lastRoomInfo && lastRoomInfo.rid ? ` [Bàn #${lastRoomInfo.rid}]` : "";
 
       if (!isHubConnected) {
@@ -159,22 +227,80 @@
       } else if (!isToolArmed) {
         btn.className = "on disarmed";
         txt.textContent = `⏸️ TOOL V3: TẠM DỪNG (${pLabel})${roomStr}`;
+      } else if (lastRoomInfo && lastRoomInfo.rid) {
+        btn.className = "on";
+        if (pendingJoinRid && Number(lastRoomInfo.rid) === Number(pendingJoinRid)) {
+          txt.textContent = `🟢 ĐÃ VÀO BÀN #${lastRoomInfo.rid} CÙNG ${matchedPartner || 'A'}`;
+        } else {
+          txt.textContent = `🟢 BÀN #${lastRoomInfo.rid} (${pLabel})`;
+        }
       } else {
         btn.className = "on";
-        txt.textContent = `🟢 TOOL V3: ĐÃ KẾT NỐI (${pLabel})${roomStr}`;
+        txt.textContent = `🟢 TOOL V3: ĐÃ KẾT NỐI (${pLabel})`;
       }
     });
   }
 
-  // ---- 3. CẦU NỐI THÔNG ĐIỆP (2-WAY BRIDGE) ----
+  // ---- 4. CẦU NỐI THÔNG ĐIỆP (2-WAY BRIDGE TỨC THỜI <2ms) ----
   // Nhận lệnh từ Background (Hub gửi xuống) -> Bắn vào Main World
   chrome.runtime.onMessage.addListener((msg) => {
+    if (!msg) return true;
+
     if (msg.type === "HUB_COMMAND") {
-      window.postMessage({
-        type: "AUTOTOOL_EXEC_COMMAND",
-        action: msg.action,
-        data: msg.data || {},
-      }, "*");
+      const action = msg.action;
+      const data = msg.data || {};
+
+      // 1. NHẬN ID BÀN TỪ PROFILE A -> B NHẢY VÀO NGAY LẬP TỨC
+      if (action === "JOIN_ROOM" && data.rid) {
+        const rid = data.rid;
+        const source = data.source_profile || "A";
+        matchedPartner = source;
+        pendingJoinRid = rid;
+
+        const btn = document.getElementById("autotool-connect-btn");
+        const txt = document.getElementById("autotool-btn-text");
+        if (btn) btn.className = "wait";
+        customStatusMessage = `⚡ ĐÃ NHẬN ID PHÒNG ${rid} TỪ ${source}! ĐANG VÀO...`;
+        if (txt) txt.textContent = customStatusMessage;
+
+        // Bắn banner thông báo nổi bật trên view web
+        showToast(`⚡ <b>ĐÃ NHẬN ID PHÒNG ${rid} TỪ ${source}!</b> Đang tự động vào bàn...`, "warn");
+
+        // Gửi lệnh xuống Main World để game WS gửi packet join ngay tức thì (<2ms)
+        window.postMessage({
+          type: "AUTOTOOL_EXEC_COMMAND",
+          action: "JOIN_ROOM",
+          data: data,
+        }, "*");
+
+        setTimeout(() => {
+          customStatusMessage = "";
+          updatePill();
+        }, 5000);
+      }
+
+      // 2. PROFILE A NHẬN XÁC NHẬN ĐÃ CHIA SẺ ID PHÒNG CHO B
+      else if (action === "ROOM_SHARED_CONFIRM") {
+        const rid = data.rid;
+        const btn = document.getElementById("autotool-connect-btn");
+        const txt = document.getElementById("autotool-btn-text");
+        if (btn) btn.className = "on";
+        customStatusMessage = `🟢 BÀN #${rid}: ĐÃ GỬI ID CHO B!`;
+        if (txt) txt.textContent = customStatusMessage;
+
+        showToast(`🟢 ĐÃ GỬI ID PHÒNG <b>#${rid}</b> CHO B (Đang đợi B vào bàn)...`, "info");
+
+        setTimeout(() => {
+          customStatusMessage = "";
+          updatePill();
+        }, 4000);
+      } else {
+        window.postMessage({
+          type: "AUTOTOOL_EXEC_COMMAND",
+          action: action,
+          data: data,
+        }, "*");
+      }
     } else if (msg.type === "SET_ARM") {
       isToolArmed = !!msg.armed;
       window.postMessage({ type: "AUTOTOOL_SET_ARM", armed: isToolArmed }, "*");
@@ -183,7 +309,7 @@
     return true;
   });
 
-  // Nhận event từ Main World -> Chuyển tiếp lên Background
+  // Nhận event từ Main World -> Chuyển tiếp lên Background Hub
   window.addEventListener("message", (ev) => {
     if (!ev.data) return;
 
@@ -195,7 +321,16 @@
       });
       updatePill();
     } else if (ev.data.type === "AUTOTOOL_ROOM_INFO") {
+      const prevRid = lastRoomInfo ? lastRoomInfo.rid : null;
       lastRoomInfo = ev.data.room_info;
+
+      // Nếu vừa mới vào bàn thành công
+      if (lastRoomInfo && lastRoomInfo.rid && lastRoomInfo.rid !== prevRid) {
+        if (pendingJoinRid && Number(lastRoomInfo.rid) === Number(pendingJoinRid)) {
+          showToast(`🟢 <b>ĐÃ VÀO BÀN #${lastRoomInfo.rid} CÙNG ${matchedPartner || 'A'} THÀNH CÔNG!</b>`, "success");
+        }
+      }
+
       updatePill();
 
       if (lastRoomInfo && lastRoomInfo.rid) {
@@ -232,3 +367,4 @@
   }
   setInterval(updatePill, 2000);
 })();
+

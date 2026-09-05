@@ -82,3 +82,35 @@ def test_bridge_websocket_lifecycle_and_two_way_messaging():
 
     # 6. Sau khi đóng socket, kiểm tra đã unregister
     assert ext_hub.is_connected("TestAccountV3") is False
+
+
+def test_instant_dual_profile_room_sharing():
+    """Kiểm tra luồng tức thời (<2ms): Profile A vào bàn -> Profile B nhận lệnh JOIN_ROOM ngay lập tức!"""
+    ext_hub = getattr(main.app.state, "ext_hub", None)
+    assert ext_hub is not None
+
+    with client.websocket_connect("/ws/bridge?profile=ProfileA") as ws_a:
+        assert json.loads(ws_a.receive_text()).get("action") == "WELCOME"
+
+        with client.websocket_connect("/ws/bridge?profile=ProfileB") as ws_b:
+            assert json.loads(ws_b.receive_text()).get("action") == "WELCOME"
+
+            # Profile A vào bàn cược #12345 và gửi ROOM_UPDATE lên Hub
+            ws_a.send_text(json.dumps({
+                "type": "ROOM_UPDATE",
+                "room_info": {"rid": 12345, "rn": "Bàn Solo $100", "b": 100, "Mu": 2}
+            }))
+
+            # Profile B lập tức nhận được lệnh JOIN_ROOM với ID 12345 từ Profile A!
+            msg_b_raw = ws_b.receive_text()
+            msg_b = json.loads(msg_b_raw)
+            assert msg_b.get("action") == "JOIN_ROOM"
+            assert msg_b.get("data", {}).get("rid") == 12345
+            assert msg_b.get("data", {}).get("source_profile") == "ProfileA"
+
+            # Profile A nhận được xác nhận ROOM_SHARED_CONFIRM
+            msg_a_raw = ws_a.receive_text()
+            msg_a = json.loads(msg_a_raw)
+            assert msg_a.get("action") == "ROOM_SHARED_CONFIRM"
+            assert msg_a.get("data", {}).get("rid") == 12345
+            assert msg_a.get("data", {}).get("target_count") == 1
