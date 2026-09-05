@@ -18,6 +18,7 @@
     );
     if (view === "groups" && window.App.groupsLoad) window.App.groupsLoad();
     if (view === "proxy" && window.App.proxyLoad) window.App.proxyLoad();
+    if (view === "config" && window.App.licenseRefresh) window.App.licenseRefresh();
     closeAllMenus();
   }
   App.switchView = switchView;

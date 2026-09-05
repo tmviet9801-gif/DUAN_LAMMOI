@@ -113,7 +113,7 @@ def status() -> dict:
     machine_id = get_machine_id()
     lic = load_license()
     if not lic:
-        return {"activated": False, "valid": False, "machine_id": machine_id, "reason": "not_activated"}
+        return {"activated": False, "valid": False, "machine_id": machine_id, "reason": "not_activated", "key": ""}
     result = validate_key(lic["key"], machine_id)
     return {
         "activated": True,
@@ -123,6 +123,7 @@ def status() -> dict:
         "expires_at": result.get("expiry"),
         "max_tabs": result.get("max_tabs", PLATFORM_DEFAULT_MAX_TABS),
         "features": result.get("features", "game"),
+        "key": lic.get("key", ""),
     }
 
 

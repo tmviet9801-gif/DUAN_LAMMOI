@@ -16,6 +16,7 @@
       App.renderProfilesTable();
       App.renderInfo();
       if (App.autoplayRenderProfiles) App.autoplayRenderProfiles();
+      if (App.licenseRefresh) App.licenseRefresh();
     } catch (e) {
       App.setBackend(false);
       App.log.warn("refresh failed:", e.message);
