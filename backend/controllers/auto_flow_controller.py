@@ -1516,159 +1516,24 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     await anchor_page.mouse.click(start_x, start_y)
     await asyncio.sleep(3.2)
 
-    # 3. THUẬT TOÁN MỚM BÀI TỐI ƯU (GIẢM PHẾ 97%, ACC 2 THUA TỐI THIỂU 1 LÁ)
-    # ---------------------------------------------------------------------
-    # Nguyên lý cốt lõi:
-    # - Acc 2 (Phụ) phải tẩu tán tối đa số lá bài trên tay (từ lá to / Heo đến các lá vừa).
-    # - Acc 1 (Chính) mớm bài và liên tục BỎ LƯỢT (Pass) để Acc 2 đánh xả bài liên tục.
-    # - Khi Acc 2 chỉ còn đúng 1 lá rác nhỏ nhất trên tay, Acc 1 mới đè bài và xả hết để Về Nhất.
-    # - Kết quả: Acc 2 không bị cóng, không thối heo, chỉ đếm đúng 1 lá -> phế nhà cái cực thấp!
+    # 3. THUẬT TOÁN MỚM BÀI TỐI ƯU (GREEDY HAND DECOMPOSITION & JOINT UTILITY OPTIMIZATION)
+    # -------------------------------------------------------------------------------------
+    from core.card_strategy import CooperativeDiscardEngine, HandDecomposition
 
-    btn_pass_rx, btn_pass_ry = 0.118, 0.618   # Nút BỎ LƯỢT
-    btn_play_rx, btn_play_ry = 0.550, 0.618   # Nút ĐÁNH
-    card_hand_y_ratio = 0.850                 # Tọa độ Y dải bài trên tay
-    
     primary_sub_page = pages[other_profiles[0]] if other_profiles else None
     primary_sub_name = other_profiles[0] if other_profiles else "Phụ"
 
-    log.info("find-and-match: Bắt đầu chuỗi Mớm Bài Tối Ưu giữa Anchor=%s (Chính) và %s (Phụ)...", 
-             anchor_name, primary_sub_name)
+    savings = HandDecomposition.compute_theoretical_savings(bet_val)
+    log.info("find-and-match: Kích hoạt CooperativeDiscardEngine: Tiết kiệm %s%% phế bàn, Acc 2 thua tối thiểu %s", 
+             savings["savings_percent"], savings["loss_optimal"])
 
-    sub_w, sub_h = (0, 0)
-    if primary_sub_page:
-        sub_w, sub_h = await _get_screen_size(primary_sub_page)
-        
-        # BƯỚC 6.2: TỰ ĐỘNG NHẬN DIỆN BÊN NÀO ĐÁNH TRƯỚC (ACC 1 HAY ACC 2)
-        async def _check_has_turn(p):
-            if not p:
-                return False
-            try:
-                png = await p.screenshot(type="png")
-                im = Image.open(io.BytesIO(png))
-                w, h = im.size
-                btn_x = int(w * btn_play_rx)
-                btn_y = int(h * btn_play_ry)
-                r, g, b = im.getpixel((btn_x, btn_y))[:3]
-                # Nút ĐÁNH sáng rực khi tới lượt (màu cam/vàng: R > 185, G > 120, B < 100)
-                return (r > 185 and g > 120 and b < 100) or (r > 210 and g > 150)
-            except Exception:
-                return False
-
-        first_turn = "MAIN_FIRST"
-        log.info("find-and-match: Đang quét nhận diện xem Acc 1=%s hay Acc 2=%s có lượt đi trước...", 
-                 anchor_name, primary_sub_name)
-        for _ in range(10):
-            if _GOM_BAN_STOP:
-                break
-            turn_sub = await _check_has_turn(primary_sub_page)
-            turn_main = await _check_has_turn(anchor_page)
-            if turn_sub and not turn_main:
-                first_turn = "SUB_FIRST"
-                break
-            elif turn_main and not turn_sub:
-                first_turn = "MAIN_FIRST"
-                break
-            await asyncio.sleep(0.3)
-
-        log.info("find-and-match: >>> KẾT QUẢ XÁC NHẬN LƯỢT ĐI ĐẦU TIÊN: [%s] <<<", first_turn)
-
-        # GIAI ĐOẠN 1: MỞ VÀNG / KHỞI ĐỘNG VÁN THEO ĐÚNG BÊN CÓ LƯỢT
-        if first_turn == "SUB_FIRST":
-            # TRƯỜNG HỢP ACC 2 (PHỤ) ĐI TRƯỚC (cầm 3 Bích hoặc thắng ván trước)
-            log.info("find-and-match: [Acc 2 đi trước] %s chủ động xả quân to/Heo ngay, %s BỎ LƯỢT nhường đường...", 
-                     primary_sub_name, anchor_name)
-            # Acc 2 đi ngay lá to/Heo ở góc phải
-            await primary_sub_page.mouse.click(int(sub_w * 0.720), int(sub_h * card_hand_y_ratio))
-            await asyncio.sleep(0.3)
-            await primary_sub_page.mouse.click(int(sub_w * btn_play_rx), int(sub_h * btn_play_ry))
-            await asyncio.sleep(1.0)
-            # Acc 1 lập tức BỎ LƯỢT (Pass) để Acc 2 tiếp tục quyền đánh
-            await anchor_page.mouse.click(int(sw_a * btn_pass_rx), int(sh_a * btn_pass_ry))
-            await asyncio.sleep(0.5)
-        else:
-            # TRƯỜNG HỢP ACC 1 (CHÍNH) ĐI TRƯỚC
-            log.info("find-and-match: [Acc 1 đi trước] %s mớm quân nhỏ góc trái, %s đè lá to/Heo để cướp lượt...", 
-                     anchor_name, primary_sub_name)
-            # Acc 1 đánh quân bài nhỏ nhất góc trái x=0.200
-            await anchor_page.mouse.click(int(sw_a * 0.200), int(sh_a * card_hand_y_ratio))
-            await asyncio.sleep(0.3)
-            await anchor_page.mouse.click(int(sw_a * btn_play_rx), int(sh_a * btn_play_ry))
-            await asyncio.sleep(1.0)
-            # Acc 2 chọn lá to nhất (góc phải x=0.720) để đè bài và giành lượt
-            await primary_sub_page.mouse.click(int(sub_w * 0.720), int(sub_h * card_hand_y_ratio))
-            await asyncio.sleep(0.3)
-            await primary_sub_page.mouse.click(int(sub_w * btn_play_rx), int(sub_h * btn_play_ry))
-            await asyncio.sleep(1.0)
-
-        # GIAI ĐOẠN 2: Acc 2 liên tục xả bài tẩu tán, Acc 1 liên tục Pass để nhường lượt cho Acc 2
-        # Quét lần lượt từ bài to về bài nhỏ (từ 0.660 xuống 0.260) để Acc 2 chỉ giữ lại 1 lá duy nhất tại 0.200
-        x_sub_targets = [0.660, 0.600, 0.540, 0.480, 0.420, 0.360, 0.300, 0.260]
-        log.info("find-and-match: [Giai đoạn 2] Acc 2=%s xả liên tục %d lượt tẩu thoát bài, Acc 1=%s BỎ LƯỢT để nhường quyền...", 
-                 primary_sub_name, len(x_sub_targets), anchor_name)
-
-        for step_idx, cx_ratio in enumerate(x_sub_targets, start=1):
-            if _GOM_BAN_STOP:
-                break
-
-            # Acc 1 bấm BỎ LƯỢT (Pass) để quyền đánh thuộc về Acc 2
-            await anchor_page.mouse.click(int(sw_a * btn_pass_rx), int(sh_a * btn_pass_ry))
-            await asyncio.sleep(0.5)
-
-            # Acc 2 chọn lá bài tiếp theo và bấm ĐÁNH
-            log.info("find-and-match: Acc 2=%s xả bài lượt %d (x=%.3f)...", primary_sub_name, step_idx, cx_ratio)
-            await primary_sub_page.mouse.click(int(sub_w * cx_ratio), int(sub_h * card_hand_y_ratio))
-            await asyncio.sleep(0.3)
-            await primary_sub_page.mouse.click(int(sub_w * btn_play_rx), int(sub_h * btn_play_ry))
-            await asyncio.sleep(0.9)
-
-            # Kiểm tra xem ván bài đã kết thúc sớm chưa
-            try:
-                png_mid = await anchor_page.screenshot(type="png")
-                im_m = Image.open(io.BytesIO(png_mid))
-                mw, mh = im_m.size
-                rm, gm, bm_col = im_m.getpixel((int(mw * 0.50), int(mh * 0.555)))[:3]
-                if rm > 180 and gm > 150 and bm_col < 60:
-                    log.info("find-and-match: >>> VÁN BÀI ĐÃ KẾT THÚC TRONG GIAI ĐOẠN XẢ! <<<")
-                    break
-            except Exception:
-                pass
-
-        # GIAI ĐOẠN 3: Acc 2 chỉ còn 1 lá rác nhỏ nhất -> Acc 1 đè bài và xả hết để Về Nhất
-        log.info("find-and-match: [Giai đoạn 3] Acc 2=%s đã tẩu tán gần hết bài (chỉ còn 1 lá rác). Acc 1=%s đè bài và Về Nhất!", 
-                 primary_sub_name, anchor_name)
-        
-        # Acc 2 bấm BỎ LƯỢT (Pass)
-        await primary_sub_page.mouse.click(int(sub_w * btn_pass_rx), int(sub_h * btn_pass_ry))
-        await asyncio.sleep(0.4)
-
-    # Acc 1 liên tục đánh các quân bài còn lại trên tay để về Nhất
-    for main_idx in range(1, 14):
-        if _GOM_BAN_STOP:
-            break
-        # Quét lần lượt dải bài của Acc 1 từ nhỏ đến lớn
-        cx_main = int(sw_a * (0.200 + ((main_idx * 0.05) % 0.55)))
-        cy_main = int(sh_a * card_hand_y_ratio)
-        await anchor_page.mouse.click(cx_main, cy_main)
-        await asyncio.sleep(0.3)
-        await anchor_page.mouse.click(int(sw_a * btn_play_rx), int(sh_a * btn_play_ry))
-        await asyncio.sleep(0.9)
-
-        # Acc 2 Pass nếu tới lượt
-        if primary_sub_page and main_idx % 2 == 0:
-            await primary_sub_page.mouse.click(int(sub_w * btn_pass_rx), int(sub_h * btn_pass_ry))
-            await asyncio.sleep(0.4)
-
-        # Kiểm tra ván bài kết thúc
-        try:
-            png_chk = await anchor_page.screenshot(type="png")
-            im_c = Image.open(io.BytesIO(png_chk))
-            cw, ch = im_c.size
-            r_end, g_end, b_end = im_c.getpixel((int(cw * 0.50), int(ch * 0.555)))[:3]
-            if r_end > 180 and g_end > 150 and b_end < 60:
-                log.info("find-and-match: >>> VÁN BÀI ĐÃ KẾT THÚC! ACC 1 VỀ NHẤT - ACC 2 CHỈ THUA 1 LÁ (PHẾ TỐI THIỂU)! <<<")
-                break
-        except Exception:
-            pass
+    engine = CooperativeDiscardEngine(
+        anchor_page=anchor_page,
+        sub_page=primary_sub_page,
+        anchor_name=anchor_name,
+        sub_name=primary_sub_name
+    )
+    await engine.execute_optimal_discard()
 
     # BƯỚC 7: BẪY KHÁCH LẠ SẴN SÀNG (NẾU BẬT auto_start_guest_ss)
     if auto_start_guest_ss:
@@ -1710,6 +1575,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         "room_id": selected_rid,
         "bet": bet_val,
         "room_name": f"Bàn #{selected_rid} (${bet_val})",
+        "theoretical_savings": savings if 'savings' in locals() else None,
         "screenshot": shot_a,
     }
 
