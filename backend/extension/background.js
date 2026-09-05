@@ -119,13 +119,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.type === "ROOM_LEFT" || 
       message.type === "BALANCE_UPDATE" || 
       message.type === "LOG_UPDATE" ||
-      message.type === "PARTNER_MATCHED") {
+      message.type === "PARTNER_MATCHED" ||
+      message.type === "CANCEL_ROOM_INVITE" ||
+      message.type === "AUTOTOOL_CANCEL_ROOM_INVITE" ||
+      message.type === "ANCHOR_ROOM_VERIFIED_EMPTY" ||
+      message.type === "AUTOTOOL_ANCHOR_ROOM_VERIFIED_EMPTY") {
     if (hubSocket && hubSocket.readyState === WebSocket.OPEN) {
       hubSocket.send(JSON.stringify({
         type: message.type,
         profile_name: currentProfileName || message.profile_name,
         balance: message.balance,
         log: message.log,
+        rid: message.rid,
+        reason: message.reason,
         data: message.data || message.room_info || message,
         timestamp: Date.now(),
       }));

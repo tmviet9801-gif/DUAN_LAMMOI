@@ -255,7 +255,7 @@ class ExtensionHubManager:
                 })
 
         # 3. Cập nhật thông tin bàn cược & Tự động điều phối ID phòng tức thời (<2ms)
-        elif msg_type in ("ROOM_INFO", "ROOM_UPDATE"):
+        elif msg_type in ("ROOM_INFO", "ROOM_UPDATE", "AUTOTOOL_ROOM_INFO", "ANCHOR_ROOM_VERIFIED_EMPTY", "AUTOTOOL_ANCHOR_ROOM_VERIFIED_EMPTY"):
             ri = msg.get("room_info") or msg.get("data")
             if ri and isinstance(ri, dict):
                 rid = ri.get("rid") or "Chống Vây"
@@ -292,15 +292,19 @@ class ExtensionHubManager:
                     "room": rid,
                 })
 
-                # Kiểm tra xem bàn có khách lạ hay không
+                # KIỂM TRA ĐIỀU KIỆN CHÍNH XÁC: BÀN TRỐNG ĐÃ XÁC THỰC 100% (CHỈ CÓ 1 MÌNH ANCHOR)
+                # Chỉ phát lệnh mời B khi có xác nhận rõ ràng bàn trống (không khách lạ, không partner)
+                is_verified_empty = (
+                    msg_type in ("ANCHOR_ROOM_VERIFIED_EMPTY", "AUTOTOOL_ANCHOR_ROOM_VERIFIED_EMPTY")
+                    or (ri.get("is_verified_empty") is True and ri.get("player_count") == 1)
+                )
                 has_stranger = ri.get("has_stranger") or bool(msg.get("guests"))
                 partner_found = ri.get("partner_found")
 
-                # CHỈ GỬI LỆNH JOIN_ROOM CHO PROFILE 2 KHI BÀN LÀ BÀN TRỐNG (KHÔNG CÓ KHÁCH LẠ)
                 if has_stranger:
                     log.info("ExtensionHub V3: Profile '%s' vào bàn có khách lạ -> KHÔNG gửi lệnh join cho đồng đội!", profile_name)
-                else:
-                    # Bàn trống thực sự -> Gọi đồng đội vào ngay!
+                elif is_verified_empty and not partner_found:
+                    # BÀN TRỐNG THỰC SỰ ĐÃ XÁC MINH (Chỉ 1 mình Anchor) -> Gọi đồng đội vào ngay tức thời (<2ms)!
                     last_rid = getattr(self, "_last_broadcast_rid", None)
                     now_t = time.time()
                     last_t = getattr(self, "_last_broadcast_time", 0)
@@ -328,7 +332,7 @@ class ExtensionHubManager:
                         # 2. Bắn lệnh JOIN_ROOM ngay lập tức (<2ms) tới tất cả các profile khác đang online!
                         for other_profile in list(self.active_sockets.keys()):
                             if other_profile != profile_name:
-                                log.info("ExtensionHub V3: >>> BÀN TRỐNG! TỰ ĐỘNG CHUYỂN TIẾP BÀN '%s' TỪ '%s' SANG '%s' TỨC THỜI (<2ms)! <<<",
+                                log.info("ExtensionHub V3: >>> BÀN TRỐNG ĐÃ XÁC THỰC! TỰ ĐỘNG CHUYỂN TIẾP BÀN '%s' TỪ '%s' SANG '%s' TỨC THỜI (<2ms)! <<<",
                                          rid, profile_name, other_profile)
                                 asyncio.create_task(self.send_command(other_profile, "JOIN_ROOM", {
                                     "rid": rid,
@@ -336,6 +340,22 @@ class ExtensionHubManager:
                                     "mu": ri.get("Mu", 2),
                                     "source_profile": profile_name,
                                 }))
+
+        # 3b. HỦY LỆNH MỜI VÀO BÀN KHI ANCHOR PHÁT HIỆN NGƯỜI LẠ / BÀN FULL
+        elif msg_type in ("CANCEL_ROOM_INVITE", "AUTOTOOL_CANCEL_ROOM_INVITE"):
+            rid = msg.get("rid") or (state.get("room_info") and state["room_info"].get("rid"))
+            reason = msg.get("reason") or "Phát hiện người lạ / Bàn full"
+            log.warning("ExtensionHub V3: Profile '%s' HỦY LỆNH MỜI BÀN #%s (%s) -> LẬP TỨC GỬI LEAVE_ROOM CHO CÁC PROFILE PHỤ!",
+                        profile_name, rid, reason)
+            self._last_shared_room = None
+            self._last_broadcast_rid = None
+            for other_profile in list(self.active_sockets.keys()):
+                if other_profile != profile_name:
+                    log.info("ExtensionHub V3: >>> Buộc profile '%s' rời phòng / hủy lệnh join về sảnh ngay! <<<", other_profile)
+                    asyncio.create_task(self.send_command(other_profile, "LEAVE_ROOM", {
+                        "reason": f"Chủ bàn {profile_name} hủy bàn #{rid}: {reason}",
+                        "source": profile_name,
+                    }))
 
         # 4. Xác nhận khớp bàn thành công giữa các đối tác (Cứu hẹn giờ out)
         elif msg_type in ("PARTNER_MATCHED", "AUTOTOOL_MATCH_SUCCESS"):

@@ -1416,22 +1416,31 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         return {
                             has_info: !!info,
                             player_count: pls.length,
-                            has_stranger: info ? !!info.has_stranger : false
+                            has_stranger: info ? !!info.has_stranger : false,
+                            is_verified_empty: info ? !!info.is_verified_empty : false
                         };
                     }""")
                     if r_info.get("has_info"):
                         # Bàn trống: chỉ có 1 mình Account 1 và không có khách lạ
                         is_empty = (r_info.get("player_count") <= 1 and not r_info.get("has_stranger"))
-                        break
+                        if is_empty:
+                            break
                 except Exception:
                     pass
                 await asyncio.sleep(0.2)
 
             if not is_empty:
-                log.info("find-and-match: Account 1 vào bàn có người lạ -> out về sảnh bàn Đếm Lá ngay để tìm bàn mới trống")
+                log.info("find-and-match: Account 1 vào bàn có người lạ / bàn full -> out về sảnh bàn Đếm Lá ngay & HỦY LỆNH cho các profile phụ")
+                ext_hub = getattr(request.app.state, "ext_hub", None)
+                for sub_name in other_profiles:
+                    if ext_hub and ext_hub.is_connected(sub_name):
+                        asyncio.create_task(ext_hub.send_command(sub_name, "LEAVE_ROOM", {"reason": "Anchor table has stranger"}))
+                    sub_page = pages.get(sub_name)
+                    if sub_page:
+                        asyncio.create_task(_do_leave_room(sub_page, name=sub_name, target_mu=target_mu))
                 await _do_leave_room(first_page, name=first_name, target_mu=target_mu)
                 await _ensure_in_tldl_lobby(first_page, first_name)
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(1.0)
                 continue
             else:
                 found_anchor = True

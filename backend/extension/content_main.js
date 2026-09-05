@@ -423,7 +423,14 @@
 
             // HÀM ĐIỀU PHỐI XÁC MINH SẴN SÀNG & BẮT ĐẦU VÁN (TWO-WAY HANDSHAKE & RETRY START PULSE)
             function triggerVerifiedMatchReadyAndStart(partnerName, sourceReason) {
-              console.log(`[AutoTool V3] 🟢 >>> XÁC MINH KHỚP BÀN THÀNH CÔNG: ${partnerName || "Đồng đội"} [${sourceReason || 'OK'}]! <<<`);
+              // BẢO VỆ CHẶNG ĐẦU: Kiểm tra cứng xem đồng đội có thực sự đang ngồi trong phòng hay không
+              const partnerSeated = (G.__room_players || []).find(isPartner);
+              if (!partnerSeated) {
+                console.warn(`[AutoTool V3] ⚠️ TỪ CHỐI SẴN SÀNG: triggerVerifiedMatchReadyAndStart được gọi [${sourceReason || ''}] nhưng KHÔNG THẤY đồng đội ngồi trong bàn!`);
+                return;
+              }
+
+              console.log(`[AutoTool V3] 🟢 >>> XÁC MINH KHỚP BÀN THÀNH CÔNG: ${partnerName || (partnerSeated && (partnerSeated.dn || partnerSeated.u)) || "Đồng đội"} [${sourceReason || 'OK'}]! <<<`);
 
               // 1. DỪNG / KILL TOÀN BỘ QUY TRÌNH JOIN BÀN VÀ TIMEOUT OUT BÀN
               G.__is_matched_locked = true;
@@ -509,14 +516,25 @@
                     console.log(`[AutoTool V3] [cmd 200] ĐỒNG ĐỘI ${player.dn || player.u} VỪA BƯỚC VÀO BÀN!`);
                     triggerVerifiedMatchReadyAndStart(player.dn || player.u, "cmd:200 Join");
                   } else {
-                    // KHÁCH LẠ VÀO BÀN -> TỰ ĐỘNG OUT SAU 600MS - 900MS (Tránh flood và tránh nghi ngờ bot)
-                    const leaveDelay = 600 + Math.floor(Math.random() * 300);
-                    console.warn(`[AutoTool V3] [cmd 200] PHÁT HIỆN KHÁCH LẠ ${player.dn || player.u} VÀO BÀN -> Tự động out sau ${leaveDelay}ms!`);
+                    // KHÁCH LẠ VÀO BÀN -> HỦY LỆNH CHO ĐỒNG ĐỘI & TỰ ĐỘNG OUT BÀN NGAY
+                    const strangerName = player.dn || player.u || "Khách";
+                    console.warn(`[AutoTool V3] [cmd 200] PHÁT HIỆN KHÁCH LẠ ${strangerName} VÀO BÀN -> Hủy lệnh cho đồng đội & Out bàn ngay!`);
+                    if (G.__hunt_wait_timer) {
+                      clearTimeout(G.__hunt_wait_timer);
+                      G.__hunt_wait_timer = null;
+                    }
+                    window.postMessage({
+                      type: "AUTOTOOL_CANCEL_ROOM_INVITE",
+                      profile_name: getProfileName(),
+                      rid: (G.__last_room_info && G.__last_room_info.rid) || G.__ws_pending_rid || null,
+                      reason: `Khách lạ vào bàn: ${strangerName}`,
+                    }, "*");
                     window.postMessage({
                       type: "AUTOTOOL_AUTO_LEAVING",
                       profile_name: getProfileName(),
-                      reason: `Thấy khách lạ: ${player.dn || player.u}`,
+                      reason: `Thấy khách lạ: ${strangerName}`,
                     }, "*");
+                    const leaveDelay = 100 + Math.floor(Math.random() * 150);
                     setTimeout(() => {
                       G.__autotool_exec_leave();
                     }, leaveDelay);
@@ -589,6 +607,10 @@
               const isChongVay = !rid || rid === -1 || String(rid) === "100" || rid === 2 || rid === 1;
               const targetRid = rid && !isNaN(Number(rid)) && Number(rid) > 28 ? Number(rid) : (p.Mu === 2 ? 2 : 1);
 
+              const totalPlayers = (p.ps || []).length;
+              const isAloneEmpty = (!partner && strangers.length === 0 && totalPlayers === 1 && !!me);
+              const hasStrangerOrFull = (strangers.length > 0 || (totalPlayers > 1 && !partner));
+
               G.__last_room_info = {
                 rid: targetRid,
                 raw_rid: isChongVay ? null : Number(rid),
@@ -599,6 +621,8 @@
                 partner_found: !!partner,
                 partner_name: partner ? (partner.dn || partner.u) : null,
                 has_stranger: strangers.length > 0,
+                player_count: totalPlayers,
+                is_verified_empty: isAloneEmpty,
               };
               G.__ws_last_room_id = targetRid;
 
@@ -614,41 +638,94 @@
                 state: G.__room_state,
               }, "*");
 
-              // --- LOGIC TỰ ĐỘNG SĂN BÀN & AUTO OUT KHI THẤY KHÁCH LẠ ---
+              // Phân định vai trò: Anchor (Chủ bàn) hay Sub (Phụ / Khách vào theo lệnh)
+              const pName = (getProfileName() || "").toLowerCase();
+              const isSubProfile = pName.includes("2") || pName.includes("sub") || pName.includes("phu") || pName.includes("xabai2") || pName.includes("dump") || (typeof getMyRole === "function" && getMyRole() === "dump");
+
+              // --- LOGIC TỰ ĐỘNG SĂN BÀN & ĐIỀU PHỐI VÀO BÀN TRỐNG CHUẨN XÁC ---
               if (G.__AUTOTOOL_AUTO_HUNT) {
                 if (partner) {
-                  // ĐÃ KHỚP ĐỒNG ĐỘI THÀNH CÔNG!
+                  // 1. ĐÃ KHỚP ĐỒNG ĐỘI THÀNH CÔNG TRONG BÀN!
                   triggerVerifiedMatchReadyAndStart(partner.dn || partner.u, "cmd:202 RoomPlayers");
-                } else if (strangers.length > 0) {
-                  // CÓ KHÁCH LẠ -> TỰ ĐỘNG OUT BÀN TỰ NHIÊN (600 - 900ms)
-                  const guestNames = strangers.map((g) => g.dn || g.u || "Khách").join(", ");
-                  const leaveDelay = 600 + Math.floor(Math.random() * 300);
-                  console.warn(`[AutoTool V3] Phát hiện khách lạ: ${guestNames} -> Tự động out sau ${leaveDelay}ms!`);
+                } else if (hasStrangerOrFull) {
+                  // 2. BÀN CÓ KHÁCH LẠ HOẶC BÀN FULL -> HỦY LỆNH CHO ĐỒNG ĐỘI & OUT VỀ SẢNH NGAY!
+                  const guestNames = strangers.map((g) => g.dn || g.u || "Khách").join(", ") || "Bàn đầy người";
+                  console.warn(`[AutoTool V3] Phát hiện bàn có người lạ / Full: ${guestNames} -> HỦY LỆNH & Out bàn ngay!`);
+
+                  if (G.__hunt_wait_timer) {
+                    clearTimeout(G.__hunt_wait_timer);
+                    G.__hunt_wait_timer = null;
+                  }
+
+                  // Nếu là Anchor: Phát ngay tín hiệu CANCEL lên Hub để hủy lệnh cho B!
+                  if (!isSubProfile) {
+                    window.postMessage({
+                      type: "AUTOTOOL_CANCEL_ROOM_INVITE",
+                      profile_name: getProfileName(),
+                      rid: targetRid,
+                      reason: `Thấy khách lạ/Bàn full: ${guestNames}`,
+                    }, "*");
+                  }
+
                   window.postMessage({
                     type: "AUTOTOOL_AUTO_LEAVING",
                     profile_name: getProfileName(),
-                    reason: `Thấy khách lạ: ${guestNames}`,
+                    reason: `Thấy khách lạ/Bàn full: ${guestNames}`,
                   }, "*");
+
+                  // Out nhanh (100 - 250ms)
+                  const leaveDelay = 100 + Math.floor(Math.random() * 150);
                   setTimeout(() => {
                     G.__autotool_exec_leave();
                   }, leaveDelay);
-                } else {
-                  // ĐANG NGỒI 1 MÌNH CHỜ ĐỒNG ĐỘI -> Chờ 5.0s, nếu không có ai thì out tìm lại
-                  if (!G.__is_matched_locked) {
-                    if (G.__hunt_wait_timer) clearTimeout(G.__hunt_wait_timer);
-                    console.log("[AutoTool V3] Đang ngồi một mình, chờ đồng đội trong 5.0 giây...");
-                    G.__hunt_wait_timer = setTimeout(() => {
-                      if (G.__is_matched_locked) return; // Bảo vệ chống out nhầm khi đã khóa bàn
-                      if (!G.__last_room_info || !G.__last_room_info.partner_found) {
-                        console.log("[AutoTool V3] Quá 5.0s chưa thấy đồng đội vào -> Tự động out để ghép lại!");
-                        window.postMessage({
-                          type: "AUTOTOOL_AUTO_LEAVING",
-                          profile_name: getProfileName(),
-                          reason: "Hết thời gian chờ đồng đội",
-                        }, "*");
-                        G.__autotool_exec_leave();
-                      }
-                    }, 5000);
+
+                } else if (isAloneEmpty) {
+                  // 3. BÀN 100% TRỐNG (CHỈ CÓ 1 MÌNH)!
+                  if (isSubProfile) {
+                    // Profile phụ không được tự ý ngồi giữ bàn trống một mình khi không có chủ bàn A
+                    console.warn("[AutoTool V3] Nick phụ vào bàn trống nhưng KHÔNG CÓ chủ bàn -> Out về sảnh chờ lệnh!");
+                    window.postMessage({
+                      type: "AUTOTOOL_AUTO_LEAVING",
+                      profile_name: getProfileName(),
+                      reason: "Nick phụ không thấy chủ bàn trong bàn trống",
+                    }, "*");
+                    setTimeout(() => {
+                      G.__autotool_exec_leave();
+                    }, 100);
+                  } else {
+                    // Profile A (Chính / Anchor): ĐÂY LÀ BÀN TRỐNG ĐÃ XÁC MINH 100% -> PHÁT LỆNH GỌI ĐỒNG ĐỘI VÀO NGAY!
+                    console.log(`[AutoTool V3] 🎯 >>> BÀN #${targetRid} 100% TRỐNG (Đang ngồi 1 mình)! GỌI ĐỒNG ĐỘI VÀO TỨC THÌ! <<<`);
+                    window.postMessage({
+                      type: "AUTOTOOL_ANCHOR_ROOM_VERIFIED_EMPTY",
+                      profile_name: getProfileName(),
+                      room_info: G.__last_room_info,
+                      rid: targetRid,
+                      b: p.b || 100,
+                      Mu: p.Mu || 2,
+                    }, "*");
+
+                    if (!G.__is_matched_locked) {
+                      if (G.__hunt_wait_timer) clearTimeout(G.__hunt_wait_timer);
+                      console.log("[AutoTool V3] Đang giữ bàn trống, chờ đồng đội vào trong 5.0 giây...");
+                      G.__hunt_wait_timer = setTimeout(() => {
+                        if (G.__is_matched_locked) return;
+                        if (!G.__last_room_info || !G.__last_room_info.partner_found) {
+                          console.log("[AutoTool V3] Quá 5.0s chưa thấy đồng đội vào -> Tự động out để ghép lại!");
+                          window.postMessage({
+                            type: "AUTOTOOL_CANCEL_ROOM_INVITE",
+                            profile_name: getProfileName(),
+                            rid: targetRid,
+                            reason: "Quá thời gian chờ đồng đội",
+                          }, "*");
+                          window.postMessage({
+                            type: "AUTOTOOL_AUTO_LEAVING",
+                            profile_name: getProfileName(),
+                            reason: "Hết thời gian chờ đồng đội",
+                          }, "*");
+                          G.__autotool_exec_leave();
+                        }
+                      }, 5000);
+                    }
                   }
                 }
               }
@@ -703,19 +780,18 @@
                 G.__ws_pending_rid = Number(rid);
                 if (G.__last_room_info) {
                   G.__last_room_info.rid = Number(rid);
+                  G.__last_room_info.is_verified_empty = false;
                 } else {
                   G.__last_room_info = {
                     rid: Number(rid),
                     b: p.b || 100,
                     Mu: p.Mu || 2,
                     rn: `Bàn #${rid}`,
+                    is_verified_empty: false,
                   };
                 }
-                window.postMessage({
-                  type: "AUTOTOOL_ROOM_INFO",
-                  profile_name: getProfileName(),
-                  room_info: G.__last_room_info,
-                }, "*");
+                // TUYỆT ĐỐI KHÔNG gửi AUTOTOOL_ROOM_INFO tại cmd 308 vì chưa biết danh sách người chơi!
+                // Phải đợi cmd 202 để check bàn trống 100% trước khi gửi lệnh mời B!
               }
             }
 

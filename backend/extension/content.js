@@ -500,6 +500,20 @@
           profile_name: activeProfileName,
           log: `Bàn ${rid} (Đã gửi ID cho Acc 2)`,
         }, "POST").catch(() => {});
+      } else if (action === "LEAVE_ROOM") {
+        pendingJoinRid = null;
+        matchedPartner = "";
+        updateViewBanner(`🏠 <b>${activeProfileName}</b>: Đang về sảnh (Hủy bàn)`, "lobby");
+        showToast("⚠️ Hủy lệnh vào bàn / Rời phòng về sảnh!", "warn");
+        requestControl("/api/accounts/update-log", {
+          profile_name: activeProfileName,
+          log: (data && data.reason) || "Rời phòng về sảnh",
+        }, "POST").catch(() => {});
+        window.postMessage({
+          type: "AUTOTOOL_EXEC_COMMAND",
+          action: "LEAVE_ROOM",
+          data: data,
+        }, "*");
       } else if (action === "CONFIRM_MATCH") {
         const partner = data.source || data.partner || "Đồng đội";
         updateViewBanner(`🟢 <b>ĐÃ VÀO CÙNG NHAU THÀNH CÔNG! (${activeProfileName} & ${partner})</b> - ĐANG KHÓA BÀN!`, "active");
@@ -630,6 +644,30 @@
         room_info: ev.data.room_info,
         players: ev.data.players,
         guests: ev.data.guests,
+      });
+    }
+
+    // HỦY LỆNH MỜI BÀN (DO CÓ NGƯỜI LẠ HOẶC BÀN FULL)
+    else if (ev.data.type === "AUTOTOOL_CANCEL_ROOM_INVITE") {
+      pendingJoinRid = null;
+      matchedPartner = "";
+      safeSendMessage({
+        type: "CANCEL_ROOM_INVITE",
+        profile_name: activeProfileName || ev.data.profile_name,
+        rid: ev.data.rid,
+        reason: ev.data.reason,
+      });
+    }
+
+    // XÁC NHẬN BÀN TRỐNG 100% TỪ CHỦ BÀN
+    else if (ev.data.type === "AUTOTOOL_ANCHOR_ROOM_VERIFIED_EMPTY") {
+      safeSendMessage({
+        type: "ANCHOR_ROOM_VERIFIED_EMPTY",
+        profile_name: activeProfileName || ev.data.profile_name,
+        room_info: ev.data.room_info,
+        rid: ev.data.rid,
+        bet: ev.data.b,
+        mu: ev.data.Mu,
       });
     }
 

@@ -95,7 +95,7 @@ from unittest.mock import AsyncMock
 
 @pytest.mark.anyio
 async def test_instant_dual_profile_room_sharing():
-    """Kiểm tra luồng tức thời (<2ms): Profile A vào bàn -> Profile B nhận lệnh JOIN_ROOM ngay lập tức!"""
+    """Kiểm tra luồng tức thời (<2ms): Chỉ khi Profile A xác nhận bàn trống 100% -> Profile B mới nhận lệnh JOIN_ROOM!"""
     from services.extension_hub import ExtensionHubManager
 
     hub = ExtensionHubManager()
@@ -106,17 +106,25 @@ async def test_instant_dual_profile_room_sharing():
     await hub.register("ProfileB", ws_b)
     assert len(hub.active_sockets) == 2
 
-    # Profile A gửi gói tin ROOM_UPDATE với ID bàn 12345
+    # 1. Trường hợp bàn chưa xác thực hoặc có khách lạ -> B TUYỆT ĐỐI KHÔNG nhận JOIN_ROOM
     hub.handle_message("ProfileA", {
         "type": "ROOM_UPDATE",
-        "room_info": {"rid": 12345, "rn": "Bàn Solo $100", "b": 100, "Mu": 2}
+        "room_info": {"rid": 12345, "rn": "Bàn $100", "b": 100, "Mu": 2, "has_stranger": True}
     })
-
-    # Đợi task chạy
     import asyncio
     await asyncio.sleep(0.01)
+    b_calls = [json.loads(c.args[0]) for c in ws_b.send_text.call_args_list]
+    assert not any(c.get("action") == "JOIN_ROOM" for c in b_calls)
 
-    # 1. Profile B nhận được lệnh JOIN_ROOM
+    # 2. Trường hợp Profile A xác thực 100% bàn trống (ngồi 1 mình) -> Profile B nhận lệnh JOIN_ROOM tức thời
+    ws_b.send_text.reset_mock()
+    ws_a.send_text.reset_mock()
+    hub.handle_message("ProfileA", {
+        "type": "ANCHOR_ROOM_VERIFIED_EMPTY",
+        "room_info": {"rid": 12345, "rn": "Bàn Solo $100", "b": 100, "Mu": 2, "is_verified_empty": True, "player_count": 1}
+    })
+    await asyncio.sleep(0.01)
+
     assert ws_b.send_text.called
     b_calls = [json.loads(c.args[0]) for c in ws_b.send_text.call_args_list]
     join_call = next((c for c in b_calls if c.get("action") == "JOIN_ROOM"), None)
@@ -124,13 +132,27 @@ async def test_instant_dual_profile_room_sharing():
     assert join_call["data"]["rid"] == 12345
     assert join_call["data"]["source_profile"] == "ProfileA"
 
-    # 2. Profile A nhận được xác nhận ROOM_SHARED_CONFIRM
+    # Profile A nhận được xác nhận ROOM_SHARED_CONFIRM
     assert ws_a.send_text.called
     a_calls = [json.loads(c.args[0]) for c in ws_a.send_text.call_args_list]
     confirm_call = next((c for c in a_calls if c.get("action") == "ROOM_SHARED_CONFIRM"), None)
     assert confirm_call is not None
     assert confirm_call["data"]["rid"] == 12345
     assert confirm_call["data"]["target_count"] == 1
+
+    # 3. Khi Profile A phát hiện khách lạ -> Gửi CANCEL_ROOM_INVITE -> Profile B lập tức nhận LEAVE_ROOM
+    ws_b.send_text.reset_mock()
+    hub.handle_message("ProfileA", {
+        "type": "CANCEL_ROOM_INVITE",
+        "rid": 12345,
+        "reason": "Thấy khách lạ"
+    })
+    await asyncio.sleep(0.01)
+    assert ws_b.send_text.called
+    b_calls = [json.loads(c.args[0]) for c in ws_b.send_text.call_args_list]
+    leave_call = next((c for c in b_calls if c.get("action") == "LEAVE_ROOM"), None)
+    assert leave_call is not None
+    assert "Thấy khách lạ" in leave_call["data"]["reason"]
 
 
 @pytest.mark.anyio
