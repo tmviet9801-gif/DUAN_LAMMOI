@@ -1404,27 +1404,38 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             if await _is_in_tldl_lobby(first_page):
                 continue
 
-            # Kiểm tra xem bàn Account 1 vừa vào có phải bàn trống không
-            try:
-                png_bytes = await first_page.screenshot(type="png")
-                im = Image.open(io.BytesIO(png_bytes))
-                w_curr, h_curr = im.size
-                check_x = int(w_curr * 0.50)
-                check_y = int(h_curr * 0.238)
-                r, g, b = im.getpixel((check_x, check_y))[:3]
-                is_empty = (r > 180 and g > 150 and b < 110)
-            except Exception:
-                is_empty = False
+            # Kiểm tra xem bàn Account 1 vừa vào có phải bàn trống không (đọc trực tiếp biến bộ nhớ JS 0ms, không chụp ảnh màn hình)
+            is_empty = False
+            for _ in range(8):
+                if _GOM_BAN_STOP:
+                    break
+                try:
+                    r_info = await first_page.evaluate("""() => {
+                        const pls = window.__room_players || [];
+                        const info = window.__last_room_info;
+                        return {
+                            has_info: !!info,
+                            player_count: pls.length,
+                            has_stranger: info ? !!info.has_stranger : false
+                        };
+                    }""")
+                    if r_info.get("has_info"):
+                        # Bàn trống: chỉ có 1 mình Account 1 và không có khách lạ
+                        is_empty = (r_info.get("player_count") <= 1 and not r_info.get("has_stranger"))
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(0.2)
 
             if not is_empty:
-                log.info("find-and-match: Account 1 vào bàn có người lạ (RGB=%s,%s,%s) -> out về sảnh bàn Đếm Lá ngay để tìm bàn mới trống", r, g, b)
+                log.info("find-and-match: Account 1 vào bàn có người lạ -> out về sảnh bàn Đếm Lá ngay để tìm bàn mới trống")
                 await _do_leave_room(first_page, name=first_name, target_mu=target_mu)
                 await _ensure_in_tldl_lobby(first_page, first_name)
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.8)
                 continue
             else:
                 found_anchor = True
-                log.info("find-and-match: >>> ACCOUNT 1 (%s) ĐÃ VÀO BÀN CÔNG CỘNG MỚI TRỐNG (KHÔNG PASS)! ĐỨNG LẠI GIỮ BÀN! <<<", first_name)
+                log.info("find-and-match: >>> ACCOUNT 1 (%s) ĐÃ VÀO BÀN CÔNG CỘNG MỚI TRỐNG! ĐỨNG LẠI GIỮ BÀN! <<<", first_name)
 
             # BƯỚC 2: TRÍCH XUẤT ROOM ID (RID) NHANH CHÓNG TỪ ACCOUNT 1
             for _ in range(16):
@@ -1710,7 +1721,11 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         s.room_id = -1
                         s.log = "Hoàn thành xả bài, đang ở sảnh bàn Đếm Lá"
 
-        shot_a = await adapter._screenshot(anchor_page, f"matched_{anchor_name}")
+        shot_a = None
+        try:
+            shot_a = await adapter._screenshot(anchor_page, f"matched_{anchor_name}")
+        except Exception:
+            pass
 
         return {
             "ok": True,
