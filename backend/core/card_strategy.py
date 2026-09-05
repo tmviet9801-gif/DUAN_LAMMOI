@@ -16,13 +16,16 @@ import time
 log = logging.getLogger("card_strategy")
 
 # Tọa độ tỷ lệ tương đối trên Canvas chuẩn HitClub TLDL (784x505)
+# Tọa độ tỷ lệ tương đối trên Canvas chuẩn HitClub TLDL (784x505)
 CANVAS_BTNS = {
-    "btn_pass": (0.118, 0.618),   # Nút BỎ LƯỢT (Pass)
-    "btn_play": (0.550, 0.618),   # Nút ĐÁNH (Play)
-    "btn_sort": (0.680, 0.618),   # Nút XẾP BÀI (Sort)
-    "card_hand_y": 0.850,         # Tọa độ Y dải bài trên tay
-    "card_x_min": 0.200,          # Tọa độ X quân nhỏ nhất (bên trái ngoài cùng)
-    "card_x_max": 0.730,          # Tọa độ X quân lớn nhất / Heo (bên phải ngoài cùng)
+    "btn_pass": (0.117, 0.594),   # Nút BỎ LƯỢT (Đỏ, góc trái: x=92, y=300)
+    "btn_play": (0.883, 0.588),   # Nút ĐÁNH BÀI (Vàng kim, góc phải: x=692, y=297)
+    "btn_sort": (0.883, 0.510),   # Nút XẾP BÀI
+    "card_hand_y": 0.806,         # Tọa độ Y tâm dải bài trên tay (y=407 / 505)
+    "card_x_min": 0.236,          # Tọa độ X quân nhỏ nhất đáy bài (x=185 / 784)
+    "card_x_max": 0.848,          # Tọa độ X quân lớn nhất / Heo góc phải (x=665 / 784)
+    "btn_menu_exit": (0.069, 0.253), # Nút menu [>] góc trên bên trái (x=54, y=128)
+    "btn_door_leave": (0.069, 0.360), # Nút cửa thoát [🚪] (x=54, y=182)
     "game_over_check": (0.500, 0.555), # Vị trí kiểm tra ván bài kết thúc
 }
 
@@ -32,7 +35,7 @@ class HandDecomposition:
     1. Heo / Hàng (2s, Tứ quý) -> Cần xả đầu tiên để triệt tiêu nguy cơ úng phạt nặng.
     2. Các bộ nhiều lá (Sảnh, Ba, Đôi to) -> Tẩu tán số lượng lá nhanh nhất.
     3. Các lá rác lớn (A, K, Q, J) -> Giảm thiểu rủi ro.
-    4. Quân rác nhỏ nhất duy nhất (đáy bộ bài tại x=0.200) -> Giữ lại làm lá thua 1 cược.
+    4. Quân rác nhỏ nhất duy nhất (đáy bộ bài tại x=0.236) -> Giữ lại làm lá thua 1 cược.
     """
     def __init__(self, total_cards: int = 13):
         self.total_cards = total_cards
@@ -41,11 +44,11 @@ class HandDecomposition:
     def get_discard_trajectory(hand_size: int = 13) -> List[float]:
         """
         Tạo lộ trình các tọa độ X trên canvas để Acc 2 xả bài lần lượt từ lá to xuống lá nhỏ,
-        chừa lại duy nhất 1 lá rác nhỏ nhất ở vị trí x=0.200.
+        chừa lại duy nhất 1 lá rác nhỏ nhất ở vị trí x=0.236.
         """
-        # Trải đều từ quân to (0.720) về quân nhỏ áp chót (0.270)
-        # Giữ lại đúng quân cuối cùng ở 0.200
-        steps = [0.720, 0.660, 0.600, 0.540, 0.480, 0.420, 0.360, 0.300, 0.260]
+        # Trải đều từ quân to (0.848) về quân nhỏ áp chót (0.280)
+        # Giữ lại đúng quân cuối cùng ở 0.236
+        steps = [0.848, 0.795, 0.742, 0.690, 0.638, 0.585, 0.532, 0.480, 0.428, 0.375, 0.322, 0.280]
         return steps
 
     @staticmethod
@@ -97,8 +100,7 @@ class CooperativeDiscardEngine:
 
     async def check_turn_active(self, page) -> bool:
         """
-        Kiểm tra nút [ĐÁNH] có đang sáng rực (tới lượt đi) hay không.
-        Tọa độ (0.550*w, 0.618*h), pixel màu vàng/cam rực rỡ.
+        Kiểm tra tới lượt đi: nút [BỎ LƯỢT] màu đỏ hoặc nút [ĐÁNH BÀI] màu vàng xuất hiện.
         """
         if not page:
             return False
@@ -106,15 +108,26 @@ class CooperativeDiscardEngine:
             png = await page.screenshot(type="png")
             im = Image.open(io.BytesIO(png))
             w, h = im.size
-            bx = int(w * CANVAS_BTNS["btn_play"][0])
-            by = int(h * CANVAS_BTNS["btn_play"][1])
+            # 1. Kiểm tra nút BỎ LƯỢT (quanh 0.117*w, 0.594*h): màu đỏ đặc trưng (R > 180, G < 110, B < 110)
+            bx = int(w * CANVAS_BTNS["btn_pass"][0])
+            by = int(h * CANVAS_BTNS["btn_pass"][1])
             r, g, b = im.getpixel((bx, by))[:3]
-            # Nút sáng: R > 185, G > 120, B < 100 hoặc R > 210, G > 150
-            return (r > 185 and g > 120 and b < 100) or (r > 210 and g > 150)
+            if r > 180 and g < 110 and b < 110:
+                return True
+
+            # 2. Kiểm tra nút ĐÁNH BÀI (quanh 0.883*w, 0.588*h): màu vàng/cam (R > 180, G > 140)
+            px = int(w * CANVAS_BTNS["btn_play"][0])
+            py = int(h * CANVAS_BTNS["btn_play"][1])
+            for dx in (-15, 0, 15):
+                for dy in (-5, 0, 5):
+                    pr, pg, pb = im.getpixel((px + dx, py + dy))[:3]
+                    if pr > 180 and pg > 140:
+                        return True
+            return False
         except Exception:
             return False
 
-    async def detect_first_turn(self, max_seconds: float = 3.5) -> str:
+    async def detect_first_turn(self, max_seconds: float = 4.0) -> str:
         """
         Tự động nhận diện chính xác 100% bên nào đi trước sau khi chia bài.
         - Acc 2 đi trước -> 'SUB_FIRST'
@@ -133,11 +146,31 @@ class CooperativeDiscardEngine:
             await asyncio.sleep(0.25)
         return "MAIN_FIRST"
 
+    async def _play_card(self, page, card_x, card_y, play_x, play_y):
+        """Click chọn quân bài (nhấc lên) rồi click nút ĐÁNH BÀI."""
+        try:
+            await page.mouse.click(card_x, card_y)
+            await asyncio.sleep(0.25)
+            await page.mouse.click(play_x, play_y)
+            await asyncio.sleep(0.35)
+            await page.mouse.click(play_x, play_y)
+        except Exception:
+            pass
+
+    async def _pass(self, page, pass_x, pass_y):
+        """Click BỎ LƯỢT."""
+        try:
+            await page.mouse.click(pass_x, pass_y)
+            await asyncio.sleep(0.3)
+            await page.mouse.click(pass_x, pass_y)
+        except Exception:
+            pass
+
     async def execute_optimal_discard(self) -> bool:
         """
         Thực thi toàn bộ chu trình 3 giai đoạn tối ưu:
         - Giai đoạn 1: Khởi động ván theo đúng bên có lượt (Xả Heo/lá to Acc 2).
-        - Giai đoạn 2: Acc 2 xả liên tục qua 8 vị trí; Acc 1 liên tục Pass.
+        - Giai đoạn 2: Acc 2 xả liên tục qua các vị trí; Acc 1 liên tục Pass.
         - Giai đoạn 3: Acc 2 còn đúng 1 lá rác -> Acc 2 Pass, Acc 1 về Nhất.
         """
         sw_a, sh_a = await self._get_screen(self.anchor_page)
@@ -152,34 +185,28 @@ class CooperativeDiscardEngine:
         hand_y_b = int(sh_b * CANVAS_BTNS["card_hand_y"])
 
         # 1. Nhận diện lượt đi đầu tiên
-        first_turn = await self.detect_first_turn(max_seconds=3.0)
+        first_turn = await self.detect_first_turn(max_seconds=4.0)
         log.info("[%s <-> %s] Lượt đi đầu tiên xác định: %s", self.anchor_name, self.sub_name, first_turn)
 
         # 2. Giai đoạn 1: Mở ván & xử lý quân Heo của Acc 2
         if self.sub_page:
             if first_turn == "SUB_FIRST":
-                log.info("Giai đoạn 1: %s (Phụ) đi trước -> Đánh ngay Heo/lá to góc phải (x=0.720)", self.sub_name)
-                await self.sub_page.mouse.click(int(sw_b * 0.720), hand_y_b)
-                await asyncio.sleep(0.3)
-                await self.sub_page.mouse.click(play_x_b, play_y_b)
+                log.info("Giai đoạn 1: %s (Phụ) đi trước -> Đánh ngay Heo/lá to góc phải (x=0.848)", self.sub_name)
+                await self._play_card(self.sub_page, int(sw_b * 0.848), hand_y_b, play_x_b, play_y_b)
                 await asyncio.sleep(1.0)
                 # Acc 1 Bỏ lượt
-                await self.anchor_page.mouse.click(pass_x_a, pass_y_a)
+                await self._pass(self.anchor_page, pass_x_a, pass_y_a)
                 await asyncio.sleep(0.5)
             else:
-                log.info("Giai đoạn 1: %s (Chính) mớm lá nhỏ x=0.200, %s đè lá to x=0.720", self.anchor_name, self.sub_name)
+                log.info("Giai đoạn 1: %s (Chính) mớm lá nhỏ x=0.236, %s đè lá to x=0.848", self.anchor_name, self.sub_name)
                 # Acc 1 mớm
-                await self.anchor_page.mouse.click(int(sw_a * 0.200), hand_y_a)
-                await asyncio.sleep(0.3)
-                await self.anchor_page.mouse.click(play_x_a, play_y_a)
+                await self._play_card(self.anchor_page, int(sw_a * 0.236), hand_y_a, play_x_a, play_y_a)
                 await asyncio.sleep(1.0)
                 # Acc 2 đè
-                await self.sub_page.mouse.click(int(sw_b * 0.720), hand_y_b)
-                await asyncio.sleep(0.3)
-                await self.sub_page.mouse.click(play_x_b, play_y_b)
+                await self._play_card(self.sub_page, int(sw_b * 0.848), hand_y_b, play_x_b, play_y_b)
                 await asyncio.sleep(1.0)
 
-        # 3. Giai đoạn 2: Acc 2 xả tẩu tán liên tục qua 8 vị trí; Acc 1 liên tục Pass
+        # 3. Giai đoạn 2: Acc 2 xả tẩu tán liên tục qua các vị trí; Acc 1 liên tục Pass
         if self.sub_page:
             traj = HandDecomposition.get_discard_trajectory()
             log.info("Giai đoạn 2: %s xả liên tục %d lượt; %s liên tục Pass", self.sub_name, len(traj), self.anchor_name)
@@ -187,36 +214,34 @@ class CooperativeDiscardEngine:
                 if self.stop_requested:
                     break
                 # Acc 1 Pass
-                await self.anchor_page.mouse.click(pass_x_a, pass_y_a)
+                await self._pass(self.anchor_page, pass_x_a, pass_y_a)
                 await asyncio.sleep(0.4)
                 # Acc 2 Đánh
-                await self.sub_page.mouse.click(int(sw_b * cx_ratio), hand_y_b)
-                await asyncio.sleep(0.3)
-                await self.sub_page.mouse.click(play_x_b, play_y_b)
+                await self._play_card(self.sub_page, int(sw_b * cx_ratio), hand_y_b, play_x_b, play_y_b)
                 await asyncio.sleep(0.8)
 
                 if await self._is_game_ended():
                     log.info("Ván bài kết thúc sớm trong giai đoạn xả của Acc 2!")
                     return True
 
-            # Giai đoạn 3: Acc 2 chỉ còn đúng 1 lá rác nhỏ tại x=0.200 -> Acc 2 Pass
+            # Giai đoạn 3: Acc 2 chỉ còn đúng 1 lá rác nhỏ tại x=0.236 -> Acc 2 Pass
             log.info("Giai đoạn 3: %s còn đúng 1 lá rác đáy -> %s Pass nhường đường cho %s Về Nhất", 
                      self.sub_name, self.sub_name, self.anchor_name)
-            await self.sub_page.mouse.click(pass_x_b, pass_y_b)
+            await self._pass(self.sub_page, pass_x_b, pass_y_b)
             await asyncio.sleep(0.4)
 
         # 4. Acc 1 xả toàn bộ bài để Về Nhất
         for main_step in range(1, 14):
             if self.stop_requested:
                 break
-            cx = int(sw_a * (0.200 + ((main_step * 0.05) % 0.55)))
-            await self.anchor_page.mouse.click(cx, hand_y_a)
-            await asyncio.sleep(0.3)
-            await self.anchor_page.mouse.click(play_x_a, play_y_a)
+            cx = int(sw_a * (0.848 - (main_step * 0.048)))
+            if cx < int(sw_a * 0.200):
+                cx = int(sw_a * 0.236)
+            await self._play_card(self.anchor_page, cx, hand_y_a, play_x_a, play_y_a)
             await asyncio.sleep(0.8)
 
             if self.sub_page and main_step % 2 == 0:
-                await self.sub_page.mouse.click(pass_x_b, pass_y_b)
+                await self._pass(self.sub_page, pass_x_b, pass_y_b)
                 await asyncio.sleep(0.3)
 
             if await self._is_game_ended():

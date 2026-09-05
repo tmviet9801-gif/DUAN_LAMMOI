@@ -322,30 +322,40 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
 async def _do_leave_room(p):
     if not p:
         return
-    # Nếu đã ở sảnh TLDL (nhìn thấy các bàn cược xanh lá) -> Bỏ qua không bấm kẻo văng ra ngoài sảnh cổng game
-    if await _is_in_tldl_lobby_util(p):
-        return
     sw, sh = await _get_screen_size_util(p)
-    try:
-        # 1. Bấm nút menu [>] góc trên bên trái trong bàn chơi (70, 120)
-        await p.mouse.click(int(0.089 * sw), int(0.238 * sh))
-        await asyncio.sleep(0.4)
-        # 2. Bấm nút biểu tượng cửa [🚪] rời bàn
-        await p.mouse.click(int(0.080 * sw), int(0.360 * sh))
-        await asyncio.sleep(0.3)
-    except Exception:
-        pass
-    # 3. Gửi lệnh WebSocket rời bàn đảm bảo 100%
+
+    # 1. Gửi lệnh WebSocket rời bàn tức thì qua mọi kênh có sẵn
     try:
         await p.evaluate("""(() => {
             try {
                 if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[4,"Simms",-1]');
-                else if (typeof window.__ws_send === 'function') window.__ws_send('[4,"Simms",-1]');
+                if (typeof window.__ws_send === 'function') window.__ws_send('[4,"Simms",-1]');
             } catch(e) {}
         })()""")
     except Exception:
         pass
-    await asyncio.sleep(0.6)
+
+    # 2. Click nút menu [>] góc trên bên trái bàn chơi (tọa độ chuẩn x=54, y=128 -> 0.069*sw, 0.253*sh)
+    try:
+        await p.mouse.click(int(0.069 * sw), int(0.253 * sh))
+        await asyncio.sleep(0.35)
+        # 3. Click nút biểu tượng cửa [🚪] rời bàn (tọa độ chuẩn 0.069*sw, 0.360*sh)
+        await p.mouse.click(int(0.069 * sw), int(0.360 * sh))
+        await asyncio.sleep(0.35)
+    except Exception:
+        pass
+
+    # 4. Gửi lại lệnh WebSocket rời bàn lần 2 để đảm bảo 100% thoát thành công
+    try:
+        await p.evaluate("""(() => {
+            try {
+                if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[4,"Simms",-1]');
+                if (typeof window.__ws_send === 'function') window.__ws_send('[4,"Simms",-1]');
+            } catch(e) {}
+        })()""")
+    except Exception:
+        pass
+    await asyncio.sleep(0.5)
 
 
 @router.post("/api/autoplay/leave-all")
@@ -1505,6 +1515,15 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         sub_p = pages[sub_name]
         sw_b, sh_b = await _get_screen_size(sub_p)
         log.info("find-and-match: %s bấm nút [ SẴN SÀNG ]...", sub_name)
+        try:
+            await sub_p.evaluate("""(() => {
+                try {
+                    if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]');
+                    else if (typeof window.__ws_send === 'function') window.__ws_send('[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]');
+                } catch(e) {}
+            })()""")
+        except Exception:
+            pass
         await sub_p.mouse.click(int(sw_b * 0.50), int(sh_b * 0.555))
         await asyncio.sleep(0.4)
 
@@ -1513,8 +1532,17 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     start_x = int(sw_a * 0.50)
     start_y = int(sh_a * 0.555)
     log.info("find-and-match: Anchor=%s bấm nút [ BẮT ĐẦU ]...", anchor_name)
+    try:
+        await anchor_page.evaluate("""(() => {
+            try {
+                if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[6,"Simms","channelPlugin",{"cmd":364}]');
+                else if (typeof window.__ws_send === 'function') window.__ws_send('[6,"Simms","channelPlugin",{"cmd":364}]');
+            } catch(e) {}
+        })()""")
+    except Exception:
+        pass
     await anchor_page.mouse.click(start_x, start_y)
-    await asyncio.sleep(3.2)
+    await asyncio.sleep(3.5)  # Chờ chia bài xong
 
     # 3. THUẬT TOÁN MỚM BÀI TỐI ƯU (GREEDY HAND DECOMPOSITION & JOINT UTILITY OPTIMIZATION)
     # -------------------------------------------------------------------------------------
@@ -1534,11 +1562,13 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         sub_name=primary_sub_name
     )
     await engine.execute_optimal_discard()
+    await asyncio.sleep(1.5)
 
     # BƯỚC 7: BẪY KHÁCH LẠ SẴN SÀNG (NẾU BẬT auto_start_guest_ss)
+    guest_found = False
     if auto_start_guest_ss:
-        log.info("find-and-match: Chế độ 'Bắt đầu nếu khách SS' đang bật, chủ bàn đứng giữ bàn...")
-        for _ in range(20):
+        log.info("find-and-match: Chế độ 'Bắt đầu nếu khách SS' đang bật, chủ bàn canh 5 giây xem có khách...")
+        for _ in range(10):
             if _GOM_BAN_STOP:
                 break
             try:
@@ -1547,16 +1577,17 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 if guest_ss:
                     log.info("find-and-match: ⚡ PHÁT HIỆN KHÁCH LẠ SẴN SÀNG! Kích hoạt BẮT ĐẦU NGAY!")
                     await anchor_page.mouse.click(start_x, start_y)
+                    guest_found = True
                     await asyncio.sleep(1.0)
                     break
             except Exception:
                 pass
             await asyncio.sleep(0.5)
 
-    # BƯỚC 8: TỰ OUT VỀ SẢNH SAU KHI XẢ (NẾU BẬT auto_leave_after)
-    if auto_leave_after:
-        log.info("find-and-match: Chế độ 'Tự Out sau khi xả' đang bật -> Tất cả các nick rời bàn về sảnh...")
-        await asyncio.sleep(1.0)
+    # BƯỚC 8: TỰ OUT VỀ SẢNH SAU KHI XẢ (NẾU BẬT auto_leave_after HOẶC KHÔNG CÓ KHÁCH LẠ)
+    if auto_leave_after or not guest_found:
+        log.info("find-and-match: Hoàn thành ván xả bài -> Thực hiện tự động rời bàn về sảnh cho tất cả tài khoản...")
+        await asyncio.sleep(0.5)
         for p_name, p in pages.items():
             await _do_leave_room(p)
         if bm and bm.sessions:

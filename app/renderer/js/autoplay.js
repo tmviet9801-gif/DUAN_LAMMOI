@@ -123,7 +123,7 @@
     // Các tuỳ chọn mới từ người dùng
     const autoXa = $("gcAutoXaBai") ? $("gcAutoXaBai").checked : true;
     const autoStartGuestSS = $("gcAutoStartGuestSS") ? $("gcAutoStartGuestSS").checked : true;
-    const autoLeaveAfter = $("gcAutoLeaveAfter") ? $("gcAutoLeaveAfter").checked : false;
+    const autoLeaveAfter = $("gcAutoLeaveAfter") ? $("gcAutoLeaveAfter").checked : true;
 
     const btnSync = $("btnGcSyncMatch");
     const btnAfStart = $("afStart");

@@ -5,9 +5,9 @@ from core.card_strategy import HandDecomposition, CooperativeDiscardEngine, CANV
 def test_hand_decomposition_trajectory_validity():
     traj = HandDecomposition.get_discard_trajectory()
     assert len(traj) >= 8
-    # Tất cả các tọa độ X phải nằm trong khoảng hợp lệ [0.200, 0.750]
+    # Tất cả các tọa độ X phải nằm trong khoảng hợp lệ dải bài [0.200, 0.860]
     for x in traj:
-        assert 0.200 <= x <= 0.750
+        assert 0.200 <= x <= 0.860
     # Phải đi từ lá to (bên phải) về lá nhỏ (bên trái)
     assert traj[0] > traj[-1]
     assert traj[0] >= 0.700
