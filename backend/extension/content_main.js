@@ -105,8 +105,27 @@
                 return false;
               }
 
+              function isPartner(x) {
+                if (!x || isMe(x)) return false;
+                const dn = (x.dn || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                const u = (x.u || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                const partnerList = (G.__autotool_partners || []).map((pt) => (pt || "").toLowerCase().replace(/[^a-z0-9]/g, ""));
+                for (const pt of partnerList) {
+                  if (!pt) continue;
+                  if (dn === pt || u === pt) return true;
+                  if (dn.length >= 6 && pt.length >= 6 && dn.slice(0, 8) === pt.slice(0, 8)) return true;
+                }
+                // Heuristic dự phòng: Nếu cả 2 account cùng prefix nick test
+                const myName = (getProfileName() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                if (myName.length >= 8 && dn.length >= 8 && dn.slice(0, 8) === myName.slice(0, 8)) {
+                  return true;
+                }
+                return false;
+              }
+
               const me = (p.ps || []).find(isMe) || (p.ps && p.ps[0]);
-              const guests = (p.ps || []).filter((x) => !isMe(x));
+              const partner = (p.ps || []).find(isPartner);
+              const strangers = (p.ps || []).filter((x) => !isMe(x) && !isPartner(x));
 
               // Cập nhật số dư của tài khoản nếu có trong packet
               if (me) {
@@ -122,18 +141,21 @@
 
               // Xác định mã bàn: Có ID cụ thể hoặc Bàn Chống Vây
               let rid = (p.ri && p.ri.rid) || p.rid || G.__ws_pending_rid || null;
-              const isChongVay = !rid || rid === -1 || String(rid) === "100";
-              const roomLabel = isChongVay ? "Chống Vây" : String(rid);
+              const isChongVay = !rid || rid === -1 || String(rid) === "100" || rid === 2 || rid === 1;
+              const targetRid = rid && !isNaN(Number(rid)) && Number(rid) > 28 ? Number(rid) : (p.Mu === 2 ? 2 : 1);
 
               G.__last_room_info = {
-                rid: isChongVay ? "Chống Vây" : Number(rid),
+                rid: targetRid,
                 raw_rid: isChongVay ? null : Number(rid),
-                rn: p.rn || (isChongVay ? `Bàn Chống Vây $${p.b || 100}` : `Bàn #${rid}`),
+                rn: p.rn || (p.Mu === 2 ? "Bàn Solo $100" : "Bàn $100"),
                 b: p.b || 100,
                 Mu: p.Mu || 2,
                 is_chong_vay: isChongVay,
+                partner_found: !!partner,
+                partner_name: partner ? (partner.dn || partner.u) : null,
+                has_stranger: strangers.length > 0,
               };
-              G.__ws_last_room_id = isChongVay ? "Chống Vây" : Number(rid);
+              G.__ws_last_room_id = targetRid;
 
               // Bắn thông tin vào bàn lên isolated content.js
               window.postMessage({
@@ -141,9 +163,55 @@
                 profile_name: getProfileName(),
                 room_info: G.__last_room_info,
                 players: G.__room_players,
-                guests: guests,
+                partner: partner,
+                strangers: strangers,
+                guests: strangers,
                 state: G.__room_state,
               }, "*");
+
+              // --- LOGIC TỰ ĐỘNG SĂN BÀN & AUTO OUT KHI THẤY KHÁCH LẠ ---
+              if (G.__AUTOTOOL_AUTO_HUNT) {
+                if (G.__hunt_wait_timer) {
+                  clearTimeout(G.__hunt_wait_timer);
+                  G.__hunt_wait_timer = null;
+                }
+
+                if (partner) {
+                  // ĐÃ KHỚP ĐỒNG ĐỘI THÀNH CÔNG!
+                  console.log(`[AutoTool V3] KHỚP ĐỒNG ĐỘI THÀNH CÔNG: ${partner.dn}!`);
+                  window.postMessage({
+                    type: "AUTOTOOL_MATCH_SUCCESS",
+                    profile_name: getProfileName(),
+                    partner_name: partner.dn || partner.u,
+                  }, "*");
+                } else if (strangers.length > 0) {
+                  // CÓ KHÁCH LẠ -> TỰ ĐỘNG OUT BÀN TỨC THÌ (350ms)
+                  const guestNames = strangers.map((g) => g.dn || g.u || "Khách").join(", ");
+                  console.warn(`[AutoTool V3] Phát hiện khách lạ: ${guestNames} -> Tự động out sau 350ms!`);
+                  window.postMessage({
+                    type: "AUTOTOOL_AUTO_LEAVING",
+                    profile_name: getProfileName(),
+                    reason: `Thấy khách lạ: ${guestNames}`,
+                  }, "*");
+                  setTimeout(() => {
+                    G.__autotool_exec_leave();
+                  }, 350);
+                } else {
+                  // ĐANG NGỒI 1 MÌNH CHỜ ĐỒNG ĐỘI -> Chờ 2.5s, nếu quá 2.5s không ai vào thì out tìm lại
+                  console.log("[AutoTool V3] Đang ngồi một mình, chờ đồng đội trong 2.5 giây...");
+                  G.__hunt_wait_timer = setTimeout(() => {
+                    if (!G.__last_room_info || !G.__last_room_info.partner_found) {
+                      console.log("[AutoTool V3] Quá 2.5s chưa thấy đồng đội vào -> Tự động out để ghép lại!");
+                      window.postMessage({
+                        type: "AUTOTOOL_AUTO_LEAVING",
+                        profile_name: getProfileName(),
+                        reason: "Hết thời gian chờ đồng đội",
+                      }, "*");
+                      G.__autotool_exec_leave();
+                    }
+                  }, 2500);
+                }
+              }
             }
 
             // cmd 203: Rời phòng -> Về lại sảnh
@@ -152,10 +220,30 @@
               G.__last_room_info = null;
               G.__ws_last_room_id = null;
               G.__ws_pending_rid = null;
+              if (G.__hunt_wait_timer) {
+                clearTimeout(G.__hunt_wait_timer);
+                G.__hunt_wait_timer = null;
+              }
               window.postMessage({
                 type: "AUTOTOOL_ROOM_LEFT",
                 profile_name: getProfileName(),
               }, "*");
+
+              // Nếu đang bật Auto Hunt và là Account 1 (Anchor): Tự động tìm lại lượt mới sau 700ms
+              if (G.__AUTOTOOL_AUTO_HUNT) {
+                const pName = (getProfileName() || "").toLowerCase();
+                if (pName.includes("1") || G.__is_hunt_initiator) {
+                  if (G.__hunt_retry_timer) clearTimeout(G.__hunt_retry_timer);
+                  G.__hunt_retry_timer = setTimeout(() => {
+                    console.log("[AutoTool V3] Tự động thử lại lượt ghép mới Bàn Solo 100...");
+                    window.postMessage({
+                      type: "AUTOTOOL_HUNT_RETRYING",
+                      profile_name: getProfileName(),
+                    }, "*");
+                    G.__autotool_exec_join(2, 100, 2);
+                  }, 700);
+                }
+              }
             }
 
             // cmd 308: Join phòng thành công (KHÔNG lấy cmd 305 sảnh)
@@ -360,6 +448,8 @@
   };
 
   G.__AUTOTOOL_ARMED = true;
+  G.__AUTOTOOL_AUTO_HUNT = true; // Mặc định BẬT tự động săn bàn & out khi thấy khách lạ
+  G.__autotool_partners = [];
 
   // Lắng nghe lệnh từ Extension isolated script (từ Backend Hub gửi xuống)
   window.addEventListener("message", (event) => {
@@ -368,6 +458,18 @@
     if (event.data.type === "AUTOTOOL_SET_ARM") {
       G.__AUTOTOOL_ARMED = !!event.data.armed;
       console.log(`[AutoTool V3] Tình trạng ARM chuyển sang: ${G.__AUTOTOOL_ARMED ? "BẬT" : "TẠM DỪNG"}`);
+      return;
+    }
+
+    if (event.data.type === "AUTOTOOL_SET_HUNT") {
+      G.__AUTOTOOL_AUTO_HUNT = !!event.data.auto_hunt;
+      console.log(`[AutoTool V3] Chế độ SĂN BÀN & AUTO OUT chuyển sang: ${G.__AUTOTOOL_AUTO_HUNT ? "BẬT" : "TẮT"}`);
+      return;
+    }
+
+    if (event.data.type === "AUTOTOOL_SYNC_PARTNERS" && Array.isArray(event.data.partners)) {
+      G.__autotool_partners = event.data.partners;
+      console.log("[AutoTool V3] Đã đồng bộ danh sách đồng đội:", G.__autotool_partners);
       return;
     }
 
@@ -385,8 +487,17 @@
       G.__autotool_exec_start();
     } else if (action === "DISCARD_CARDS" && data && data.cards) {
       G.__autotool_exec_discard(data.cards);
+    } else if (action === "SYNC_PARTNERS" && data && Array.isArray(data.partners)) {
+      G.__autotool_partners = data.partners;
+    } else if (action === "START_HUNT") {
+      G.__AUTOTOOL_AUTO_HUNT = true;
+      G.__is_hunt_initiator = true;
+      G.__autotool_exec_join(2, 100, 2);
+    } else if (action === "STOP_HUNT") {
+      G.__AUTOTOOL_AUTO_HUNT = false;
+      G.__autotool_exec_leave();
     }
   });
 
-  console.log("[AutoTool V3] Main World Engine & WebSocket Bridge đã sẵn sàng!");
+  console.log("[AutoTool V3] Main World Engine & WebSocket Bridge đã sẵn sàng (Auto-Hunt: BẬT)!");
 })();

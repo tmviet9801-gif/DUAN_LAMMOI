@@ -69,6 +69,15 @@ class ExtensionHubManager:
             "timestamp": now,
         })
 
+        # Đồng bộ danh sách đồng đội (Partners) tức thời cho tất cả các tab
+        active_names = list(self.active_sockets.keys())
+        for name in active_names:
+            partners = [p for p in active_names if p != name]
+            asyncio.create_task(self.send_command(name, "SYNC_PARTNERS", {
+                "partners": partners,
+                "all_profiles": active_names,
+            }))
+
     async def unregister(self, profile_name: str, ws: Optional[WebSocket] = None):
         """Hủy đăng ký khi Extension ngắt kết nối."""
         async with self._lock:

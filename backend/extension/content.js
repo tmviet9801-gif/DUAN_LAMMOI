@@ -232,6 +232,23 @@
     });
     (document.body || document.documentElement).appendChild(btn);
 
+    // Nút Bật/Tắt Săn Bàn & Tự động Out khi gặp khách lạ
+    const huntBtn = document.createElement("button");
+    huntBtn.id = "autotool-hunt-btn";
+    huntBtn.style.cssText = "position:fixed!important;left:150px!important;bottom:10px!important;z-index:2147483647!important;display:inline-flex!important;align-items:center!important;gap:5px!important;padding:5px 12px!important;border-radius:9999px!important;border:1px solid rgba(245,158,11,0.5)!important;background:rgba(69,26,3,0.88)!important;color:#fde68a!important;font-family:sans-serif!important;font-size:11px!important;font-weight:700!important;cursor:pointer!important;backdrop-filter:blur(4px)!important;box-shadow:0 4px 12px rgba(0,0,0,0.5)!important;";
+    huntBtn.innerHTML = "🎯 Săn Bàn: BẬT";
+    let isHuntOn = true;
+    huntBtn.addEventListener("click", () => {
+      isHuntOn = !isHuntOn;
+      huntBtn.innerHTML = isHuntOn ? "🎯 Săn Bàn: BẬT" : "⚪ Săn Bàn: TẮT";
+      huntBtn.style.background = isHuntOn ? "rgba(69,26,3,0.88)" : "rgba(30,41,59,0.85)";
+      huntBtn.style.color = isHuntOn ? "#fde68a" : "#94a3b8";
+      huntBtn.style.borderColor = isHuntOn ? "rgba(245,158,11,0.5)" : "rgba(255,255,255,0.2)";
+      window.postMessage({ type: "AUTOTOOL_SET_HUNT", auto_hunt: isHuntOn }, "*");
+      showToast(`🎯 Chế độ Săn Bàn & Auto Out: <b>${isHuntOn ? 'BẬT' : 'TẮT'}</b>`, isHuntOn ? "warn" : "info");
+    });
+    (document.body || document.documentElement).appendChild(huntBtn);
+
     // Banner mặc định khi mở tab
     const pLabel = activeProfileName || "Tool V3";
     updateViewBanner(`🏠 <b>${pLabel}</b>: Đang ở sảnh (Chờ tìm bàn)`, "lobby");
@@ -441,6 +458,43 @@
         profile_name: activeProfileName,
       });
       updatePill();
+    }
+
+    // KHỚP BÀN THÀNH CÔNG (CẢ 2 NICK Ở CÙNG NHAU)
+    else if (ev.data.type === "AUTOTOOL_MATCH_SUCCESS") {
+      const partner = ev.data.partner_name || "Đồng đội";
+      const pLabel = activeProfileName || "Tool V3";
+      updateViewBanner(`🟢 <b>ĐÃ VÀO CÙNG NHAU THÀNH CÔNG! (${pLabel} & ${partner})</b> - ĐANG KHÓA BÀN!`, "active");
+      showToast(`🟢 <b>KHỚP BÀN THÀNH CÔNG!</b><br>${pLabel} & ${partner}`, "success");
+
+      requestControl("/api/accounts/update-log", {
+        profile_name: activeProfileName,
+        log: `🟢 Đã khớp bàn cùng ${partner}`,
+      }, "POST").catch(() => {});
+    }
+
+    // TỰ ĐỘNG THOÁT BÀN KHI THẤY KHÁCH LẠ HOẶC TIMEOUT
+    else if (ev.data.type === "AUTOTOOL_AUTO_LEAVING") {
+      const reason = ev.data.reason || "Lệch bàn";
+      const pLabel = activeProfileName || "Tool V3";
+      updateViewBanner(`⚠️ <b>${reason.toUpperCase()}!</b> ĐANG TỰ ĐỘNG OUT BÀN (0.3s)...`, "joining");
+      showToast(`⚠️ <b>${reason}</b><br>Đang tự động Out bàn để ghép lại...`, "warn");
+
+      requestControl("/api/accounts/update-log", {
+        profile_name: activeProfileName,
+        log: `${reason} -> Tự động Out để tìm lại`,
+      }, "POST").catch(() => {});
+    }
+
+    // TỰ ĐỘNG THỬ LẠI LƯỢT GHÉP MỚI
+    else if (ev.data.type === "AUTOTOOL_HUNT_RETRYING") {
+      const pLabel = activeProfileName || "Tool V3";
+      updateViewBanner(`🔄 <b>${pLabel}</b>: Đang tự động tìm lượt ghép Bàn Solo 100 mới...`, "joining");
+
+      requestControl("/api/accounts/update-log", {
+        profile_name: activeProfileName,
+        log: "Đang tự động tìm lượt ghép mới...",
+      }, "POST").catch(() => {});
     }
 
     // GÓI TIN CHUYỂN TIẾP
