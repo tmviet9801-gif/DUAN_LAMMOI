@@ -70,21 +70,7 @@ class ExtensionHubManager:
         })
 
         # Đồng bộ danh sách đồng đội (Partners) tức thời cho tất cả các tab
-        active_names = list(self.active_sockets.keys())
-        for name in active_names:
-            partners = []
-            for p in active_names:
-                if p != name:
-                    p_state = self.profile_states.get(p) or {}
-                    partners.append(p)
-                    if p_state.get("dn"):
-                        partners.append(p_state.get("dn"))
-                    if p_state.get("u"):
-                        partners.append(p_state.get("u"))
-            asyncio.create_task(self.send_command(name, "SYNC_PARTNERS", {
-                "partners": partners,
-                "all_profiles": active_names,
-            }))
+        asyncio.create_task(self.broadcast_partners())
 
     async def unregister(self, profile_name: str, ws: Optional[WebSocket] = None):
         """Hủy đăng ký khi Extension ngắt kết nối."""
@@ -142,6 +128,78 @@ class ExtensionHubManager:
                 sent_count += 1
         return sent_count
 
+    def _get_account_aliases(self) -> dict:
+        """Đọc toàn bộ accounts.json để trích xuất name, username, và các alias trong web_storage."""
+        alias_map = {}
+        try:
+            from models.config_model import load_accounts
+            accounts = load_accounts()
+            for a in accounts:
+                key = str(a.get("name") or a.get("username") or a.get("id") or "").strip().lower()
+                if not key:
+                    continue
+                names = set()
+                for key_field in ("name", "username", "id"):
+                    val = a.get(key_field)
+                    if val:
+                        names.add(str(val).strip().lower())
+                ws_local = (a.get("web_storage") or {}).get("local") or {}
+                if ws_local.get("KEY_USER_NAME"):
+                    names.add(str(ws_local["KEY_USER_NAME"]).strip().lower())
+                for k in ws_local.keys():
+                    if "KEY_SETTING" in k:
+                        prefix = k.split("KEY_SETTING")[0].strip().lower()
+                        if prefix: names.add(prefix)
+                    elif "EAuthenticatorKey_" in k:
+                        prefix = k.replace("EAuthenticatorKey_", "").strip().lower()
+                        if prefix: names.add(prefix)
+                alias_map[key] = list(names)
+        except Exception as e:
+            log.warning("ExtensionHub V3: Lỗi đọc accounts.json: %s", e)
+        return alias_map
+
+    async def broadcast_partners(self):
+        """Đồng bộ danh sách tất cả đồng đội (in-game DN, U, UID và aliases) cho mọi extension đang online."""
+        alias_map = self._get_account_aliases()
+        active_names = list(self.active_sockets.keys())
+
+        for name in active_names:
+            name_low = str(name).strip().lower()
+            partners = []
+
+            # 1. Thêm từ các tab browser đang kết nối
+            for p in active_names:
+                p_low = str(p).strip().lower()
+                if p_low != name_low:
+                    st = self.profile_states.get(p) or {}
+                    partners.append(p)
+                    if st.get("dn"): partners.append(str(st["dn"]).strip().lower())
+                    if st.get("u"): partners.append(str(st["u"]).strip().lower())
+                    if st.get("uid"): partners.append(str(st["uid"]).strip())
+
+            # 2. Bổ sung các aliases từ accounts.json của các tài khoản khác
+            for acc_key, aliases in alias_map.items():
+                if acc_key != name_low and not name_low.startswith(acc_key) and not acc_key.startswith(name_low):
+                    for alias in aliases:
+                        if alias and alias not in partners and alias != name_low:
+                            partners.append(alias)
+
+            # Khử trùng lặp
+            unique_partners = []
+            seen = set()
+            for item in partners:
+                if str(item).lower() not in seen:
+                    seen.add(str(item).lower())
+                    unique_partners.append(item)
+
+            log.info("ExtensionHub V3: Đồng bộ %d đồng đội cho '%s': %s",
+                     len(unique_partners), name, unique_partners)
+
+            asyncio.create_task(self.send_command(name, "SYNC_PARTNERS", {
+                "partners": unique_partners,
+                "all_profiles": active_names,
+            }))
+
     def handle_message(self, profile_name: str, raw_data: Any):
         """Xử lý dữ liệu gửi từ Extension lên Hub (Packet phòng, người chơi, bài)."""
         if not profile_name:
@@ -177,19 +235,7 @@ class ExtensionHubManager:
             if dn: state["dn"] = dn
             if u: state["u"] = u
             if uid: state["uid"] = uid
-            active_names = list(self.active_sockets.keys())
-            for n in active_names:
-                p_list = []
-                for p in active_names:
-                    if p != n:
-                        st = self.profile_states.get(p) or {}
-                        p_list.append(p)
-                        if st.get("dn"): p_list.append(st.get("dn"))
-                        if st.get("u"): p_list.append(st.get("u"))
-                asyncio.create_task(self.send_command(n, "SYNC_PARTNERS", {
-                    "partners": p_list,
-                    "all_profiles": active_names,
-                }))
+            asyncio.create_task(self.broadcast_partners())
 
         # 1. Cập nhật Số Dư (Balance) Realtime từ Extension
         if msg_type in ("BALANCE_UPDATE", "AUTOTOOL_BALANCE_UPDATE"):

@@ -1440,7 +1440,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         asyncio.create_task(_do_leave_room(sub_page, name=sub_name, target_mu=target_mu))
                 await _do_leave_room(first_page, name=first_name, target_mu=target_mu)
                 await _ensure_in_tldl_lobby(first_page, first_name)
-                await asyncio.sleep(1.0)
+                # TĂNG DELAY NGHỈ AN TOÀN (3.5s) ĐỂ TRÁNH TRIỆT ĐỂ LỖI 'BẠN THAO TÁC QUÁ NHANH'
+                log.info("find-and-match: [Anti-Flood Delay] Nghỉ 3.5s trước khi vào bàn lượt mới để chống chặn bot...")
+                await asyncio.sleep(3.5)
                 continue
             else:
                 found_anchor = True
@@ -1497,14 +1499,37 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     break
                 sub_p = pages[sub_name]
                 log.info("find-and-match: Gửi lệnh join bàn công cộng #%s cho %s nhanh chóng...", selected_rid, sub_name)
-                # Đồng bộ định danh của Account 1 sang cho Account 2 (để Account 2 nhận diện chính xác 100% đồng đội)
+                # Đồng bộ 2 CHIỀU định danh giữa Account 1 và Account 2 (để cả 2 nhận diện chính xác 100% đồng đội, không out nhầm)
                 try:
                     p_info_anchor = {"dn": anchor_dn, "u": anchor_u, "uid": anchor_uid, "profile_name": anchor_name}
-                    await sub_p.evaluate(f"() => {{ window.__autotool_partners = [{_json.dumps(p_info_anchor)}]; if (window.__autotool_partners) globalThis.__autotool_partners = window.__autotool_partners; }}")
-                    if ext_hub and ext_hub.is_connected(sub_name):
-                        await ext_hub.send_command(sub_name, "SYNC_PARTNERS", {"partners": [p_info_anchor, anchor_name, anchor_dn, anchor_u]})
-                except Exception:
-                    pass
+                    
+                    sub_user_info = {}
+                    try:
+                        sub_user_info = await sub_p.evaluate("""() => ({
+                            u: window.__my_u || (window.__user_info && window.__user_info.u) || window.__my_username || '',
+                            dn: window.__my_dn || (window.__user_info && (window.__user_info.dn || window.__user_info.name)) || '',
+                            uid: window.__my_uid || (window.__user_info && window.__user_info.uid) || ''
+                        })""")
+                    except Exception:
+                        pass
+                    sub_u = str(sub_user_info.get("u") or "").lower().strip()
+                    sub_dn = str(sub_user_info.get("dn") or "").lower().strip()
+                    sub_uid = str(sub_user_info.get("uid") or "").strip()
+                    p_info_sub = {"dn": sub_dn, "u": sub_u, "uid": sub_uid, "profile_name": sub_name}
+
+                    # 1. Nạp Account 1 vào Account 2
+                    await sub_p.evaluate(f"() => {{ if (!window.__autotool_partners) window.__autotool_partners = []; window.__autotool_partners.push({_json.dumps(p_info_anchor)}); if (typeof globalThis !== 'undefined') globalThis.__autotool_partners = window.__autotool_partners; }}")
+                    
+                    # 2. Nạp Account 2 vào Account 1 (ĐỂ ACCOUNT 1 NHẬN BIẾT ACCOUNT 2 LÀ ĐỒNG ĐỘI, KHÔNG COI LÀ KHÁCH LẠ)
+                    await anchor_page.evaluate(f"() => {{ if (!window.__autotool_partners) window.__autotool_partners = []; window.__autotool_partners.push({_json.dumps(p_info_sub)}); if (typeof globalThis !== 'undefined') globalThis.__autotool_partners = window.__autotool_partners; }}")
+
+                    if ext_hub:
+                        if ext_hub.is_connected(sub_name):
+                            await ext_hub.send_command(sub_name, "SYNC_PARTNERS", {"partners": [p_info_anchor, anchor_name, anchor_dn, anchor_u]})
+                        if ext_hub.is_connected(anchor_name):
+                            await ext_hub.send_command(anchor_name, "SYNC_PARTNERS", {"partners": [p_info_sub, sub_name, sub_dn, sub_u]})
+                except Exception as e:
+                    log.warning("find-and-match: Lỗi đồng bộ định danh 2 chiều: %s", e)
 
                 # V3: Bắn lệnh tức thời qua Extension Hub (<2ms) — DÙNG GÓI CHUẨN DUY NHẤT (không send_raw gói rác)
                 ext_hub = getattr(request.app.state, "ext_hub", None)

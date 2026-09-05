@@ -345,12 +345,16 @@
                 window.__user_info = { uid: G.__my_uid, dn: G.__my_dn, u: G.__my_u };
                 if (!G.__AUTOTOOL_PROFILE_NAME || G.__AUTOTOOL_PROFILE_NAME.includes("HitClub")) {
                   G.__AUTOTOOL_PROFILE_NAME = realUser;
-                  window.postMessage({
-                    type: "AUTOTOOL_INIT_PROFILE",
-                    profile_name: realUser,
-                    user_info: window.__user_info,
-                  }, "*");
                 }
+                // LUÔN LUÔN thông báo thông tin định danh in-game (dn, u, uid) lên Extension Hub để đồng bộ đối tác
+                window.postMessage({
+                  type: "AUTOTOOL_INIT_PROFILE",
+                  profile_name: getProfileName(),
+                  dn: realUser,
+                  u: G.__my_u,
+                  uid: G.__my_uid,
+                  user_info: window.__user_info,
+                }, "*");
               }
               const gold = (p.As && p.As.gold !== undefined) ? p.As.gold : (p.gold !== undefined ? p.gold : (p.m !== undefined ? p.m : (p.g !== undefined ? p.g : null)));
               if (gold !== null && !isNaN(Number(gold))) {
@@ -410,12 +414,33 @@
                   if (pt.uid && targetUid && String(pt.uid).trim() === targetUid) return true;
                   if (pt.dn && targetDn && String(pt.dn).trim().toLowerCase() === targetDn) return true;
                   if (pt.u && targetU && String(pt.u).trim().toLowerCase() === targetU) return true;
+                  if (pt.profile_name) {
+                    const pStr = String(pt.profile_name).trim().toLowerCase();
+                    if (targetDn === pStr || targetU === pStr) return true;
+                  }
                 } else if (typeof pt === "string") {
                   const ptStr = pt.trim().toLowerCase();
+                  if (!ptStr) continue;
                   if (targetDn === ptStr || targetU === ptStr) return true;
                   const cTarget = targetDn.replace(/[^a-z0-9]/g, "");
                   const cPt = ptStr.replace(/[^a-z0-9]/g, "");
                   if (cTarget && cPt && cTarget === cPt) return true;
+
+                  // 1. So khớp sau khi nén ký tự lặp (ví dụ nicktestxxabai2 vs nicktestxabai2)
+                  const compTarget = cTarget.replace(/(.)\1+/g, "$1");
+                  const compPt = cPt.replace(/(.)\1+/g, "$1");
+                  if (compTarget && compPt && compTarget === compPt) return true;
+
+                  // 2. So khớp theo số đuôi và tiền tố tương đồng (cùng nhóm tài khoản)
+                  const numTarget = (targetDn.match(/\d+$/) || targetU.match(/\d+$/) || [""])[0];
+                  const numPt = (ptStr.match(/\d+$/) || [""])[0];
+                  if (numTarget && numPt && numTarget === numPt) {
+                    const baseTarget = compTarget.replace(/\d+$/, "");
+                    const basePt = compPt.replace(/\d+$/, "");
+                    if (baseTarget && basePt && (baseTarget.includes(basePt) || basePt.includes(baseTarget))) {
+                      return true;
+                    }
+                  }
                 }
               }
               return false;
@@ -534,7 +559,8 @@
                       profile_name: getProfileName(),
                       reason: `Thấy khách lạ: ${strangerName}`,
                     }, "*");
-                    const leaveDelay = 100 + Math.floor(Math.random() * 150);
+                    // Out an toàn (350 - 550ms) để server xử lý xong trạng thái
+                    const leaveDelay = 350 + Math.floor(Math.random() * 200);
                     setTimeout(() => {
                       G.__autotool_exec_leave();
                     }, leaveDelay);
@@ -673,8 +699,8 @@
                     reason: `Thấy khách lạ/Bàn full: ${guestNames}`,
                   }, "*");
 
-                  // Out nhanh (100 - 250ms)
-                  const leaveDelay = 100 + Math.floor(Math.random() * 150);
+                  // Out an toàn (350 - 550ms) để server kịp xử lý trạng thái rời ghế
+                  const leaveDelay = 350 + Math.floor(Math.random() * 200);
                   setTimeout(() => {
                     G.__autotool_exec_leave();
                   }, leaveDelay);
@@ -757,9 +783,9 @@
                 if (pName.includes("1") || G.__is_hunt_initiator) {
                   if (G.__hunt_retry_timer) clearTimeout(G.__hunt_retry_timer);
 
-                  // ANTI-FLOOD JITTER: Giãn cách ngẫu nhiên an toàn 1800ms - 2500ms (Tránh Rate-Limit máy chủ)
-                  const jitterDelay = 1800 + Math.floor(Math.random() * 700);
-                  console.log(`[AutoTool V3] [Anti-Flood Jitter] Tự động thử lại lượt ghép mới sau ${jitterDelay}ms...`);
+                  // ANTI-FLOOD JITTER: Giãn cách an toàn 3200ms - 4200ms (Tránh triệt để Rate-Limit "Bạn thao tác quá nhanh")
+                  const jitterDelay = 3200 + Math.floor(Math.random() * 1000);
+                  console.log(`[AutoTool V3] [Anti-Flood Jitter] Tự động thử lại lượt ghép mới sau ${jitterDelay}ms (Chống lỗi 'Bạn thao tác quá nhanh')...`);
 
                   G.__hunt_retry_timer = setTimeout(() => {
                     window.postMessage({
