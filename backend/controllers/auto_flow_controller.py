@@ -414,6 +414,66 @@ async def autoplay_stop(request: Request):
     }
 
 
+@router.post("/api/autoplay/leave-room")
+async def autoplay_leave_room(body: dict, request: Request):
+    """Thoát 1 account chỉ định (hoặc tất cả) ra khỏi bàn về sảnh thuần bằng lệnh WebSocket (không click chuột).
+
+    Body:
+      - profile_name: str (tuỳ chọn, nếu bỏ trống thì thoát tất cả)
+      - ws_only: bool (mặc định True = thuần WebSocket không click chuột)
+    """
+    profile_name = (body.get("profile_name") or "").strip()
+    ws_only = bool(body.get("ws_only", True))
+
+    manager = getattr(request.app.state, "manager", None)
+    if not manager or not manager.sessions:
+        return {"ok": True, "count": 0, "ws_command": '[4,"Simms",-1]', "message": "Không có session nào đang mở."}
+
+    left_list = []
+    for sid, s in list(manager.sessions.items()):
+        acc_n = (s.account or {}).get("name") or sid
+        if profile_name and acc_n != profile_name and sid != profile_name:
+            continue
+        if s.page:
+            try:
+                # Gửi lệnh WebSocket thoát phòng trực tiếp
+                await s.page.evaluate("""(() => {
+                    try {
+                        if (typeof window.__ws_send_channel === 'function') {
+                            window.__ws_send_channel('Simms', '[4,"Simms",-1]');
+                            window.__ws_send_channel('Simms', '[6,"Simms","channelPlugin",{"cmd":203}]');
+                        }
+                        if (typeof window.__ws_send === 'function') {
+                            window.__ws_send('[4,"Simms",-1]');
+                            window.__ws_send('[6,"Simms","channelPlugin",{"cmd":203}]');
+                        }
+                        (window.__ws_instances || []).forEach(ws => {
+                            try {
+                                if (ws.readyState === 1) {
+                                    ws.send('[4,"Simms",-1]');
+                                    ws.send('[6,"Simms","channelPlugin",{"cmd":203}]');
+                                }
+                            } catch(e) {}
+                        });
+                    } catch(e) {}
+                })()""")
+                if not ws_only:
+                    await _do_leave_room(s.page)
+            except Exception as e:
+                log.warning("Thoát phòng WS cho %s lỗi: %s", acc_n, e)
+        s.room_id = -1
+        s.log = "Đã thoát phòng (WS)"
+        left_list.append(acc_n)
+
+    return {
+        "ok": True,
+        "count": len(left_list),
+        "profiles": left_list,
+        "ws_command": '[4,"Simms",-1]',
+        "message": f"Đã gửi lệnh WebSocket rời bàn thành công cho {len(left_list)} tài khoản (thuần WS, không click chuột)."
+    }
+
+
 @router.get("/api/autoplay/status")
 async def autoplay_status(request: Request):
     cur = getattr(request.app.state, "auto_flow", None)

@@ -36,3 +36,11 @@ def test_stop_endpoint_cancels_active_match_task():
     assert response.json()["ok"] is True
     mock_task.cancel.assert_called_once()
     assert getattr(main.app.state, "active_match_task", None) is None
+
+def test_leave_room_endpoint():
+    response = client.post("/api/autoplay/leave-room", json={"profile_name": "Account 1", "ws_only": True})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert "ws_command" in data
+    assert data["ws_command"] == '[4,"Simms",-1]'
