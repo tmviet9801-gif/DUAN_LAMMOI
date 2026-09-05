@@ -10,6 +10,259 @@
   G.__last_room_info = null;
   G.__room_players = [];
   G.__room_state = 0;
+  G.__my_cards = [];
+  G.__last_table_cards = null;
+  G.__last_table_player = null;
+  G.__game_in_progress = false;
+  G.__partner_cards_count = 13;
+  G.__AUTOTOOL_AUTO_DISCARD = true;
+
+  // ---- MODULE PHÂN TÍCH & GIẢI MÃ 52 LÁ BÀI TIẾN LÊN (0..51) ----
+  function getCardVal(c) {
+    const r = Math.floor(c / 4);
+    if (r >= 2) return r + 1; // 2->3, 3->4, ..., 12->13 (K)
+    if (r === 0) return 14;   // A
+    if (r === 1) return 15;   // 2 (Heo)
+    return 0;
+  }
+
+  function getCardSuit(c) {
+    return c % 4; // 0: Bích, 1: Chuồn, 2: Rô, 3: Cơ
+  }
+
+  function sortCards(cards) {
+    return (cards || []).slice().sort((a, b) => {
+      const va = getCardVal(a), vb = getCardVal(b);
+      if (va !== vb) return va - vb;
+      return getCardSuit(a) - getCardSuit(b);
+    });
+  }
+
+  function compareCards(c1, c2) {
+    const v1 = getCardVal(c1), v2 = getCardVal(c2);
+    if (v1 !== v2) return v1 - v2;
+    return getCardSuit(c1) - getCardSuit(c2);
+  }
+
+  function parseCard(c) {
+    if (typeof c !== "number" || c < 0 || c > 51) return null;
+    const rawRank = Math.floor(c / 4);
+    const suitIndex = c % 4;
+    const rankNames = {
+      2: "3", 3: "4", 4: "5", 5: "6", 6: "7", 7: "8", 8: "9", 9: "10",
+      10: "J", 11: "Q", 12: "K", 0: "A", 1: "2"
+    };
+    const suitIcons = ["♠", "♣", "♦", "♥"];
+    const suitNames = ["Bích", "Chuồn", "Rô", "Cơ"];
+    const isRed = (suitIndex === 2 || suitIndex === 3);
+    const rank = rankNames[rawRank] || "?";
+    const icon = suitIcons[suitIndex] || "";
+    return {
+      id: c,
+      rank: rank,
+      suit: suitNames[suitIndex],
+      icon: icon,
+      isRed: isRed,
+      name: rank + icon,
+    };
+  }
+
+  function isStraight(cards) {
+    if (!cards || cards.length < 3) return false;
+    const sc = sortCards(cards);
+    if (sc.some((c) => getCardVal(c) === 15)) return false; // Không tính Heo
+    for (let i = 1; i < sc.length; i++) {
+      if (getCardVal(sc[i]) !== getCardVal(sc[i - 1]) + 1) return false;
+    }
+    return true;
+  }
+
+  function canBeat(cand, table) {
+    if (!cand || !table || !cand.length || !table.length) return false;
+    const scCand = sortCards(cand);
+    const scTab = sortCards(table);
+
+    // 1 vs 1 (Rác đè Rác)
+    if (cand.length === 1 && table.length === 1) {
+      return compareCards(cand[0], table[0]) > 0;
+    }
+    // Tứ quý chặt Heo đơn
+    if (cand.length === 4 && table.length === 1) {
+      const isQuad = (getCardVal(cand[0]) === getCardVal(cand[1]) && 
+                      getCardVal(cand[1]) === getCardVal(cand[2]) && 
+                      getCardVal(cand[2]) === getCardVal(cand[3]));
+      const isTwo = (getCardVal(table[0]) === 15);
+      if (isQuad && isTwo) return true;
+    }
+    // Đôi đè Đôi
+    if (cand.length === 2 && table.length === 2) {
+      const isP1 = getCardVal(cand[0]) === getCardVal(cand[1]);
+      const isP2 = getCardVal(table[0]) === getCardVal(table[1]);
+      if (isP1 && isP2) {
+        return compareCards(scCand[1], scTab[1]) > 0;
+      }
+    }
+    // Ba đè Ba
+    if (cand.length === 3 && table.length === 3) {
+      const isT1 = (getCardVal(cand[0]) === getCardVal(cand[1]) && getCardVal(cand[1]) === getCardVal(cand[2]));
+      const isT2 = (getCardVal(table[0]) === getCardVal(table[1]) && getCardVal(table[1]) === getCardVal(table[2]));
+      if (isT1 && isT2) {
+        return compareCards(scCand[2], scTab[2]) > 0;
+      }
+    }
+    // Sảnh đè Sảnh (cùng số lá)
+    if (cand.length === table.length && cand.length >= 3) {
+      if (isStraight(cand) && isStraight(table)) {
+        return compareCards(scCand[scCand.length - 1], scTab[scTab.length - 1]) > 0;
+      }
+    }
+    return false;
+  }
+
+  function findCombinations(cards) {
+    const sortedC = sortCards(cards);
+    const valMap = {};
+    for (const c of sortedC) {
+      const v = getCardVal(c);
+      if (!valMap[v]) valMap[v] = [];
+      valMap[v].push(c);
+    }
+
+    const straights = [];
+    const nonTwoVals = Object.keys(valMap).map(Number).filter((v) => v < 15).sort((a, b) => a - b);
+    for (let len = nonTwoVals.length; len >= 3; len--) {
+      for (let start = 0; start <= nonTwoVals.length - len; start++) {
+        const sub = nonTwoVals.slice(start, start + len);
+        let valid = true;
+        for (let i = 1; i < sub.length; i++) {
+          if (sub[i] !== sub[i - 1] + 1) { valid = false; break; }
+        }
+        if (valid) {
+          straights.push(sub.map((v) => valMap[v][0]));
+        }
+      }
+    }
+
+    const quads = Object.values(valMap).filter((cs) => cs.length >= 4).map((cs) => cs.slice(0, 4));
+    const triples = Object.values(valMap).filter((cs) => cs.length >= 3).map((cs) => cs.slice(0, 3));
+    const pairs = Object.values(valMap).filter((cs) => cs.length >= 2).map((cs) => cs.slice(0, 2));
+    const singles = sortedC.map((c) => [c]);
+
+    return { straights, quads, triples, pairs, singles };
+  }
+
+  function getMyRole() {
+    if (G.__AUTOTOOL_ROLE) return G.__AUTOTOOL_ROLE;
+    const pName = (getProfileName() || "").toLowerCase();
+    if (pName.includes("2") || pName.includes("sub") || pName.includes("phu")) {
+      return "dump";
+    }
+    return "winner";
+  }
+
+  function findBestPlay(myCards, tableCards, role, isPartnerTurn, partnerCardsCount = 13) {
+    if (!myCards || !myCards.length) return null;
+    const combs = findCombinations(myCards);
+
+    // 1. LƯỢT TỰ DO (Free Turn / Mở ván hoặc đối phương vừa Pass)
+    if (!tableCards || tableCards.length === 0) {
+      if (role === "dump") {
+        if (myCards.length === 1) {
+          // Nick xả chỉ còn 1 lá -> PASS nhường đường cho Winner về Nhất!
+          console.log("[AutoTool V3] [Role: DUMP] Còn đúng 1 lá rác đáy bài -> BỎ LƯỢT (cmd 254) để giữ thua tối thiểu!");
+          return null;
+        }
+        // Ưu tiên xả: Sảnh dài nhất -> Tứ quý -> Ba -> Đôi -> Heo -> Rác to nhất
+        if (combs.straights.length > 0) return combs.straights[0];
+        if (combs.quads.length > 0) return combs.quads[combs.quads.length - 1];
+        if (combs.triples.length > 0) return combs.triples[combs.triples.length - 1];
+        if (combs.pairs.length > 0) return combs.pairs[combs.pairs.length - 1];
+        const heos = myCards.filter((c) => getCardVal(c) === 15);
+        if (heos.length > 0) return [heos[0]];
+        const sorted = sortCards(myCards);
+        return [sorted[sorted.length - 1]];
+      } else {
+        // Winner: Đánh từ nhóm nhỏ nhất để xả sạch bài về Nhất
+        if (combs.straights.length > 0) return combs.straights[combs.straights.length - 1];
+        if (combs.triples.length > 0) return combs.triples[0];
+        if (combs.pairs.length > 0) return combs.pairs[0];
+        return [sortCards(myCards)[0]];
+      }
+    }
+
+    // 2. LƯỢT ĐÈ BÀI (Follow Turn)
+    if (isPartnerTurn) {
+      if (role === "winner") {
+        // Đồng đội (Dump) vừa xả bài:
+        if (partnerCardsCount > 1) {
+          // Đồng đội còn nhiều bài -> Winner PASS để đồng đội có lượt tự do xả tiếp!
+          console.log(`[AutoTool V3] [Role: WINNER] Đồng đội còn ${partnerCardsCount} lá bài -> PASS nhường xả tiếp!`);
+          return null;
+        } else {
+          // Đồng đội chỉ còn 1 lá bài -> Winner đè để giành lượt và về Nhất!
+          for (const cat of ["singles", "pairs", "triples", "straights"]) {
+            for (const cand of combs[cat]) {
+              if (canBeat(cand, tableCards)) return cand;
+            }
+          }
+          return null;
+        }
+      } else {
+        // Role là Dump: Đồng đội (Winner) vừa đánh bài
+        if (myCards.length > 1) {
+          for (const cat of ["straights", "triples", "pairs", "singles"]) {
+            const list = combs[cat].slice().reverse();
+            for (const cand of list) {
+              if (canBeat(cand, tableCards)) return cand;
+            }
+          }
+        }
+        return null;
+      }
+    } else {
+      // Đánh với khách lạ: Tìm nhóm nhỏ nhất đè được
+      for (const cat of ["singles", "pairs", "triples", "straights"]) {
+        for (const cand of combs[cat]) {
+          if (canBeat(cand, tableCards)) return cand;
+        }
+      }
+      return null;
+    }
+  }
+
+  function handleAutoTurn() {
+    if (G.__auto_turn_timer) {
+      clearTimeout(G.__auto_turn_timer);
+      G.__auto_turn_timer = null;
+    }
+    if (!G.__AUTOTOOL_AUTO_DISCARD) return;
+    if (!G.__my_cards || !G.__my_cards.length) return;
+
+    // Giãn cách an toàn 400ms - 750ms để mô phỏng tự nhiên và chống phát hiện bot
+    const delay = 400 + Math.floor(Math.random() * 350);
+    G.__auto_turn_timer = setTimeout(() => {
+      if (!G.__my_cards || !G.__my_cards.length) return;
+      const role = getMyRole();
+      const isPartnerActor = G.__last_table_player ? isPartner(G.__last_table_player) : false;
+      const partnerCardsCount = G.__partner_cards_count || 13;
+
+      console.log(`[AutoTool V3] Tới lượt của tôi! Role=${role}, Bài trên tay: ${G.__my_cards.length} lá, Bàn: ${JSON.stringify(G.__last_table_cards)}`);
+
+      const play = findBestPlay(G.__my_cards, G.__last_table_cards, role, isPartnerActor, partnerCardsCount);
+
+      if (play && play.length > 0) {
+        const cardLabels = play.map((c) => {
+          const p = parseCard(c);
+          return p ? p.name : c;
+        }).join(" ");
+        console.log(`[AutoTool V3] >>> TỰ ĐỘNG ĐÁNH BÀI: [${cardLabels}] (cmd 253) <<<`);
+        G.__autotool_exec_play(play);
+      } else {
+        console.log("[AutoTool V3] >>> TỰ ĐỘNG BỎ LƯỢT / PASS (cmd 254) <<<");
+        G.__autotool_exec_pass();
+      }
+    }, delay);
+  }
 
   // Lấy định danh profile được inject từ Playwright hoặc localStorage của game
   function getProfileName() {
@@ -75,8 +328,10 @@
           if (p) {
             // cmd 100: Thông tin User, Số dư & Trạng thái Sảnh
             if (p.cmd === 100) {
+              if (p.uid || p.id) G.__my_uid = p.uid || p.id;
               if (p.dn || p.u) {
                 const realUser = p.dn || p.u;
+                G.__my_dn = realUser;
                 if (!G.__AUTOTOOL_PROFILE_NAME || G.__AUTOTOOL_PROFILE_NAME.includes("HitClub")) {
                   G.__AUTOTOOL_PROFILE_NAME = realUser;
                   window.postMessage({
@@ -112,14 +367,16 @@
 
               function isMe(x) {
                 if (!x) return false;
+                if (G.__my_uid && x.uid && String(x.uid) === String(G.__my_uid)) return true;
+                if (G.__my_dn) {
+                  const d1 = String(x.dn || x.u || "").trim().toLowerCase();
+                  const d2 = String(G.__my_dn).trim().toLowerCase();
+                  if (d1 === d2) return true;
+                }
                 const pName = (getProfileName() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
                 const dn = (x.dn || "").toLowerCase().replace(/[^a-z0-9]/g, "");
                 const u = (x.u || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                if (!pName) return false;
-                if (dn === pName || u === pName) return true;
-                if (dn.length >= 6 && pName.length >= 6) {
-                  if (dn.slice(0, 8) === pName.slice(0, 8)) return true;
-                }
+                if (pName && (dn === pName || u === pName)) return true;
                 return false;
               }
 
@@ -145,7 +402,7 @@
               const partner = (p.ps || []).find(isPartner);
               const strangers = (p.ps || []).filter((x) => !isMe(x) && !isPartner(x));
 
-              // Cập nhật số dư của tài khoản nếu có trong packet
+              // Cập nhật số dư & bài của tài khoản nếu có trong packet
               if (me) {
                 const meGold = me.As && me.As.gold !== undefined ? me.As.gold : (me.m !== undefined ? me.m : null);
                 if (meGold !== null && !isNaN(Number(meGold))) {
@@ -155,6 +412,18 @@
                     balance: Number(meGold),
                   }, "*");
                 }
+                if (Array.isArray(me.cs) && me.cs.length > 0) {
+                  G.__my_cards = me.cs;
+                  window.postMessage({
+                    type: "AUTOTOOL_CARDS_DEALT",
+                    profile_name: getProfileName(),
+                    cards: G.__my_cards,
+                    first_turn: p.aid !== undefined ? { sit: p.aid } : null,
+                  }, "*");
+                }
+              }
+              if (partner && partner.rmC !== undefined) {
+                G.__partner_cards_count = partner.rmC;
               }
 
               // Xác định mã bàn: Có ID cụ thể hoặc Bàn Chống Vây
@@ -311,17 +580,108 @@
               }
             }
 
-            // Bắt bài chia (Cards dealt)
-            if (p.c || p.cards || (p.cmd && [310, 311, 312, 350].includes(p.cmd))) {
-              const cards = p.c || p.cards || [];
+            // cmd 250: Chia bài & Bắt đầu ván (Cards dealt)
+            if (p.cmd === 250) {
+              const cards = p.cs || [];
               if (Array.isArray(cards) && cards.length > 0) {
                 G.__my_cards = cards;
+                G.__game_in_progress = true;
+                G.__last_table_cards = null;
+                G.__last_table_player = null;
+                console.log(`[AutoTool V3] 🃏 ĐÃ NHẬN BÀI CHIA (${cards.length} lá): [${cards.join(", ")}]`);
                 window.postMessage({
-                  type: "AUTOTOOL_BRIDGE_PACKET",
-                  action: "CARDS_DEALT",
+                  type: "AUTOTOOL_CARDS_DEALT",
                   profile_name: getProfileName(),
                   cards: cards,
+                  first_turn: p.tP,
                 }, "*");
+                // Nếu mình là người được chỉ định đi trước
+                if (p.tP && isMe(p.tP)) {
+                  console.log("[AutoTool V3] >>> TÔI ĐƯỢC CHỈ ĐỊNH ĐI TRƯỚC! Chuẩn bị đánh bài... <<<");
+                  handleAutoTurn();
+                }
+              }
+            }
+
+            // cmd 251: Cập nhật hành động Đánh bài / Bỏ lượt & Chuyển lượt
+            if (p.cmd === 251) {
+              const fp = p.fP || {};
+              const tp = p.tP || {};
+
+              if (fp.pS === 1 && Array.isArray(fp.dCs) && fp.dCs.length > 0) {
+                // Có người vừa đánh bài
+                G.__last_table_cards = fp.dCs;
+                G.__last_table_player = fp;
+                if (isMe(fp)) {
+                  // Tôi vừa đánh thành công nhóm bài này
+                  G.__my_cards = (G.__my_cards || []).filter((c) => !fp.dCs.includes(c));
+                  console.log(`[AutoTool V3] Đã đánh [${fp.dCs.join(", ")}], bài trên tay còn ${G.__my_cards.length} lá.`);
+                  window.postMessage({
+                    type: "AUTOTOOL_CARDS_UPDATED",
+                    profile_name: getProfileName(),
+                    cards: G.__my_cards,
+                    played_cards: fp.dCs,
+                    actor: fp.dn || fp.u || getProfileName(),
+                    remaining: G.__my_cards.length,
+                  }, "*");
+                } else if (isPartner(fp)) {
+                  if (G.__partner_cards_count !== undefined) {
+                    G.__partner_cards_count = Math.max(0, G.__partner_cards_count - fp.dCs.length);
+                  }
+                  window.postMessage({
+                    type: "AUTOTOOL_PARTNER_PLAYED",
+                    profile_name: getProfileName(),
+                    played_cards: fp.dCs,
+                    partner_name: fp.dn || fp.u,
+                  }, "*");
+                }
+              } else if (fp.pS === 2) {
+                // Có người vừa Bỏ lượt / Pass
+                console.log(`[AutoTool V3] Người chơi ${fp.dn || fp.u} BỎ LƯỢT (Pass).`);
+                if (!isMe(fp)) {
+                  // Đối phương bỏ lượt -> bàn trống, chuẩn bị vòng tự do mới!
+                  G.__last_table_cards = null;
+                }
+              }
+
+              // Kiểm tra xem có phải tới lượt của mình không
+              if (tp && isMe(tp)) {
+                console.log(`[AutoTool V3] >>> TỚI LƯỢT CỦA TÔI! Bài trên tay: ${G.__my_cards ? G.__my_cards.length : 0} lá <<<`);
+                handleAutoTurn();
+              }
+            }
+
+            // cmd 252: Kết thúc ván bài (Game Ended)
+            if (p.cmd === 252) {
+              G.__game_in_progress = false;
+              G.__my_cards = [];
+              G.__last_table_cards = null;
+              G.__last_table_player = null;
+              const winner = p.fP ? (p.fP.dn || p.fP.u || "Người thắng") : "Kết thúc ván";
+              console.log(`[AutoTool V3] 🏆 VÁN BÀI KẾT THÚC! Người thắng: ${winner}`);
+              window.postMessage({
+                type: "AUTOTOOL_GAME_ENDED",
+                profile_name: getProfileName(),
+                winner: winner,
+                result: p,
+              }, "*");
+
+              // VÒNG LẶP CHƠI TIẾP TỰ ĐỘNG (CONTINUOUS LOOP):
+              if (G.__AUTOTOOL_AUTO_HUNT) {
+                // 1. Tự động gửi Sẵn Sàng sau 1.5s
+                setTimeout(() => {
+                  console.log("[AutoTool V3] Tự động gửi SẴN SÀNG (cmd 363) cho ván kế tiếp...");
+                  G.__autotool_exec_ready();
+                }, 1500);
+
+                // 2. Chủ bàn tự động gửi Bắt Đầu sau 2.5s
+                const pName = (getProfileName() || "").toLowerCase();
+                if (pName.includes("1") || G.__is_hunt_initiator) {
+                  setTimeout(() => {
+                    console.log("[AutoTool V3] Chủ bàn tự động gửi BẮT ĐẦU (cmd 364) cho ván kế tiếp!");
+                    G.__autotool_exec_start();
+                  }, 2500);
+                }
               }
             }
           }
@@ -480,13 +840,33 @@
     return true;
   };
 
-  G.__autotool_exec_discard = function (cardIds) {
-    console.log("[AutoTool V3] Thực thi lệnh ĐÁNH BÀI:", cardIds);
-    if (Array.isArray(cardIds) && cardIds.length > 0) {
-      const payload = { cmd: 352, c: cardIds };
-      G.__ws_send_channel("Simms", JSON.stringify([6, "Simms", "channelPlugin", payload]));
+  G.__autotool_exec_play = function (cardIds) {
+    if (!Array.isArray(cardIds) || cardIds.length === 0) return false;
+    console.log("[AutoTool V3] >>> THỰC THI GỬI LỆNH ĐÁNH BÀI (cmd 253):", cardIds);
+    const packet = JSON.stringify([5, "Simms", -1, { cmd: 253, cs: cardIds }]);
+    const simms = G.__ws_get_simms();
+    if (simms && simms.readyState === 1) {
+      simms.send(packet);
+      push("inject", packet);
+      return true;
     }
-    return true;
+    return false;
+  };
+
+  G.__autotool_exec_pass = function () {
+    console.log("[AutoTool V3] >>> THỰC THI GỬI LỆNH BỎ LƯỢT / PASS (cmd 254) <<<");
+    const packet = JSON.stringify([5, "Simms", -1, { cmd: 254 }]);
+    const simms = G.__ws_get_simms();
+    if (simms && simms.readyState === 1) {
+      simms.send(packet);
+      push("inject", packet);
+      return true;
+    }
+    return false;
+  };
+
+  G.__autotool_exec_discard = function (cardIds) {
+    return G.__autotool_exec_play(cardIds);
   };
 
   G.__AUTOTOOL_ARMED = true;

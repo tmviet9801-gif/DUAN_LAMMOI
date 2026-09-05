@@ -324,13 +324,33 @@ class ExtensionHubManager:
             if isinstance(pls, list):
                 state["players"] = pls
 
-        # 5. Cập nhật bài được chia
-        elif msg_type in ("CARDS_DEALT", "HAND_INFO"):
-            cards = msg.get("cards") or msg.get("data")
+        # 5. Cập nhật bài được chia / đánh bài
+        elif msg_type in ("CARDS_DEALT", "HAND_INFO", "CARDS_UPDATED", "AUTOTOOL_CARDS_DEALT", "AUTOTOOL_CARDS_UPDATED"):
+            cards = msg.get("cards")
+            if cards is None and isinstance(msg.get("data"), dict):
+                cards = msg.get("data", {}).get("cards")
             if isinstance(cards, list):
                 state["cards"] = cards
+                try:
+                    from models.config_model import load_accounts, save_accounts
+                    accounts = load_accounts()
+                    for a in accounts:
+                        if (a.get("name") == profile_name or 
+                            a.get("username") == profile_name or 
+                            str(a.get("id")) == str(profile_name)):
+                            a["cards"] = cards
+                            save_accounts(accounts)
+                            break
+                except Exception:
+                    pass
+
                 self._emit({
                     "type": "cards_updated",
+                    "profile_name": profile_name,
+                    "cards": cards,
+                })
+                self._emit({
+                    "type": "accounts_updated",
                     "profile_name": profile_name,
                     "cards": cards,
                 })

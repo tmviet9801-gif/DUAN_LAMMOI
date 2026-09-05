@@ -169,6 +169,38 @@ async def update_account_balance(body: UpdateBalanceIn, request: Request):
     return {"ok": True, "profile_name": p_name, "balance": val}
 
 
+class UpdateCardsIn(BaseModel):
+    profile_name: str
+    cards: list = []
+
+
+@router.post("/api/accounts/update-cards")
+async def update_account_cards(body: UpdateCardsIn, request: Request):
+    """Cập nhật danh sách bài trên tay của tài khoản."""
+    p_name = body.profile_name.strip()
+    cards = body.cards or []
+    accounts = load_accounts()
+    updated = False
+    for a in accounts:
+        if _match_account(a, p_name):
+            a["cards"] = cards
+            updated = True
+            break
+    if updated:
+        save_accounts(accounts)
+
+    ext_hub = getattr(request.app.state, "ext_hub", None)
+    if ext_hub:
+        ext_hub.handle_message(p_name, {"type": "CARDS_DEALT", "cards": cards})
+
+    events = getattr(request.app.state, "events", None)
+    if events:
+        events.publish({"type": "cards_updated", "profile_name": p_name, "cards": cards})
+        events.publish({"type": "accounts_updated", "profile_name": p_name, "cards": cards})
+
+    return {"ok": True, "profile_name": p_name, "cards": cards}
+
+
 class UpdateLogIn(BaseModel):
     profile_name: str
     log: str

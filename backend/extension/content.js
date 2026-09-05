@@ -159,8 +159,107 @@
         border: 1.5px solid #38bdf8 !important;
         color: #bae6fd !important;
       }
+
+      /* 4. IN-GAME VISUAL CARDS BAR */
+      #autotool-cards-panel {
+        position: fixed !important;
+        top: 56px !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        z-index: 2147483646 !important;
+        display: none;
+        align-items: center !important;
+        gap: 4px !important;
+        padding: 5px 12px !important;
+        border-radius: 8px !important;
+        background: rgba(15, 23, 42, 0.95) !important;
+        border: 1px solid rgba(56, 189, 248, 0.4) !important;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7) !important;
+        backdrop-filter: blur(6px) !important;
+        pointer-events: none !important;
+        user-select: none !important;
+        transition: all 0.2s ease !important;
+      }
+      #autotool-cards-panel.visible {
+        display: inline-flex !important;
+      }
+      .autotool-card-chip {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        min-width: 26px !important;
+        height: 30px !important;
+        padding: 0 5px !important;
+        border-radius: 4px !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace !important;
+        font-size: 13px !important;
+        font-weight: 800 !important;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+      }
+      .autotool-card-chip.black {
+        background: #1e293b !important;
+        color: #f8fafc !important;
+        border-color: #475569 !important;
+      }
+      .autotool-card-chip.red {
+        background: #450a0a !important;
+        color: #f87171 !important;
+        border-color: #ef4444 !important;
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
+  }
+
+  function parseCardInfo(c) {
+    if (typeof c !== "number" || c < 0 || c > 51) return null;
+    const rawRank = Math.floor(c / 4);
+    const suitIndex = c % 4;
+    const rankNames = {
+      2: "3", 3: "4", 4: "5", 5: "6", 6: "7", 7: "8", 8: "9", 9: "10",
+      10: "J", 11: "Q", 12: "K", 0: "A", 1: "2"
+    };
+    const suitIcons = ["♠", "♣", "♦", "♥"];
+    const isRed = (suitIndex === 2 || suitIndex === 3);
+    const rank = rankNames[rawRank] || "?";
+    const icon = suitIcons[suitIndex] || "";
+    return { id: c, rank, icon, isRed, text: rank + icon };
+  }
+
+  function updateCardsPanel(cards) {
+    if (window !== window.top) return;
+    ensureStyles();
+    let panel = document.getElementById("autotool-cards-panel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "autotool-cards-panel";
+      (document.body || document.documentElement).appendChild(panel);
+    }
+    if (!cards || !cards.length) {
+      panel.className = "";
+      panel.innerHTML = "";
+      return;
+    }
+    panel.className = "visible";
+    const sorted = cards.slice().sort((a, b) => {
+      function getVal(x) {
+        const r = Math.floor(x / 4);
+        if (r >= 2) return r + 1;
+        if (r === 0) return 14;
+        if (r === 1) return 15;
+        return 0;
+      }
+      const va = getVal(a), vb = getVal(b);
+      if (va !== vb) return va - vb;
+      return (a % 4) - (b % 4);
+    });
+
+    panel.innerHTML = sorted.map((c) => {
+      const info = parseCardInfo(c);
+      if (!info) return "";
+      const cls = info.isRed ? "autotool-card-chip red" : "autotool-card-chip black";
+      return `<span class="${cls}">${info.text}</span>`;
+    }).join("");
   }
 
   function updateViewBanner(htmlText, type = "lobby") {
@@ -458,6 +557,7 @@
       lastRoomInfo = null;
       pendingJoinRid = null;
       matchedPartner = "";
+      updateCardsPanel([]);
 
       const pLabel = activeProfileName || "Tool V3";
       updateViewBanner(`🏠 <b>${pLabel}</b>: Đang ở sảnh (Chờ tìm bàn)`, "lobby");
@@ -527,6 +627,71 @@
         action: ev.data.action,
         data: ev.data,
       });
+    }
+
+    // NHẬN BÀI CHIA ĐẦU VÁN HOẶC CẬP NHẬT
+    else if (ev.data.type === "AUTOTOOL_CARDS_DEALT") {
+      const cards = ev.data.cards || [];
+      updateCardsPanel(cards);
+      const pLabel = activeProfileName || "Tool V3";
+      updateViewBanner(`🃏 <b>${pLabel}</b>: Đã nhận bài (${cards.length} lá) - Đang xả bài tự động...`, "active");
+      showToast(`🃏 <b>ĐÃ CHIA BÀI (${cards.length} LÁ)!</b><br>Tự động xả bài theo thuật toán`, "info");
+
+      safeSendMessage({
+        type: "CARDS_DEALT",
+        profile_name: activeProfileName,
+        cards: cards,
+      });
+
+      requestControl("/api/accounts/update-cards", {
+        profile_name: activeProfileName,
+        cards: cards,
+      }, "POST").catch(() => {});
+    }
+
+    // CẬP NHẬT BÀI SAU KHI ĐÁNH
+    else if (ev.data.type === "AUTOTOOL_CARDS_UPDATED") {
+      const cards = ev.data.cards || [];
+      const played = ev.data.played_cards || [];
+      updateCardsPanel(cards);
+      const pLabel = activeProfileName || "Tool V3";
+      const playedText = played.map((c) => {
+        const inf = parseCardInfo(c);
+        return inf ? inf.text : c;
+      }).join(" ");
+
+      updateViewBanner(`🃏 <b>${pLabel}</b>: Đã đánh [${playedText}] (Còn ${cards.length} lá)`, "active");
+
+      safeSendMessage({
+        type: "CARDS_UPDATED",
+        profile_name: activeProfileName,
+        cards: cards,
+      });
+
+      requestControl("/api/accounts/update-cards", {
+        profile_name: activeProfileName,
+        cards: cards,
+      }, "POST").catch(() => {});
+    }
+
+    // KẾT THÚC VÁN BÀI
+    else if (ev.data.type === "AUTOTOOL_GAME_ENDED") {
+      updateCardsPanel([]);
+      const winner = ev.data.winner || "Kết thúc ván";
+      const pLabel = activeProfileName || "Tool V3";
+      updateViewBanner(`🏆 <b>VÁN BÀI KẾT THÚC!</b> (${winner} Thắng) | Chuẩn bị ván mới...`, "active");
+      showToast(`🏆 <b>VÁN BÀI KẾT THÚC!</b><br>${winner} Về Nhất!<br>Chuẩn bị ván mới tự động...`, "success");
+
+      safeSendMessage({
+        type: "CARDS_UPDATED",
+        profile_name: activeProfileName,
+        cards: [],
+      });
+
+      requestControl("/api/accounts/update-cards", {
+        profile_name: activeProfileName,
+        cards: [],
+      }, "POST").catch(() => {});
     }
   });
 

@@ -91,6 +91,46 @@
   }
   App.getFilteredProfiles = getFilteredProfiles;
 
+  function parseCardBadge(c) {
+    if (typeof c !== "number" || c < 0 || c > 51) return null;
+    const rawRank = Math.floor(c / 4);
+    const suitIndex = c % 4;
+    const rankNames = {
+      2: "3", 3: "4", 4: "5", 5: "6", 6: "7", 7: "8", 8: "9", 9: "10",
+      10: "J", 11: "Q", 12: "K", 0: "A", 1: "2"
+    };
+    const suitIcons = ["♠", "♣", "♦", "♥"];
+    const isRed = (suitIndex === 2 || suitIndex === 3);
+    const rank = rankNames[rawRank] || "?";
+    const icon = suitIcons[suitIndex] || "";
+    return { text: rank + icon, isRed };
+  }
+
+  function renderCardsHtml(cards) {
+    if (!cards || !Array.isArray(cards) || !cards.length) {
+      return '<span class="cards-empty">-</span>';
+    }
+    const sorted = cards.slice().sort((a, b) => {
+      function getVal(x) {
+        const r = Math.floor(x / 4);
+        if (r >= 2) return r + 1;
+        if (r === 0) return 14;
+        if (r === 1) return 15;
+        return 0;
+      }
+      const va = getVal(a), vb = getVal(b);
+      if (va !== vb) return va - vb;
+      return (a % 4) - (b % 4);
+    });
+
+    return '<div class="cards-deck-flex">' + sorted.map(c => {
+      const p = parseCardBadge(c);
+      if (!p) return "";
+      const cls = p.isRed ? "card-badge red" : "card-badge black";
+      return `<span class="${cls}" title="${p.text}">${p.text}</span>`;
+    }).join("") + ` <span class="cards-cnt-hint">(${sorted.length})</span></div>`;
+  }
+
   function renderProfilesTable() {
     const all = getFilteredProfiles();
     const total = all.length;
@@ -106,7 +146,7 @@
     tbody.innerHTML = "";
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="13" class="hint" style="text-align:center; padding: 20px;">Không có profile nào.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="14" class="hint" style="text-align:center; padding: 20px;">Không có profile nào.</td></tr>';
     }
 
     const allChecked = rows.length > 0 && rows.every((a) => App.selectedProfileIds.has(a.id));
@@ -126,6 +166,7 @@
         ? Number(a.balance).toLocaleString() 
         : (a.balance || "--");
       const roomStr = a.room ? App.esc(String(a.room)) : "-";
+      const cardsHtml = renderCardsHtml(a.cards);
       const logStr = a.log ? App.esc(String(a.log)) : (isOpen ? "Đang chạy Chrome" : "Sẵn sàng");
       const statusText = isOpen ? "Live" : (a.status || "Idle");
       const statusBadge = `<span class="${statusText === 'Live' ? 'badge-live' : 'badge-idle'}">${statusText}</span>`;
@@ -139,6 +180,7 @@
         <td class="td-proxy" title="${App.esc(proxy || "IP máy")}">${proxy ? App.esc(proxy) : '<span class="ip-local">IP máy</span>'}</td>
         <td class="td-balance">${balanceStr}</td>
         <td class="td-room">${roomStr}</td>
+        <td class="td-cards">${cardsHtml}</td>
         <td class="td-log" title="${logStr}">${logStr}</td>
         <td>${statusBadge}</td>
         <td><button class="btn-tbl btn-tb cyan btn-row-find" title="Tìm phòng cho ${App.esc(a.name)}">Tìm.P</button></td>

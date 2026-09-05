@@ -199,7 +199,62 @@ function renderInfo(info) {
       alertBox.classList.add("hidden");
     }
   }
+
+  // 4. Cards on Hand list
+  const cardsListEl = document.getElementById("popup-cards-list");
+  const handCountEl = document.getElementById("hand-count");
+  const roleBadgeEl = document.getElementById("role-badge");
+
+  const cards = info.cards || [];
+  if (handCountEl) handCountEl.textContent = cards.length;
+
+  if (roleBadgeEl) {
+    const pName = (activeTab || "").toLowerCase();
+    const role = (pName.includes("2") || pName.includes("sub") || pName.includes("phu")) ? "DUMP (Xả bài)" : "WINNER (Gom bài)";
+    roleBadgeEl.textContent = `Role: ${role}`;
+  }
+
+  if (cardsListEl) {
+    if (!cards.length) {
+      cardsListEl.innerHTML = '<span class="empty-hint">Chưa vào ván bài / Hết bài</span>';
+    } else {
+      const sorted = cards.slice().sort((a, b) => {
+        function getVal(x) {
+          const r = Math.floor(x / 4);
+          if (r >= 2) return r + 1;
+          if (r === 0) return 14;
+          if (r === 1) return 15;
+          return 0;
+        }
+        const va = getVal(a), vb = getVal(b);
+        if (va !== vb) return va - vb;
+        return (a % 4) - (b % 4);
+      });
+
+      function parseCard(c) {
+        const rawRank = Math.floor(c / 4);
+        const suitIndex = c % 4;
+        const rankNames = {
+          2: "3", 3: "4", 4: "5", 5: "6", 6: "7", 7: "8", 8: "9", 9: "10",
+          10: "J", 11: "Q", 12: "K", 0: "A", 1: "2"
+        };
+        const suitIcons = ["♠", "♣", "♦", "♥"];
+        const isRed = (suitIndex === 2 || suitIndex === 3);
+        const rank = rankNames[rawRank] || "?";
+        const icon = suitIcons[suitIndex] || "";
+        return { text: rank + icon, isRed };
+      }
+
+      cardsListEl.innerHTML = sorted.map((c) => {
+        const p = parseCard(c);
+        if (!p) return "";
+        const cls = p.isRed ? "card-badge red" : "card-badge black";
+        return `<span class="${cls}">${p.text}</span>`;
+      }).join("");
+    }
+  }
 }
+
 
 async function callBackend(path, method = "GET", body = null) {
   // Luôn ưu tiên dùng background service worker để tránh lỗi Mixed Content/CSP
