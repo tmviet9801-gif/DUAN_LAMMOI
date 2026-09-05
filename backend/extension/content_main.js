@@ -332,15 +332,23 @@
           if (p) {
             // cmd 100: Thông tin User, Số dư & Trạng thái Sảnh
             if (p.cmd === 100) {
-              if (p.uid || p.id) G.__my_uid = p.uid || p.id;
+              if (p.uid || p.id) {
+                G.__my_uid = p.uid || p.id;
+                window.__my_uid = G.__my_uid;
+              }
               if (p.dn || p.u) {
                 const realUser = p.dn || p.u;
                 G.__my_dn = realUser;
+                G.__my_u = p.u || realUser;
+                window.__my_dn = G.__my_dn;
+                window.__my_u = G.__my_u;
+                window.__user_info = { uid: G.__my_uid, dn: G.__my_dn, u: G.__my_u };
                 if (!G.__AUTOTOOL_PROFILE_NAME || G.__AUTOTOOL_PROFILE_NAME.includes("HitClub")) {
                   G.__AUTOTOOL_PROFILE_NAME = realUser;
                   window.postMessage({
                     type: "AUTOTOOL_INIT_PROFILE",
                     profile_name: realUser,
+                    user_info: window.__user_info,
                   }, "*");
                 }
               }
@@ -370,43 +378,45 @@
               if (x.C === true || x.C === "true" || x.cs !== undefined) return true; // C: cờ native của Cocos cho tab local
               if (G.__my_uid && x.uid && String(x.uid) === String(G.__my_uid)) return true;
               if (G.__my_dn) {
-                const d1 = String(x.dn || x.u || "").trim().toLowerCase();
+                const d1 = String(x.dn || "").trim().toLowerCase();
                 const d2 = String(G.__my_dn).trim().toLowerCase();
                 if (d1 && d1 === d2) return true;
               }
-              const pName = (getProfileName() || "").toLowerCase();
-              const dn = String(x.dn || x.u || "").toLowerCase();
-              const cMy = pName.replace(/[^a-z0-9]/g, "");
-              const cTarget = dn.replace(/[^a-z0-9]/g, "");
-              if (cMy && cTarget) {
-                if (cMy === cTarget) return true;
-                // Đối chiếu theo hậu tố số 1 vs 2 (Account 1 vs Account 2)
-                if (cMy.endsWith("1") && cTarget.endsWith("1")) return true;
-                if (cMy.endsWith("2") && cTarget.endsWith("2")) return true;
+              if (G.__my_u) {
+                const u1 = String(x.u || "").trim().toLowerCase();
+                const u2 = String(G.__my_u).trim().toLowerCase();
+                if (u1 && u1 === u2) return true;
+              }
+              const pName = (getProfileName() || "").trim().toLowerCase();
+              if (pName) {
+                const dn = String(x.dn || "").trim().toLowerCase();
+                const u = String(x.u || "").trim().toLowerCase();
+                if (dn === pName || u === pName) return true;
               }
               return false;
             }
 
-            // Hàm kiểm tra người chơi là đồng đội
+            // Hàm kiểm tra người chơi là đồng đội (so khớp chính xác 100%, loại bỏ hoàn toàn nhận diện nhầm theo đuôi 1, 2)
             function isPartner(x) {
               if (!x || isMe(x)) return false;
-              const pName = (G.__my_dn || getProfileName() || "").toLowerCase();
-              const dn = String(x.dn || x.u || "").toLowerCase();
-              const cMy = pName.replace(/[^a-z0-9]/g, "");
-              const cTarget = dn.replace(/[^a-z0-9]/g, "");
+              const targetUid = x.uid !== undefined ? String(x.uid).trim() : "";
+              const targetDn = String(x.dn || "").trim().toLowerCase();
+              const targetU = String(x.u || "").trim().toLowerCase();
 
-              // Đối chiếu đối nghịch giữa Slot 1 và Slot 2
-              if (cMy.endsWith("1") && cTarget.endsWith("2")) return true;
-              if (cMy.endsWith("2") && cTarget.endsWith("1")) return true;
-
-              const partnerList = (G.__autotool_partners || []).map((pt) => (pt || "").toLowerCase().replace(/[^a-z0-9]/g, ""));
+              const partnerList = G.__autotool_partners || [];
               for (const pt of partnerList) {
                 if (!pt) continue;
-                if (cTarget === pt) return true;
-                if (cTarget.length >= 5 && pt.length >= 5 && (cTarget.includes(pt) || pt.includes(cTarget))) return true;
-              }
-              if (G.__is_matched_locked && G.__last_room_info && G.__last_room_info.partner_found) {
-                return true;
+                if (typeof pt === "object") {
+                  if (pt.uid && targetUid && String(pt.uid).trim() === targetUid) return true;
+                  if (pt.dn && targetDn && String(pt.dn).trim().toLowerCase() === targetDn) return true;
+                  if (pt.u && targetU && String(pt.u).trim().toLowerCase() === targetU) return true;
+                } else if (typeof pt === "string") {
+                  const ptStr = pt.trim().toLowerCase();
+                  if (targetDn === ptStr || targetU === ptStr) return true;
+                  const cTarget = targetDn.replace(/[^a-z0-9]/g, "");
+                  const cPt = ptStr.replace(/[^a-z0-9]/g, "");
+                  if (cTarget && cPt && cTarget === cPt) return true;
+                }
               }
               return false;
             }
@@ -499,8 +509,9 @@
                     console.log(`[AutoTool V3] [cmd 200] ĐỒNG ĐỘI ${player.dn || player.u} VỪA BƯỚC VÀO BÀN!`);
                     triggerVerifiedMatchReadyAndStart(player.dn || player.u, "cmd:200 Join");
                   } else {
-                    // KHÁCH LẠ VÀO BÀN -> TỰ ĐỘNG OUT SAU 300MS
-                    console.warn(`[AutoTool V3] [cmd 200] PHÁT HIỆN KHÁCH LẠ ${player.dn || player.u} VÀO BÀN -> Tự động out sau 300ms!`);
+                    // KHÁCH LẠ VÀO BÀN -> TỰ ĐỘNG OUT SAU 600MS - 900MS (Tránh flood và tránh nghi ngờ bot)
+                    const leaveDelay = 600 + Math.floor(Math.random() * 300);
+                    console.warn(`[AutoTool V3] [cmd 200] PHÁT HIỆN KHÁCH LẠ ${player.dn || player.u} VÀO BÀN -> Tự động out sau ${leaveDelay}ms!`);
                     window.postMessage({
                       type: "AUTOTOOL_AUTO_LEAVING",
                       profile_name: getProfileName(),
@@ -508,7 +519,7 @@
                     }, "*");
                     setTimeout(() => {
                       G.__autotool_exec_leave();
-                    }, 300);
+                    }, leaveDelay);
                   }
                 }
               } else if (actionType === 2) {
@@ -609,9 +620,10 @@
                   // ĐÃ KHỚP ĐỒNG ĐỘI THÀNH CÔNG!
                   triggerVerifiedMatchReadyAndStart(partner.dn || partner.u, "cmd:202 RoomPlayers");
                 } else if (strangers.length > 0) {
-                  // CÓ KHÁCH LẠ -> TỰ ĐỘNG OUT BÀN TỨC THÌ (300ms)
+                  // CÓ KHÁCH LẠ -> TỰ ĐỘNG OUT BÀN TỰ NHIÊN (600 - 900ms)
                   const guestNames = strangers.map((g) => g.dn || g.u || "Khách").join(", ");
-                  console.warn(`[AutoTool V3] Phát hiện khách lạ: ${guestNames} -> Tự động out sau 300ms!`);
+                  const leaveDelay = 600 + Math.floor(Math.random() * 300);
+                  console.warn(`[AutoTool V3] Phát hiện khách lạ: ${guestNames} -> Tự động out sau ${leaveDelay}ms!`);
                   window.postMessage({
                     type: "AUTOTOOL_AUTO_LEAVING",
                     profile_name: getProfileName(),
@@ -619,7 +631,7 @@
                   }, "*");
                   setTimeout(() => {
                     G.__autotool_exec_leave();
-                  }, 300);
+                  }, leaveDelay);
                 } else {
                   // ĐANG NGỒI 1 MÌNH CHỜ ĐỒNG ĐỘI -> Chờ 5.0s, nếu không có ai thì out tìm lại
                   if (!G.__is_matched_locked) {
@@ -668,8 +680,8 @@
                 if (pName.includes("1") || G.__is_hunt_initiator) {
                   if (G.__hunt_retry_timer) clearTimeout(G.__hunt_retry_timer);
 
-                  // ANTI-FLOOD JITTER: Giãn cách ngẫu nhiên an toàn 850ms - 1400ms
-                  const jitterDelay = 850 + Math.floor(Math.random() * 550);
+                  // ANTI-FLOOD JITTER: Giãn cách ngẫu nhiên an toàn 1800ms - 2500ms (Tránh Rate-Limit máy chủ)
+                  const jitterDelay = 1800 + Math.floor(Math.random() * 700);
                   console.log(`[AutoTool V3] [Anti-Flood Jitter] Tự động thử lại lượt ghép mới sau ${jitterDelay}ms...`);
 
                   G.__hunt_retry_timer = setTimeout(() => {
@@ -992,6 +1004,13 @@
   };
 
   G.__autotool_exec_ready = function () {
+    // BẢO VỆ CHẶN: Chỉ sẵn sàng nếu đã có đồng đội được xác thực trong phòng
+    const partner = (G.__room_players || []).find(isPartner);
+    if (!partner && G.__room_players && G.__room_players.length > 1) {
+      console.warn("[AutoTool V3] BẢO VỆ CHẶN: Trong phòng chỉ có khách lạ, không có đồng đội! TỪ CHỐI Sẵn Sàng / Bắt Đầu!");
+      G.__autotool_exec_leave();
+      return false;
+    }
     console.log("[AutoTool V3] Thực thi lệnh SẴN SÀNG & BẮT ĐẦU (cmd 5 + cmd 363)...");
     const p1 = '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]';
     const p2 = '[5,"Simms",-1,{"cmd":5}]';

@@ -72,7 +72,15 @@ class ExtensionHubManager:
         # Đồng bộ danh sách đồng đội (Partners) tức thời cho tất cả các tab
         active_names = list(self.active_sockets.keys())
         for name in active_names:
-            partners = [p for p in active_names if p != name]
+            partners = []
+            for p in active_names:
+                if p != name:
+                    p_state = self.profile_states.get(p) or {}
+                    partners.append(p)
+                    if p_state.get("dn"):
+                        partners.append(p_state.get("dn"))
+                    if p_state.get("u"):
+                        partners.append(p_state.get("u"))
             asyncio.create_task(self.send_command(name, "SYNC_PARTNERS", {
                 "partners": partners,
                 "all_profiles": active_names,
@@ -159,6 +167,29 @@ class ExtensionHubManager:
             return
 
         msg_type = msg.get("type") or msg.get("action")
+
+        # 0. Cập nhật Định Danh In-Game (DN, U, UID) từ Extension
+        if msg_type in ("AUTOTOOL_INIT_PROFILE", "INIT_PROFILE", "PROFILE_INIT") or msg.get("user_info"):
+            u_info = msg.get("user_info") or {}
+            dn = u_info.get("dn") or msg.get("dn")
+            u = u_info.get("u") or msg.get("u")
+            uid = u_info.get("uid") or msg.get("uid")
+            if dn: state["dn"] = dn
+            if u: state["u"] = u
+            if uid: state["uid"] = uid
+            active_names = list(self.active_sockets.keys())
+            for n in active_names:
+                p_list = []
+                for p in active_names:
+                    if p != n:
+                        st = self.profile_states.get(p) or {}
+                        p_list.append(p)
+                        if st.get("dn"): p_list.append(st.get("dn"))
+                        if st.get("u"): p_list.append(st.get("u"))
+                asyncio.create_task(self.send_command(n, "SYNC_PARTNERS", {
+                    "partners": p_list,
+                    "all_profiles": active_names,
+                }))
 
         # 1. Cập nhật Số Dư (Balance) Realtime từ Extension
         if msg_type in ("BALANCE_UPDATE", "AUTOTOOL_BALANCE_UPDATE"):

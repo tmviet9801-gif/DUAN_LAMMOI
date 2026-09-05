@@ -264,15 +264,16 @@ async def _is_in_tldl_lobby_util(p):
     if not p:
         return False
     try:
-        from PIL import Image
-        import io
-        png_bytes = await p.screenshot(type="png")
-        im = Image.open(io.BytesIO(png_bytes))
-        w, h = im.size
-        r1, g1, b1 = im.getpixel((int(w * 0.290), int(h * 0.310)))[:3]
-        r2, g2, b2 = im.getpixel((int(w * 0.500), int(h * 0.310)))[:3]
-        is_green_tables = (r1 < 40 and g1 > 70 and b1 < 40) and (r2 < 40 and g2 > 70 and b2 < 40)
-        return is_green_tables
+        # Kiểm tra trạng thái sảnh qua biến bộ nhớ Extension V3 (0ms, không tốn CPU/CDP)
+        in_table = await p.evaluate("""() => {
+            const r = window.__last_room_info;
+            if (r && r.rid > 0 && r.rid !== 100) {
+                if (window.__game_in_progress) return true;
+                if (window.__room_players && window.__room_players.length > 0) return true;
+            }
+            return false;
+        }""")
+        return not in_table
     except Exception:
         return False
 
@@ -337,29 +338,15 @@ async def _do_leave_room(p, name="Profile", target_mu=2):
         log.info("_do_leave_room: %s đã ở sẵn sảnh bàn Đếm Lá, giữ nguyên vị trí tại sảnh bàn.", name)
         return
 
-    # 1. Gửi lệnh WebSocket rời bàn tức thì qua mọi kênh có sẵn (Main World V3 + sniffer)
+    # 1. Gửi lệnh WebSocket rời bàn tức thì chuẩn giao thức Simms (duy nhất 1 lần, không flood socket)
     try:
         await p.evaluate("""(() => {
             try {
                 if (typeof window.__autotool_exec_leave === 'function') {
                     window.__autotool_exec_leave();
-                }
-                if (typeof window.__ws_send_channel === 'function') {
-                    window.__ws_send_channel('Simms', '[4,"Simms",-1]');
-                    window.__ws_send_channel('Simms', '[6,"Simms","channelPlugin",{"cmd":203}]');
-                }
-                if (typeof window.__ws_send === 'function') {
+                } else if (typeof window.__ws_send === 'function') {
                     window.__ws_send('[4,"Simms",-1]');
-                    window.__ws_send('[6,"Simms","channelPlugin",{"cmd":203}]');
                 }
-                (window.__ws_instances || []).forEach(ws => {
-                    try {
-                        if (ws.readyState === 1) {
-                            ws.send('[4,"Simms",-1]');
-                            ws.send('[6,"Simms","channelPlugin",{"cmd":203}]');
-                        }
-                    } catch(e) {}
-                });
             } catch(e) {}
         })()""")
     except Exception:
@@ -1307,18 +1294,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             return 784, 505
 
     async def _is_in_tldl_lobby(p):
-        if not p:
-            return False
-        try:
-            png_bytes = await p.screenshot(type="png")
-            im = Image.open(io.BytesIO(png_bytes))
-            w, h = im.size
-            r1, g1, b1 = im.getpixel((int(w * 0.290), int(h * 0.310)))[:3]
-            r2, g2, b2 = im.getpixel((int(w * 0.500), int(h * 0.310)))[:3]
-            is_green_tables = (r1 < 40 and g1 > 70 and b1 < 40) and (r2 < 40 and g2 > 70 and b2 < 40)
-            return is_green_tables
-        except Exception:
-            return False
+        return await _is_in_tldl_lobby_util(p)
 
     async def _ensure_in_tldl_lobby(p, name="Profile"):
         return await _ensure_in_tldl_lobby_util(p, name=name, target_mu=target_mu)
@@ -1480,17 +1456,19 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                      selected_rid, bet_val)
             await _set_hud_status(anchor_page, f"Đang giữ bàn #{selected_rid}! Đợi đồng đội vào...")
 
-            # Lấy định danh username và display name của Account 1
+            # Lấy định danh username, display name và uid của Account 1
             anchor_user_info = {}
             try:
                 anchor_user_info = await anchor_page.evaluate("""() => ({
-                    u: (window.__user_info && window.__user_info.u) || window.__my_username || '',
-                    dn: (window.__user_info && (window.__user_info.dn || window.__user_info.name)) || ''
+                    u: window.__my_u || (window.__user_info && window.__user_info.u) || window.__my_username || '',
+                    dn: window.__my_dn || (window.__user_info && (window.__user_info.dn || window.__user_info.name)) || '',
+                    uid: window.__my_uid || (window.__user_info && window.__user_info.uid) || ''
                 })""")
             except Exception:
                 pass
             anchor_u = str(anchor_user_info.get("u") or "").lower().strip()
             anchor_dn = str(anchor_user_info.get("dn") or "").lower().strip()
+            anchor_uid = str(anchor_user_info.get("uid") or "").strip()
 
             # BƯỚC 3: ĐIỀU PHỐI CÁC TÀI KHOẢN PHỤ JOIN VÀO NHANH CHÓNG THEO ID (BÀN CÔNG CỘNG KHÔNG PASS)
             all_subs_matched = True
@@ -1499,32 +1477,27 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     break
                 sub_p = pages[sub_name]
                 log.info("find-and-match: Gửi lệnh join bàn công cộng #%s cho %s nhanh chóng...", selected_rid, sub_name)
-                await _set_hud_status(sub_p, f"Đang join vào bàn #{selected_rid} của {anchor_name}...")
+                # Đồng bộ định danh của Account 1 sang cho Account 2 (để Account 2 nhận diện chính xác 100% đồng đội)
+                try:
+                    p_info_anchor = {"dn": anchor_dn, "u": anchor_u, "uid": anchor_uid, "profile_name": anchor_name}
+                    await sub_p.evaluate(f"() => {{ window.__autotool_partners = [{_json.dumps(p_info_anchor)}]; if (window.__autotool_partners) globalThis.__autotool_partners = window.__autotool_partners; }}")
+                    if ext_hub and ext_hub.is_connected(sub_name):
+                        await ext_hub.send_command(sub_name, "SYNC_PARTNERS", {"partners": [p_info_anchor, anchor_name, anchor_dn, anchor_u]})
+                except Exception:
+                    pass
 
-                # V3: Bắn lệnh tức thời qua Extension Hub (<2ms)
+                # V3: Bắn lệnh tức thời qua Extension Hub (<2ms) — DÙNG GÓI CHUẨN DUY NHẤT (không send_raw gói rác)
                 ext_hub = getattr(request.app.state, "ext_hub", None)
                 if ext_hub and ext_hub.is_connected(sub_name):
                     log.info("find-and-match: >>> V3 Extension Hub: Gửi lệnh JOIN bàn #%s tới %s (0ms)...", selected_rid, sub_name)
                     await ext_hub.send_command(sub_name, "JOIN_ROOM", {
                         "rid": int(selected_rid), "bet": bet_val, "mu": target_mu
                     })
-
-                payload_join = {
-                    "cmd": 308, "aid": 1, "gid": gid, "b": bet_val, "Mu": target_mu,
-                    "iJ": True, "inc": False, "pwd": "", "rid": int(selected_rid)
-                }
-                try:
-                    await adapter.sniffer.send_raw(sub_p, _json.dumps([6, "Simms", "channelPlugin", payload_join]))
-                except Exception:
-                    pass
-                try:
-                    await adapter.sniffer.send_raw(sub_p, f'[3,"Simms",1,{{"rid":{selected_rid}}}]')
-                except Exception:
-                    pass
-                try:
-                    await adapter.sniffer.send_raw(sub_p, f'[3,"Simms",1,"{selected_rid}"]')
-                except Exception:
-                    pass
+                else:
+                    try:
+                        await sub_p.evaluate(f"() => typeof window.__autotool_exec_join === 'function' && window.__autotool_exec_join({selected_rid}, {bet_val}, {target_mu})")
+                    except Exception:
+                        pass
 
                 # Chờ sub_p vào bàn (tối đa 4.5s)
                 sub_matched = False
@@ -1535,14 +1508,19 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     if await _is_in_tldl_lobby(sub_p):
                         continue
 
-                    # Sub đã vào 1 phòng -> Kiểm tra xem có phải cùng phòng với Account 1 không
-                    sub_rid = None
+                    # Lấy định danh và danh sách người chơi trong phòng của Account 2 và Account 1
+                    sub_user_info = {}
                     try:
-                        s_val = await sub_p.evaluate("() => (window.__last_room_info && window.__last_room_info.rid) || window.__ws_last_room_id || null")
-                        if s_val and int(s_val) > 0 and int(s_val) != 100:
-                            sub_rid = int(s_val)
+                        sub_user_info = await sub_p.evaluate("""() => ({
+                            u: window.__my_u || (window.__user_info && window.__user_info.u) || window.__my_username || '',
+                            dn: window.__my_dn || (window.__user_info && (window.__user_info.dn || window.__user_info.name)) || '',
+                            uid: window.__my_uid || (window.__user_info && window.__user_info.uid) || ''
+                        })""")
                     except Exception:
                         pass
+                    sub_u = str(sub_user_info.get("u") or "").lower().strip()
+                    sub_dn = str(sub_user_info.get("dn") or "").lower().strip()
+                    sub_uid = str(sub_user_info.get("uid") or "").strip()
 
                     sub_pls = []
                     try:
@@ -1556,25 +1534,39 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     except Exception:
                         pass
 
+                    # 1. Account 2 phải nhìn thấy Account 1 trong phòng của mình:
                     has_anchor = False
-                    if anchor_u or anchor_dn:
-                        for pl in sub_pls:
-                            if isinstance(pl, dict):
-                                u = str(pl.get("u") or "").lower().strip()
-                                dn = str(pl.get("dn") or "").lower().strip()
-                                if (anchor_u and u == anchor_u) or (anchor_dn and dn == anchor_dn):
-                                    has_anchor = True
-                                    break
+                    for pl in sub_pls:
+                        if isinstance(pl, dict):
+                            p_u = str(pl.get("u") or "").lower().strip()
+                            p_dn = str(pl.get("dn") or "").lower().strip()
+                            p_uid = str(pl.get("uid") or "").strip()
+                            if (anchor_dn and p_dn == anchor_dn) or (anchor_u and p_u == anchor_u) or (anchor_uid and p_uid == anchor_uid):
+                                has_anchor = True
+                                break
 
-                    # Điều kiện hợp lệ: trùng RID, hoặc thấy Account 1 trong phòng, hoặc cả 2 phòng đều có >= 2 người
-                    if (sub_rid and int(sub_rid) == int(selected_rid)) or has_anchor or (len(sub_pls) >= 2 and len(anchor_pls) >= 2):
+                    # 2. Account 1 phải nhìn thấy Account 2 trong phòng của mình:
+                    has_sub = False
+                    for pl in anchor_pls:
+                        if isinstance(pl, dict):
+                            p_u = str(pl.get("u") or "").lower().strip()
+                            p_dn = str(pl.get("dn") or "").lower().strip()
+                            p_uid = str(pl.get("uid") or "").strip()
+                            if (sub_dn and p_dn == sub_dn) or (sub_u and p_u == sub_u) or (sub_uid and p_uid == sub_uid):
+                                has_sub = True
+                                break
+
+                    # ĐIỀU KIỆN KHỚP BẮT BUỘC: CẢ HAI BÊN PHẢI CÙNG THẤY NHAU (TWO-WAY MUTUAL VERIFICATION)
+                    # Tuyệt đối không dùng so sánh trùng RID ảo (sub_rid == 2) hay đếm số người >= 2!
+                    if has_anchor and has_sub:
                         sub_matched = True
-                        log.info("find-and-match: >>> XÁC NHẬN: %s ĐÃ VÀO CHUNG BÀN #%s VỚI %s! <<<", sub_name, selected_rid, anchor_name)
+                        log.info("find-and-match: >>> XÁC NHẬN CHÍNH XÁC: %s và %s ĐÃ Ở CHUNG BÀN! <<<", sub_name, anchor_name)
                         break
                     else:
-                        # CƠ CHẾ BẢO VỆ: Nếu Account 2 vào phòng mà KHÔNG CÓ Account 1 (hoặc phòng trống một mình)
-                        # LẬP TỨC OUT VỀ SẢNH BÀN ĐẾM LÁ NGAY, không bao giờ được ở lại phòng trống một mình!
-                        log.warning("find-and-match: BẢO VỆ: %s vào phòng nhưng KHÔNG CÓ %s (hoặc phòng trống 1 mình)! Thoát ngay về sảnh bàn Đếm Lá!", sub_name, anchor_name)
+                        # CƠ CHẾ BẢO VỆ: Nếu Account 2 vào phòng mà KHÔNG CÓ Account 1 (hoặc phòng người lạ)
+                        # LẬP TỨC OUT VỀ SẢNH BÀN ĐẾM LÁ NGAY, không bao giờ được ở lại phòng người lạ!
+                        log.warning("find-and-match: BẢO VỆ: %s không ở chung bàn với %s (has_anchor=%s, has_sub=%s)! Thoát ngay về sảnh bàn Đếm Lá!", 
+                                    sub_name, anchor_name, has_anchor, has_sub)
                         await _do_leave_room(sub_p, name=sub_name, target_mu=target_mu)
                         await _ensure_in_tldl_lobby(sub_p, sub_name)
                         break
@@ -1596,6 +1588,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 await _do_leave_room(anchor_page, name=anchor_name, target_mu=target_mu)
                 await _ensure_in_tldl_lobby(anchor_page, anchor_name)
                 await asyncio.sleep(0.8)
+
 
         if not found_match or not selected_rid:
             return {
@@ -1630,72 +1623,58 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 "room_name": f"Bàn #{selected_rid} (${bet_val})",
             }
 
-        # BƯỚC 6: TIẾN HÀNH SẴN SÀNG -> BẮT ĐẦU -> XẢ BÀI
-        # 1. Các tài khoản phụ bấm [ SẴN SÀNG ]
+        # BƯỚC 6: TIẾN HÀNH SẴN SÀNG -> BẮT ĐẦU -> XẢ BÀI (HỢP NHẤT 1 LUỒNG EXTENSION V3 DUY NHẤT)
+        # 1. Các tài khoản phụ gửi [ SẴN SÀNG ]
         for sub_name in other_profiles:
             sub_p = pages[sub_name]
             ext_hub = getattr(request.app.state, "ext_hub", None)
             if ext_hub and ext_hub.is_connected(sub_name):
                 log.info("find-and-match: >>> V3 Extension Hub: Bắn lệnh SẴN SÀNG cho %s (0ms)...", sub_name)
                 await ext_hub.send_command(sub_name, "READY")
+            else:
+                try:
+                    await sub_p.evaluate("() => typeof window.__autotool_exec_ready === 'function' && window.__autotool_exec_ready()")
+                except Exception:
+                    pass
+            await asyncio.sleep(0.3)
 
-            sw_b, sh_b = await _get_screen_size(sub_p)
-            log.info("find-and-match: %s bấm nút [ SẴN SÀNG ]...", sub_name)
-            try:
-                await sub_p.evaluate("""(() => {
-                    try {
-                        if (typeof window.__autotool_exec_ready === 'function') window.__autotool_exec_ready();
-                        if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]');
-                        else if (typeof window.__ws_send === 'function') window.__ws_send('[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]');
-                    } catch(e) {}
-                })()""")
-            except Exception:
-                pass
-            await sub_p.mouse.click(int(sw_b * 0.50), int(sh_b * 0.555))
-            await asyncio.sleep(0.4)
-
-        # 2. Anchor (Chủ bàn) bấm nút [ BẮT ĐẦU ]
+        # 2. Anchor (Chủ bàn) gửi lệnh [ BẮT ĐẦU ]
         ext_hub = getattr(request.app.state, "ext_hub", None)
         if ext_hub and ext_hub.is_connected(anchor_name):
             log.info("find-and-match: >>> V3 Extension Hub: Bắn lệnh BẮT ĐẦU cho Anchor %s (0ms)...", anchor_name)
             await ext_hub.send_command(anchor_name, "START")
+        else:
+            try:
+                await anchor_page.evaluate("() => typeof window.__autotool_exec_start === 'function' && window.__autotool_exec_start()")
+            except Exception:
+                pass
+        await asyncio.sleep(1.5)  # Chờ chia bài
 
-        sw_a, sh_a = await _get_screen_size(anchor_page)
-        start_x = int(sw_a * 0.50)
-        start_y = int(sh_a * 0.555)
-        log.info("find-and-match: Anchor=%s bấm nút [ BẮT ĐẦU ]...", anchor_name)
-        try:
-            await anchor_page.evaluate("""(() => {
-                try {
-                    if (typeof window.__autotool_exec_start === 'function') window.__autotool_exec_start();
-                    if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[6,"Simms","channelPlugin",{"cmd":364}]');
-                    else if (typeof window.__ws_send === 'function') window.__ws_send('[6,"Simms","channelPlugin",{"cmd":364}]');
-                } catch(e) {}
-            })()""")
-        except Exception:
-            pass
-        await anchor_page.mouse.click(start_x, start_y)
-        await asyncio.sleep(3.5)  # Chờ chia bài xong
+        # 3. HỢP NHẤT 1 LUỒNG DUY NHẤT: EXTENSION V3 TỰ ĐỘNG XẢ BÀI QUA WEBSOCKET (cmd 253 / cmd 254)
+        # Không chạy song song CooperativeDiscardEngine click chuột mù quáng gây desync và kick khỏi server!
+        log.info("find-and-match: >>> Extension V3 tự động phân tích & xả bài tối ưu qua WebSocket (<2ms)... <<<")
+        for p_name, p in pages.items():
+            await _set_hud_status(p, f"Đang trong ván #{selected_rid} - Extension V3 tự động xả bài...")
 
-        # 3. THUẬT TOÁN MỚM BÀI TỐI ƯU (GREEDY HAND DECOMPOSITION & JOINT UTILITY OPTIMIZATION)
-        # -------------------------------------------------------------------------------------
-        from core.card_strategy import CooperativeDiscardEngine, HandDecomposition
+        # Theo dõi ván bài hoàn tất qua biến bộ nhớ Extension V3 (tối đa 45s)
+        t_game_end = time.time() + 45.0
+        while time.time() < t_game_end:
+            if _GOM_BAN_STOP:
+                break
+            game_done = False
+            try:
+                in_prog = await anchor_page.evaluate("() => Boolean(window.__game_in_progress)")
+                cards_cnt = await anchor_page.evaluate("() => (window.__my_cards || []).length")
+                if not in_prog and cards_cnt == 0:
+                    game_done = True
+            except Exception:
+                pass
 
-        primary_sub_page = pages[other_profiles[0]] if other_profiles else None
-        primary_sub_name = other_profiles[0] if other_profiles else "Phụ"
+            if game_done:
+                log.info("find-and-match: >>> VÁN BÀI KẾT THÚC THÀNH CÔNG QUA EXTENSION V3! <<<")
+                break
+            await asyncio.sleep(1.0)
 
-        savings = HandDecomposition.compute_theoretical_savings(bet_val)
-        log.info("find-and-match: Kích hoạt CooperativeDiscardEngine: Tiết kiệm %s%% phế bàn, Acc 2 thua tối thiểu %s", 
-                 savings["savings_percent"], savings["loss_optimal"])
-
-        engine = CooperativeDiscardEngine(
-            anchor_page=anchor_page,
-            sub_page=primary_sub_page,
-            anchor_name=anchor_name,
-            sub_name=primary_sub_name
-        )
-        await engine.execute_optimal_discard()
-        await asyncio.sleep(1.5)
 
         # BƯỚC 7: BẪY KHÁCH LẠ SẴN SÀNG (NẾU BẬT auto_start_guest_ss)
         guest_found = False
