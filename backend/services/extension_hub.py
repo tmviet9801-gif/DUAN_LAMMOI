@@ -355,6 +355,14 @@ class ExtensionHubManager:
                     "cards": cards,
                 })
 
+                # Chuyển tiếp bài đồng đội sang các tab khác cùng online (<2ms)
+                for other_profile in list(self.active_sockets.keys()):
+                    if other_profile != profile_name:
+                        asyncio.create_task(self.send_command(other_profile, "PARTNER_CARDS_SHARED", {
+                            "source_profile": profile_name,
+                            "cards": cards,
+                        }))
+
         # 6. Trạng thái rời bàn / Đang ở sảnh
         elif msg_type in ("ROOM_LEFT", "LEAVE_ROOM", "AUTOTOOL_ROOM_LEFT"):
             state["room_info"] = None

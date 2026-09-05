@@ -207,6 +207,30 @@
         color: #f87171 !important;
         border-color: #ef4444 !important;
       }
+
+      /* 5. IN-GAME PARTNER CARDS BAR (HIỂN THỊ BÀI ĐỒNG ĐỘI) */
+      #autotool-partner-cards-panel {
+        position: fixed !important;
+        top: 96px !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        z-index: 2147483645 !important;
+        display: none;
+        align-items: center !important;
+        gap: 4px !important;
+        padding: 4px 10px !important;
+        border-radius: 8px !important;
+        background: rgba(30, 27, 75, 0.95) !important;
+        border: 1px solid rgba(168, 85, 247, 0.5) !important;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7) !important;
+        backdrop-filter: blur(6px) !important;
+        pointer-events: none !important;
+        user-select: none !important;
+        transition: all 0.2s ease !important;
+      }
+      #autotool-partner-cards-panel.visible {
+        display: inline-flex !important;
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -254,12 +278,52 @@
       return (a % 4) - (b % 4);
     });
 
-    panel.innerHTML = sorted.map((c) => {
+    const chips = sorted.map((c) => {
       const info = parseCardInfo(c);
       if (!info) return "";
       const cls = info.isRed ? "autotool-card-chip red" : "autotool-card-chip black";
       return `<span class="${cls}">${info.text}</span>`;
     }).join("");
+
+    panel.innerHTML = `<span style="font-size:11px;font-weight:700;color:#38bdf8;margin-right:4px;">🃏 Bạn (${cards.length}):</span>` + chips;
+  }
+
+  function updatePartnerCardsPanel(cards, partnerName = "Đồng đội") {
+    if (window !== window.top) return;
+    ensureStyles();
+    let panel = document.getElementById("autotool-partner-cards-panel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "autotool-partner-cards-panel";
+      (document.body || document.documentElement).appendChild(panel);
+    }
+    if (!cards || !cards.length) {
+      panel.className = "";
+      panel.innerHTML = "";
+      return;
+    }
+    panel.className = "visible";
+    const sorted = cards.slice().sort((a, b) => {
+      function getVal(x) {
+        const r = Math.floor(x / 4);
+        if (r >= 2) return r + 1;
+        if (r === 0) return 14;
+        if (r === 1) return 15;
+        return 0;
+      }
+      const va = getVal(a), vb = getVal(b);
+      if (va !== vb) return va - vb;
+      return (a % 4) - (b % 4);
+    });
+
+    const chips = sorted.map((c) => {
+      const info = parseCardInfo(c);
+      if (!info) return "";
+      const cls = info.isRed ? "autotool-card-chip red" : "autotool-card-chip black";
+      return `<span class="${cls}">${info.text}</span>`;
+    }).join("");
+
+    panel.innerHTML = `<span style="font-size:11px;font-weight:700;color:#c084fc;margin-right:4px;">👥 ${partnerName} (${cards.length}):</span>` + chips;
   }
 
   function updateViewBanner(htmlText, type = "lobby") {
@@ -558,6 +622,7 @@
       pendingJoinRid = null;
       matchedPartner = "";
       updateCardsPanel([]);
+      updatePartnerCardsPanel([]);
 
       const pLabel = activeProfileName || "Tool V3";
       updateViewBanner(`🏠 <b>${pLabel}</b>: Đang ở sảnh (Chờ tìm bàn)`, "lobby");
@@ -578,7 +643,7 @@
     else if (ev.data.type === "AUTOTOOL_MATCH_SUCCESS") {
       const partner = ev.data.partner_name || "Đồng đội";
       const pLabel = activeProfileName || "Tool V3";
-      updateViewBanner(`🟢 <b>ĐÃ VÀO CÙNG NHAU THÀNH CÔNG! (${pLabel} & ${partner})</b> - ĐANG BẮT ĐẦU VÁN!`, "active");
+      updateViewBanner(`🟢 <b>ĐÃ KHỚP BÀN & XÁC MINH CẢ 2 TÀI KHOẢN! (${pLabel} & ${partner})</b> - TỰ ĐỘNG BẮT ĐẦU!`, "active");
       showToast(`🟢 <b>KHỚP BÀN THÀNH CÔNG!</b><br>${pLabel} & ${partner}<br>⚡ Tự động Sẵn Sàng & Bắt Đầu!`, "success");
 
       // Báo ngay lên Extension Hub để cứu hẹn giờ của đồng đội
@@ -674,9 +739,17 @@
       }, "POST").catch(() => {});
     }
 
+    // HIỂN THỊ BÀI ĐỒNG ĐỘI (CHIA SẺ TỪ EXTENSION HUB)
+    else if (ev.data.type === "AUTOTOOL_PARTNER_CARDS_UPDATE") {
+      const pName = ev.data.partner_name || "Đồng đội";
+      const pCards = ev.data.cards || [];
+      updatePartnerCardsPanel(pCards, pName);
+    }
+
     // KẾT THÚC VÁN BÀI
     else if (ev.data.type === "AUTOTOOL_GAME_ENDED") {
       updateCardsPanel([]);
+      updatePartnerCardsPanel([]);
       const winner = ev.data.winner || "Kết thúc ván";
       const pLabel = activeProfileName || "Tool V3";
       updateViewBanner(`🏆 <b>VÁN BÀI KẾT THÚC!</b> (${winner} Thắng) | Chuẩn bị ván mới...`, "active");
