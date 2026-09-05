@@ -550,6 +550,16 @@ class BrowserManager:
                 "--disable-infobars",
                 "--no-first-run",
             ]
+
+            # Tự động nạp Chrome Extension V3 cho mọi profile Chrome độc lập
+            ext_dir = Path(__file__).resolve().parent.parent / "extension"
+            if ext_dir.exists():
+                ext_path = str(ext_dir)
+                args += [
+                    f"--disable-extensions-except={ext_path}",
+                    f"--load-extension={ext_path}",
+                ]
+
             launch_kwargs = {
                 "user_data_dir": user_data_dir,
                 "headless": False,
@@ -577,6 +587,18 @@ class BrowserManager:
                 except Exception:
                     pass
             ua_actual = await self._read_ua(page)
+
+            # Tiêm định danh profile vào context của từng tab để Extension nhận diện chính xác
+            acc_name = (account or {}).get("name") or tab_title
+            acc_id = (account or {}).get("id") or ""
+            try:
+                await page.add_init_script(f"""
+                    window.__AUTOTOOL_PROFILE_NAME = {json.dumps(acc_name)};
+                    window.__AUTOTOOL_ACCOUNT_ID = {json.dumps(acc_id)};
+                """)
+            except Exception:
+                pass
+
             # Giữ tên profile trên tiêu đề cửa sổ/tab (game hay ghi đè title).
             try:
                 await page.add_init_script(_title_enforce_script(tab_title))

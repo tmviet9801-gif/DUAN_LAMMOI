@@ -1,5 +1,5 @@
-// content_main.js — Chạy trong MAIN world của trang web (không bị CSP của game chặn).
-// Intercept WebSocket của game Cocos/Wasm, ghi nhận room info, player list và hỗ trợ gửi lệnh WS.
+// content_main.js — AutoTool V3 (Main World Context)
+// Intercept WebSocket game Cocos/Wasm, ghi nhận room/cards và thực thi lệnh trực tiếp 2 chiều.
 (function () {
   const G = globalThis;
   if (G.__ws_main_hooked) return;
@@ -10,6 +10,19 @@
   G.__last_room_info = null;
   G.__room_players = [];
   G.__room_state = 0;
+
+  // Lấy định danh profile được inject từ Playwright hoặc localStorage
+  function getProfileName() {
+    return G.__AUTOTOOL_PROFILE_NAME || localStorage.getItem("AUTOTOOL_PROFILE_NAME") || document.title || "";
+  }
+
+  // Thông báo nhận diện Profile lên isolated context
+  setTimeout(() => {
+    const pName = getProfileName();
+    if (pName) {
+      window.postMessage({ type: "AUTOTOOL_INIT_PROFILE", profile_name: pName }, "*");
+    }
+  }, 100);
 
   const push = (dir, data) => {
     try {
@@ -52,29 +65,52 @@
                   Mu: p.Mu || 2,
                 };
               }
+              // Bắn event lên isolated world -> Extension Hub
+              window.postMessage({
+                type: "AUTOTOOL_ROOM_INFO",
+                profile_name: getProfileName(),
+                room_info: G.__last_room_info,
+                players: G.__room_players,
+                state: G.__room_state,
+              }, "*");
             }
+
             // cmd 203: Rời phòng
             if (p.cmd === 203) {
               G.__room_players = [];
               G.__last_room_info = null;
               G.__ws_last_room_id = null;
+              window.postMessage({
+                type: "AUTOTOOL_BRIDGE_PACKET",
+                action: "ROOM_LEFT",
+                profile_name: getProfileName(),
+              }, "*");
             }
-            // cmd 305: Người chơi tham gia phòng / thông tin bàn
-            if (p.cmd === 305) {
+
+            // cmd 305 / 308: Cập nhật phòng hoặc join thành công
+            if (p.cmd === 305 || p.cmd === 308) {
               if (p.ri && p.ri.rid) {
                 G.__last_room_info = p.ri;
                 G.__ws_last_room_id = p.ri.rid;
-              }
-              if (p.fu && G.__room_players) {
-                const exists = G.__room_players.some((pl) => (pl.u && pl.u === p.fu.u) || (pl.dn && pl.dn === p.fu.dn));
-                if (!exists) G.__room_players.push(p.fu);
+                window.postMessage({
+                  type: "AUTOTOOL_ROOM_INFO",
+                  profile_name: getProfileName(),
+                  room_info: G.__last_room_info,
+                }, "*");
               }
             }
-            // cmd 308: Phản hồi join phòng thành công (chứa ri.rid thật)
-            if (p.cmd === 308) {
-              if (p.ri && p.ri.rid) {
-                G.__last_room_info = p.ri;
-                G.__ws_last_room_id = p.ri.rid;
+
+            // Bắt bài chia (Cards dealt)
+            if (p.c || p.cards || (p.cmd && [310, 311, 312, 350].includes(p.cmd))) {
+              const cards = p.c || p.cards || [];
+              if (Array.isArray(cards) && cards.length > 0) {
+                G.__my_cards = cards;
+                window.postMessage({
+                  type: "AUTOTOOL_BRIDGE_PACKET",
+                  action: "CARDS_DEALT",
+                  profile_name: getProfileName(),
+                  cards: cards,
+                }, "*");
               }
             }
           }
@@ -116,7 +152,6 @@
   G.__ws_send = function (text) {
     try {
       const list = (G.__ws_instances || []).filter((s) => s && s.readyState === 1);
-      // Ưu tiên socket carkgwaiz (Simms / game chính)
       const simms = list.find((s) => (s.url || "").includes("carkgwaiz") || (s.url || "").includes("simms"));
       const target = simms || list[0];
       if (target) {
@@ -142,5 +177,68 @@
     return false;
   };
 
-  console.log("[AutoTool] Main world WebSocket hook đã kích hoạt thành công!");
+  // 4. API điều khiển game trực tiếp từ Extension Hub
+  G.__autotool_exec_join = function (rid, bet = 100, mu = 2) {
+    console.log(`[AutoTool V3] Thực thi lệnh JOIN phòng #${rid} ($${bet})...`);
+    const payload = {
+      cmd: 308, aid: 1, gid: 1, b: Number(bet), Mu: Number(mu),
+      iJ: true, inc: false, pwd: "", rid: Number(rid)
+    };
+    G.__ws_send_channel("Simms", JSON.stringify([6, "Simms", "channelPlugin", payload]));
+    G.__ws_send_channel("Simms", JSON.stringify([3, "Simms", 1, { rid: Number(rid) }]));
+    G.__ws_send(JSON.stringify([6, "Simms", "channelPlugin", payload]));
+    return true;
+  };
+
+  G.__autotool_exec_leave = function () {
+    console.log("[AutoTool V3] Thực thi lệnh RỜI BÀN về sảnh...");
+    G.__ws_send_channel("Simms", '[4,"Simms",-1]');
+    G.__ws_send_channel("Simms", '[6,"Simms","channelPlugin",{"cmd":203}]');
+    G.__ws_send('[4,"Simms",-1]');
+    return true;
+  };
+
+  G.__autotool_exec_ready = function () {
+    console.log("[AutoTool V3] Thực thi lệnh SẴN SÀNG...");
+    G.__ws_send_channel("Simms", '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]');
+    G.__ws_send('[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]');
+    return true;
+  };
+
+  G.__autotool_exec_start = function () {
+    console.log("[AutoTool V3] Thực thi lệnh BẮT ĐẦU VÁN...");
+    G.__ws_send_channel("Simms", '[6,"Simms","channelPlugin",{"cmd":364}]');
+    G.__ws_send('[6,"Simms","channelPlugin",{"cmd":364}]');
+    return true;
+  };
+
+  G.__autotool_exec_discard = function (cardIds) {
+    console.log("[AutoTool V3] Thực thi lệnh ĐÁNH BÀI:", cardIds);
+    if (Array.isArray(cardIds) && cardIds.length > 0) {
+      const payload = { cmd: 352, c: cardIds };
+      G.__ws_send_channel("Simms", JSON.stringify([6, "Simms", "channelPlugin", payload]));
+    }
+    return true;
+  };
+
+  // Lắng nghe lệnh từ Extension isolated script (từ Backend Hub gửi xuống)
+  window.addEventListener("message", (event) => {
+    if (!event.data || event.data.type !== "AUTOTOOL_EXEC_COMMAND") return;
+    const { action, data } = event.data;
+    console.log(`[AutoTool V3] Nhận lệnh từ Hub qua Extension Bridge: action=${action}`, data);
+
+    if (action === "JOIN_ROOM" && data && data.rid) {
+      G.__autotool_exec_join(data.rid, data.bet || 100, data.mu || 2);
+    } else if (action === "LEAVE_ROOM") {
+      G.__autotool_exec_leave();
+    } else if (action === "READY") {
+      G.__autotool_exec_ready();
+    } else if (action === "START") {
+      G.__autotool_exec_start();
+    } else if (action === "DISCARD_CARDS" && data && data.cards) {
+      G.__autotool_exec_discard(data.cards);
+    }
+  });
+
+  console.log("[AutoTool V3] Main World Engine & WebSocket Bridge đã sẵn sàng!");
 })();

@@ -1,7 +1,7 @@
 {
   "name": "tab-manager",
-  "version": "2.0.0",
-  "description": "Quản lý tài khoản, mở nhiều cửa sổ Chromium xếp lưới trên màn hình",
+  "version": "3.0.0",
+  "description": "AutoTool V3: Quản lý đa tài khoản, 3-Tier Multi-Profile Extension Bridge Hub",
   "author": "TabManager",
   "main": "main.js",
   "scripts": {

@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "AutoTool Gom Bàn & Giám Sát",
-  "version": "1.3.0",
-  "description": "Hiển thị thông tin bàn cược, cấu hình gom bàn, chống phá bàn và tự động xả bài.",
+  "name": "AutoTool Gom Bàn & Giám Sát V3",
+  "version": "3.0.0",
+  "description": "AutoTool V3: 3-Tier Multi-Profile Extension Bridge Hub, điều khiển WebSocket 2 chiều độ trễ 0ms.",
   "action": {
     "default_popup": "popup.html",
-    "default_title": "AutoTool Gom Bàn"
+    "default_title": "AutoTool Gom Bàn V3"
   },
   "background": {
     "service_worker": "background.js"
@@ -13,11 +13,14 @@
   "permissions": [
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "alarms"
   ],
   "host_permissions": [
     "http://127.0.0.1:8000/*",
     "http://localhost:8000/*",
+    "ws://127.0.0.1:8000/*",
+    "ws://localhost:8000/*",
     "<all_urls>"
   ],
   "content_scripts": [

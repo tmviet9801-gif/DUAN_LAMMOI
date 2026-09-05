@@ -337,10 +337,13 @@ async def _do_leave_room(p, name="Profile", target_mu=2):
         log.info("_do_leave_room: %s đã ở sẵn sảnh bàn Đếm Lá, giữ nguyên vị trí tại sảnh bàn.", name)
         return
 
-    # 1. Gửi lệnh WebSocket rời bàn tức thì qua mọi kênh có sẵn
+    # 1. Gửi lệnh WebSocket rời bàn tức thì qua mọi kênh có sẵn (Main World V3 + sniffer)
     try:
         await p.evaluate("""(() => {
             try {
+                if (typeof window.__autotool_exec_leave === 'function') {
+                    window.__autotool_exec_leave();
+                }
                 if (typeof window.__ws_send_channel === 'function') {
                     window.__ws_send_channel('Simms', '[4,"Simms",-1]');
                     window.__ws_send_channel('Simms', '[6,"Simms","channelPlugin",{"cmd":203}]');
@@ -1498,6 +1501,14 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 log.info("find-and-match: Gửi lệnh join bàn công cộng #%s cho %s nhanh chóng...", selected_rid, sub_name)
                 await _set_hud_status(sub_p, f"Đang join vào bàn #{selected_rid} của {anchor_name}...")
 
+                # V3: Bắn lệnh tức thời qua Extension Hub (<2ms)
+                ext_hub = getattr(request.app.state, "ext_hub", None)
+                if ext_hub and ext_hub.is_connected(sub_name):
+                    log.info("find-and-match: >>> V3 Extension Hub: Gửi lệnh JOIN bàn #%s tới %s (0ms)...", selected_rid, sub_name)
+                    await ext_hub.send_command(sub_name, "JOIN_ROOM", {
+                        "rid": int(selected_rid), "bet": bet_val, "mu": target_mu
+                    })
+
                 payload_join = {
                     "cmd": 308, "aid": 1, "gid": gid, "b": bet_val, "Mu": target_mu,
                     "iJ": True, "inc": False, "pwd": "", "rid": int(selected_rid)
@@ -1623,11 +1634,17 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         # 1. Các tài khoản phụ bấm [ SẴN SÀNG ]
         for sub_name in other_profiles:
             sub_p = pages[sub_name]
+            ext_hub = getattr(request.app.state, "ext_hub", None)
+            if ext_hub and ext_hub.is_connected(sub_name):
+                log.info("find-and-match: >>> V3 Extension Hub: Bắn lệnh SẴN SÀNG cho %s (0ms)...", sub_name)
+                await ext_hub.send_command(sub_name, "READY")
+
             sw_b, sh_b = await _get_screen_size(sub_p)
             log.info("find-and-match: %s bấm nút [ SẴN SÀNG ]...", sub_name)
             try:
                 await sub_p.evaluate("""(() => {
                     try {
+                        if (typeof window.__autotool_exec_ready === 'function') window.__autotool_exec_ready();
                         if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]');
                         else if (typeof window.__ws_send === 'function') window.__ws_send('[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]');
                     } catch(e) {}
@@ -1638,6 +1655,11 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             await asyncio.sleep(0.4)
 
         # 2. Anchor (Chủ bàn) bấm nút [ BẮT ĐẦU ]
+        ext_hub = getattr(request.app.state, "ext_hub", None)
+        if ext_hub and ext_hub.is_connected(anchor_name):
+            log.info("find-and-match: >>> V3 Extension Hub: Bắn lệnh BẮT ĐẦU cho Anchor %s (0ms)...", anchor_name)
+            await ext_hub.send_command(anchor_name, "START")
+
         sw_a, sh_a = await _get_screen_size(anchor_page)
         start_x = int(sw_a * 0.50)
         start_y = int(sh_a * 0.555)
@@ -1645,6 +1667,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         try:
             await anchor_page.evaluate("""(() => {
                 try {
+                    if (typeof window.__autotool_exec_start === 'function') window.__autotool_exec_start();
                     if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[6,"Simms","channelPlugin",{"cmd":364}]');
                     else if (typeof window.__ws_send === 'function') window.__ws_send('[6,"Simms","channelPlugin",{"cmd":364}]');
                 } catch(e) {}

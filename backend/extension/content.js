@@ -327,9 +327,43 @@
     } catch (_) {}
   }
 
+  // 1. Nhận lệnh từ background.js (Backend Hub) -> Chuyển tiếp xuống Main World
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg.type === "HUB_COMMAND") {
+      window.postMessage({
+        type: "AUTOTOOL_EXEC_COMMAND",
+        action: msg.action,
+        data: msg.data || {},
+      }, "*");
+      sendResponse({ ok: true });
+    }
+    return true;
+  });
+
+  // 2. Nhận event từ Main World -> Chuyển tiếp lên background.js (Backend Hub)
   window.addEventListener("message", (ev) => {
-    if (ev.data && ev.data.type === "AUTOTOOL_ROOM_INFO") {
+    if (!ev.data) return;
+
+    if (ev.data.type === "AUTOTOOL_INIT_PROFILE" && ev.data.profile_name) {
+      chrome.runtime.sendMessage({
+        type: "REGISTER_PROFILE",
+        profile_name: ev.data.profile_name,
+      });
+    } else if (ev.data.type === "AUTOTOOL_ROOM_INFO") {
       handleRoomInfo(ev.data.room_info);
+      chrome.runtime.sendMessage({
+        type: "ROOM_UPDATE",
+        profile_name: ev.data.profile_name,
+        room_info: ev.data.room_info,
+        players: ev.data.players,
+      });
+    } else if (ev.data.type === "AUTOTOOL_BRIDGE_PACKET") {
+      chrome.runtime.sendMessage({
+        type: "BRIDGE_PACKET",
+        profile_name: ev.data.profile_name,
+        action: ev.data.action,
+        data: ev.data,
+      });
     }
   });
 

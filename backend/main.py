@@ -21,12 +21,14 @@ from core.events import EventHub, UIEventEmitter
 from core.logging_setup import setup_logging
 from models.config_model import load_config
 from services.browser_service import BrowserManager
+from services.extension_hub import ExtensionHubManager
 
 from controllers import (
     account_controller,
     auto_flow_controller,
     browser_controller,
     config_controller,
+    extension_bridge_controller,
     game_sim_controller,
     info_controller,
     license_controller,
@@ -63,11 +65,13 @@ def create_app() -> FastAPI:
         hub = EventHub()
         emitter = UIEventEmitter(hub=hub)
         manager = BrowserManager(load_config(), on_event=emitter.publish)
+        ext_hub = ExtensionHubManager(on_event=emitter.publish)
         from game_sim.manager import GameSimManager
 
         app.state.hub = hub
         app.state.manager = manager
         app.state.events = emitter
+        app.state.ext_hub = ext_hub
         gs = GameSimManager(browser_manager=manager)
         gs.set_event_sink(emitter.publish)
         app.state.game_sim = gs
@@ -94,7 +98,7 @@ def create_app() -> FastAPI:
             log.exception("reap orphan chrome failed")
 
         watchdog = asyncio.create_task(_browser_watchdog(manager))
-        log.info("Backend ready (manager + hub + game_sim initialized)")
+        log.info("Backend ready (manager + hub + game_sim + ext_hub v3 initialized)")
         try:
             yield
         finally:
@@ -107,6 +111,7 @@ def create_app() -> FastAPI:
                 log.exception("graceful shutdown failed")
 
     app = FastAPI(title="Tab Manager", lifespan=lifespan)
+    app.state.ext_hub = ExtensionHubManager()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -122,6 +127,7 @@ def create_app() -> FastAPI:
     app.include_router(account_controller.router)
     app.include_router(browser_controller.router)
     app.include_router(auto_flow_controller.router)
+    app.include_router(extension_bridge_controller.router)
     app.include_router(proxy_controller.router)
     app.include_router(license_controller.router)
     app.include_router(ws_controller.router)
