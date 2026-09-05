@@ -43,6 +43,22 @@
           App.renderProfilesTable();
         }
       }
+      if (ev.type === "accounts_updated" || ev.type === "room_info_updated" || ev.type === "balance_updated" || ev.type === "log_updated" || ev.type === "room_left") {
+        if (ev.profile_name && Array.isArray(App.state.accounts)) {
+          const acc = App.state.accounts.find(a => a.name === ev.profile_name || a.username === ev.profile_name || a.id === ev.profile_name);
+          if (acc) {
+            if (ev.balance !== undefined) acc.balance = ev.balance;
+            if (ev.room !== undefined) acc.room = ev.room;
+            if (ev.log !== undefined) acc.log = ev.log;
+          }
+        }
+        if (typeof App.renderProfilesTable === "function") {
+          App.renderProfilesTable();
+        }
+        if (typeof App.refresh === "function") {
+          App.refresh();
+        }
+      }
     };
     ws.onclose = () => {
       App.setBackend(false);

@@ -112,12 +112,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // 3. Chuyển tiếp gói tin / trạng thái phòng lên Backend Hub
-  if (message.type === "BRIDGE_PACKET" || message.type === "AUTOTOOL_ROOM_INFO" || message.type === "ROOM_UPDATE") {
+  // 3. Chuyển tiếp gói tin / trạng thái phòng / Số dư / Log lên Backend Hub (Port 17832)
+  if (message.type === "BRIDGE_PACKET" || 
+      message.type === "AUTOTOOL_ROOM_INFO" || 
+      message.type === "ROOM_UPDATE" || 
+      message.type === "ROOM_LEFT" || 
+      message.type === "BALANCE_UPDATE" || 
+      message.type === "LOG_UPDATE") {
     if (hubSocket && hubSocket.readyState === WebSocket.OPEN) {
       hubSocket.send(JSON.stringify({
         type: message.type,
         profile_name: currentProfileName || message.profile_name,
+        balance: message.balance,
+        log: message.log,
         data: message.data || message.room_info || message,
         timestamp: Date.now(),
       }));

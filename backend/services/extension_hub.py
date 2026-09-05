@@ -151,16 +151,101 @@ class ExtensionHubManager:
 
         msg_type = msg.get("type") or msg.get("action")
 
-        # Cập nhật thông tin bàn cược & Tự động điều phối ID phòng tức thời (<2ms)
-        if msg_type in ("ROOM_INFO", "ROOM_UPDATE"):
+        # 1. Cập nhật Số Dư (Balance) Realtime từ Extension
+        if msg_type in ("BALANCE_UPDATE", "AUTOTOOL_BALANCE_UPDATE"):
+            bal = msg.get("balance")
+            if bal is None and isinstance(msg.get("data"), dict):
+                bal = msg.get("data", {}).get("balance")
+            if bal is not None:
+                try:
+                    bal_val = int(float(str(bal).replace(",", "").replace(".", "").strip()))
+                except Exception:
+                    bal_val = bal
+
+                state["balance"] = bal_val
+                log.info("ExtensionHub V3: Profile '%s' cập nhật số dư mới: %s", profile_name, bal_val)
+
+                # Cập nhật và lưu vào accounts.json
+                try:
+                    from models.config_model import load_accounts, save_accounts
+                    accounts = load_accounts()
+                    updated = False
+                    for a in accounts:
+                        if (a.get("name") == profile_name or 
+                            a.get("username") == profile_name or 
+                            str(a.get("id")) == str(profile_name)):
+                            a["balance"] = bal_val
+                            updated = True
+                            break
+                    if updated:
+                        save_accounts(accounts)
+                except Exception as e:
+                    log.warning("Lỗi lưu balance vào accounts.json: %s", e)
+
+                self._emit({
+                    "type": "accounts_updated",
+                    "profile_name": profile_name,
+                    "balance": bal_val,
+                })
+
+        # 2. Cập nhật Log Tiến Trình Realtime từ Extension
+        elif msg_type in ("LOG_UPDATE", "AUTOTOOL_LOG_UPDATE"):
+            log_text = msg.get("log")
+            if not log_text and isinstance(msg.get("data"), dict):
+                log_text = msg.get("data", {}).get("log")
+            if log_text:
+                state["log"] = str(log_text)
+                try:
+                    from models.config_model import load_accounts, save_accounts
+                    accounts = load_accounts()
+                    for a in accounts:
+                        if (a.get("name") == profile_name or 
+                            a.get("username") == profile_name or 
+                            str(a.get("id")) == str(profile_name)):
+                            a["log"] = str(log_text)
+                            save_accounts(accounts)
+                            break
+                except Exception:
+                    pass
+
+                self._emit({
+                    "type": "accounts_updated",
+                    "profile_name": profile_name,
+                    "log": str(log_text),
+                })
+
+        # 3. Cập nhật thông tin bàn cược & Tự động điều phối ID phòng tức thời (<2ms)
+        elif msg_type in ("ROOM_INFO", "ROOM_UPDATE"):
             ri = msg.get("room_info") or msg.get("data")
             if ri and isinstance(ri, dict):
                 rid = ri.get("rid")
                 state["room_info"] = ri
+                if rid and int(rid) > 0 and int(rid) != 100:
+                    state["room_id"] = int(rid)
+                    state["log"] = f"Bàn #{rid} (${ri.get('b', 100)})"
+                    try:
+                        from models.config_model import load_accounts, save_accounts
+                        accounts = load_accounts()
+                        for a in accounts:
+                            if (a.get("name") == profile_name or 
+                                a.get("username") == profile_name or 
+                                str(a.get("id")) == str(profile_name)):
+                                a["room"] = int(rid)
+                                a["log"] = f"Bàn #{rid}"
+                                save_accounts(accounts)
+                                break
+                    except Exception:
+                        pass
+
                 self._emit({
                     "type": "room_info_updated",
                     "profile_name": profile_name,
                     "room_info": ri,
+                })
+                self._emit({
+                    "type": "accounts_updated",
+                    "profile_name": profile_name,
+                    "room": rid,
                 })
 
                 # Tự động chia sẻ ID phòng cho các profile đối tác với độ trễ <2ms
@@ -201,13 +286,13 @@ class ExtensionHubManager:
                                     "source_profile": profile_name,
                                 }))
 
-        # Cập nhật danh sách người chơi
+        # 4. Cập nhật danh sách người chơi
         elif msg_type in ("PLAYER_LIST", "PLAYERS"):
             pls = msg.get("players") or msg.get("ps") or msg.get("data")
             if isinstance(pls, list):
                 state["players"] = pls
 
-        # Cập nhật bài được chia
+        # 5. Cập nhật bài được chia
         elif msg_type in ("CARDS_DEALT", "HAND_INFO"):
             cards = msg.get("cards") or msg.get("data")
             if isinstance(cards, list):
@@ -218,14 +303,36 @@ class ExtensionHubManager:
                     "cards": cards,
                 })
 
-        # Trạng thái rời bàn
-        elif msg_type in ("ROOM_LEFT", "LEAVE_ROOM"):
+        # 6. Trạng thái rời bàn / Đang ở sảnh
+        elif msg_type in ("ROOM_LEFT", "LEAVE_ROOM", "AUTOTOOL_ROOM_LEFT"):
             state["room_info"] = None
+            state["room_id"] = -1
+            state["log"] = "Đang ở sảnh"
             state["players"] = []
             state["cards"] = []
+            try:
+                from models.config_model import load_accounts, save_accounts
+                accounts = load_accounts()
+                for a in accounts:
+                    if (a.get("name") == profile_name or 
+                        a.get("username") == profile_name or 
+                        str(a.get("id")) == str(profile_name)):
+                        a["room"] = -1
+                        a["log"] = "Đang ở sảnh"
+                        save_accounts(accounts)
+                        break
+            except Exception:
+                pass
+
             self._emit({
                 "type": "room_left",
                 "profile_name": profile_name,
+            })
+            self._emit({
+                "type": "accounts_updated",
+                "profile_name": profile_name,
+                "room": -1,
+                "log": "Đang ở sảnh",
             })
 
     def get_profile_state(self, profile_name: str) -> dict:

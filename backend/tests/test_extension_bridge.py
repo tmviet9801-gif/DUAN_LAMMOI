@@ -84,33 +84,69 @@ def test_bridge_websocket_lifecycle_and_two_way_messaging():
     assert ext_hub.is_connected("TestAccountV3") is False
 
 
-def test_instant_dual_profile_room_sharing():
+from unittest.mock import AsyncMock
+
+
+@pytest.mark.anyio
+async def test_instant_dual_profile_room_sharing():
     """Kiểm tra luồng tức thời (<2ms): Profile A vào bàn -> Profile B nhận lệnh JOIN_ROOM ngay lập tức!"""
-    ext_hub = getattr(main.app.state, "ext_hub", None)
-    assert ext_hub is not None
+    from services.extension_hub import ExtensionHubManager
 
-    with client.websocket_connect("/ws/bridge?profile=ProfileA") as ws_a:
-        assert json.loads(ws_a.receive_text()).get("action") == "WELCOME"
+    hub = ExtensionHubManager()
+    ws_a = AsyncMock()
+    ws_b = AsyncMock()
 
-        with client.websocket_connect("/ws/bridge?profile=ProfileB") as ws_b:
-            assert json.loads(ws_b.receive_text()).get("action") == "WELCOME"
+    await hub.register("ProfileA", ws_a)
+    await hub.register("ProfileB", ws_b)
+    assert len(hub.active_sockets) == 2
 
-            # Profile A vào bàn cược #12345 và gửi ROOM_UPDATE lên Hub
-            ws_a.send_text(json.dumps({
-                "type": "ROOM_UPDATE",
-                "room_info": {"rid": 12345, "rn": "Bàn Solo $100", "b": 100, "Mu": 2}
-            }))
+    # Profile A gửi gói tin ROOM_UPDATE với ID bàn 12345
+    hub.handle_message("ProfileA", {
+        "type": "ROOM_UPDATE",
+        "room_info": {"rid": 12345, "rn": "Bàn Solo $100", "b": 100, "Mu": 2}
+    })
 
-            # Profile B lập tức nhận được lệnh JOIN_ROOM với ID 12345 từ Profile A!
-            msg_b_raw = ws_b.receive_text()
-            msg_b = json.loads(msg_b_raw)
-            assert msg_b.get("action") == "JOIN_ROOM"
-            assert msg_b.get("data", {}).get("rid") == 12345
-            assert msg_b.get("data", {}).get("source_profile") == "ProfileA"
+    # Đợi task chạy
+    import asyncio
+    await asyncio.sleep(0.01)
 
-            # Profile A nhận được xác nhận ROOM_SHARED_CONFIRM
-            msg_a_raw = ws_a.receive_text()
-            msg_a = json.loads(msg_a_raw)
-            assert msg_a.get("action") == "ROOM_SHARED_CONFIRM"
-            assert msg_a.get("data", {}).get("rid") == 12345
-            assert msg_a.get("data", {}).get("target_count") == 1
+    # 1. Profile B nhận được lệnh JOIN_ROOM
+    assert ws_b.send_text.called
+    b_calls = [json.loads(c.args[0]) for c in ws_b.send_text.call_args_list]
+    join_call = next((c for c in b_calls if c.get("action") == "JOIN_ROOM"), None)
+    assert join_call is not None
+    assert join_call["data"]["rid"] == 12345
+    assert join_call["data"]["source_profile"] == "ProfileA"
+
+    # 2. Profile A nhận được xác nhận ROOM_SHARED_CONFIRM
+    assert ws_a.send_text.called
+    a_calls = [json.loads(c.args[0]) for c in ws_a.send_text.call_args_list]
+    confirm_call = next((c for c in a_calls if c.get("action") == "ROOM_SHARED_CONFIRM"), None)
+    assert confirm_call is not None
+    assert confirm_call["data"]["rid"] == 12345
+    assert confirm_call["data"]["target_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_hub_balance_and_log_update():
+    """Kiểm tra cập nhật số dư (balance) và log trạng thái tài khoản qua Hub."""
+    from services.extension_hub import ExtensionHubManager
+
+    hub = ExtensionHubManager()
+    ws = AsyncMock()
+    await hub.register("TestPlayer", ws)
+
+    # Cập nhật số dư
+    hub.handle_message("TestPlayer", {
+        "type": "BALANCE_UPDATE",
+        "balance": 54068,
+    })
+    state = hub.get_profile_state("TestPlayer")
+    assert state["balance"] == 54068
+
+    # Cập nhật log
+    hub.handle_message("TestPlayer", {
+        "type": "LOG_UPDATE",
+        "log": "Đang tìm bàn trống mức $100...",
+    })
+    assert state["log"] == "Đang tìm bàn trống mức $100..."

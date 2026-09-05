@@ -69,6 +69,7 @@ def _split_proxies(raw: str) -> list[str]:
 @router.get("/api/accounts")
 async def get_accounts(request: Request):
     manager = getattr(request.app.state, "manager", None)
+    ext_hub = getattr(request.app.state, "ext_hub", None)
     sessions = manager.sessions if manager else {}
     accounts = load_accounts()
 
@@ -81,28 +82,45 @@ async def get_accounts(request: Request):
                 break
 
         a["site"] = a.get("site") or "HIT"
-        if s and s.page:
+
+        # Tra cứu trạng thái từ ExtensionHub nếu profile đang kết nối extension
+        p_state = ext_hub.get_profile_state(a.get("name") or a.get("username") or "") if ext_hub else None
+        is_ext_connected = bool(p_state and p_state.get("connected"))
+
+        if (s and s.page) or is_ext_connected:
             a["status"] = "Live"
             a["connected"] = True
             ws_local = a.get("web_storage", {}).get("local", {})
             user_dn = ws_local.get("KEY_USER_NAME") or a.get("username") or a.get("name")
             a["username"] = user_dn
-            # Số dư
-            if "balance" not in a or not a["balance"]:
-                a["balance"] = 56975 if "1" in str(a.get("name", "")) else 38467
-            # Mã phòng từ session
-            s_room = getattr(s, "room_id", None)
-            if s_room and s_room != -1:
-                a["room"] = s_room
-            elif "room" not in a or a["room"] == -1:
-                a["room"] = -1
 
-            # Log trạng thái từ session
-            s_log = getattr(s, "log", "")
-            if s_log:
-                a["log"] = s_log
-            elif "log" not in a or not a["log"]:
-                a["log"] = "Đang kết nối..."
+            # 1. Số dư: Ưu tiên ext_hub realtime -> a.get("balance")
+            if p_state and p_state.get("balance") is not None:
+                a["balance"] = p_state["balance"]
+            elif "balance" not in a or a["balance"] == "--":
+                a["balance"] = a.get("balance") or "--"
+
+            # 2. Mã phòng: Ưu tiên ext_hub realtime -> session -> a.get("room")
+            if p_state and p_state.get("room_id") is not None:
+                a["room"] = p_state["room_id"]
+            elif p_state and p_state.get("room_info") and p_state["room_info"].get("rid"):
+                a["room"] = p_state["room_info"]["rid"]
+            else:
+                s_room = getattr(s, "room_id", None) if s else None
+                if s_room and s_room != -1:
+                    a["room"] = s_room
+                elif "room" not in a or a["room"] is None:
+                    a["room"] = -1
+
+            # 3. Log trạng thái: Ưu tiên ext_hub -> session -> a.get("log")
+            if p_state and p_state.get("log"):
+                a["log"] = p_state["log"]
+            else:
+                s_log = getattr(s, "log", "") if s else ""
+                if s_log:
+                    a["log"] = s_log
+                elif "log" not in a or not a["log"]:
+                    a["log"] = "Đang kết nối..."
         else:
             a["status"] = "Idle"
             a["connected"] = False
@@ -114,6 +132,73 @@ async def get_accounts(request: Request):
                 a["balance"] = "--"
 
     return accounts
+
+
+class UpdateBalanceIn(BaseModel):
+    profile_name: str
+    balance: int | float | str
+
+
+@router.post("/api/accounts/update-balance")
+async def update_account_balance(body: UpdateBalanceIn, request: Request):
+    """Cập nhật số dư tài khoản từ extension hoặc luồng game."""
+    p_name = body.profile_name.strip()
+    try:
+        val = int(float(str(body.balance).replace(",", "").replace(".", "").strip()))
+    except Exception:
+        val = body.balance
+
+    accounts = load_accounts()
+    updated = False
+    for a in accounts:
+        if a.get("name") == p_name or a.get("username") == p_name or str(a.get("id")) == p_name:
+            a["balance"] = val
+            updated = True
+            break
+    if updated:
+        save_accounts(accounts)
+
+    ext_hub = getattr(request.app.state, "ext_hub", None)
+    if ext_hub:
+        ext_hub.handle_message(p_name, {"type": "BALANCE_UPDATE", "balance": val})
+
+    events = getattr(request.app.state, "events", None)
+    if events:
+        events.publish({"type": "accounts_updated", "profile_name": p_name, "balance": val})
+
+    return {"ok": True, "profile_name": p_name, "balance": val}
+
+
+class UpdateLogIn(BaseModel):
+    profile_name: str
+    log: str
+
+
+@router.post("/api/accounts/update-log")
+async def update_account_log(body: UpdateLogIn, request: Request):
+    """Cập nhật log trạng thái tài khoản hiển thị trên Desktop App."""
+    p_name = body.profile_name.strip()
+    log_text = body.log.strip()
+
+    accounts = load_accounts()
+    updated = False
+    for a in accounts:
+        if a.get("name") == p_name or a.get("username") == p_name or str(a.get("id")) == p_name:
+            a["log"] = log_text
+            updated = True
+            break
+    if updated:
+        save_accounts(accounts)
+
+    ext_hub = getattr(request.app.state, "ext_hub", None)
+    if ext_hub:
+        ext_hub.handle_message(p_name, {"type": "LOG_UPDATE", "log": log_text})
+
+    events = getattr(request.app.state, "events", None)
+    if events:
+        events.publish({"type": "accounts_updated", "profile_name": p_name, "log": log_text})
+
+    return {"ok": True, "profile_name": p_name, "log": log_text}
 
 
 @router.post("/api/accounts/import")

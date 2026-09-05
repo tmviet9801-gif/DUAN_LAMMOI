@@ -36,6 +36,21 @@
       G.__ws_capture.push({ ts: Date.now(), dir, text: String(text).slice(0, 4000) });
       if (G.__ws_capture.length > 2000) G.__ws_capture.splice(0, 1000);
 
+      // Bắt lệnh gửi từ client (send) để lưu trước rid người chơi chủ động bấm vào
+      if (dir === "send") {
+        if (text.includes('"rid":')) {
+          const m = text.match(/"rid"\s*:\s*(\d+)/);
+          if (m && m[1] && Number(m[1]) > 0 && Number(m[1]) !== 100) {
+            G.__ws_pending_rid = Number(m[1]);
+          }
+        } else if (text.includes('[3,"Simms",1,')) {
+          const m = text.match(/\[3,"Simms",1,\s*"?(\d+)"?/);
+          if (m && m[1] && Number(m[1]) > 0) {
+            G.__ws_pending_rid = Number(m[1]);
+          }
+        }
+      }
+
       // Phân tích packet game
       if (text.startsWith("[") && text.includes('"cmd"')) {
         try {
@@ -50,48 +65,96 @@
             }
           }
           if (p) {
+            // cmd 100: Thông tin User, Số dư & Trạng thái Sảnh
+            if (p.cmd === 100) {
+              const gold = (p.As && p.As.gold !== undefined) ? p.As.gold : (p.gold !== undefined ? p.gold : (p.m !== undefined ? p.m : (p.g !== undefined ? p.g : null)));
+              if (gold !== null && !isNaN(Number(gold))) {
+                window.postMessage({
+                  type: "AUTOTOOL_BALANCE_UPDATE",
+                  profile_name: getProfileName(),
+                  balance: Number(gold),
+                }, "*");
+              }
+              // Nếu đang ở sảnh (lr.rid === -1)
+              if (p.lr && p.lr.rid === -1) {
+                G.__last_room_info = null;
+                G.__room_players = [];
+                G.__ws_pending_rid = null;
+                window.postMessage({
+                  type: "AUTOTOOL_ROOM_LEFT",
+                  profile_name: getProfileName(),
+                }, "*");
+              }
+            }
+
             // cmd 202: Danh sách người chơi trong phòng & thông tin bàn
             if (p.cmd === 202) {
               G.__room_players = p.ps || [];
               G.__room_state = p.gS;
-              if (p.ri && p.ri.rid) {
-                G.__last_room_info = p.ri;
-                G.__ws_last_room_id = p.ri.rid;
-              } else if (!G.__last_room_info || !G.__last_room_info.rid) {
+              const pName = (getProfileName() || "").toLowerCase();
+              const me = (p.ps || []).find(x => x && (
+                (x.dn && x.dn.toLowerCase() === pName) ||
+                (x.u && x.u.toLowerCase() === pName) ||
+                (x.uid && String(x.uid) === String(G.__AUTOTOOL_ACCOUNT_ID))
+              ));
+
+              // Chỉ kích hoạt bàn khi người chơi THỰC SỰ ĐANG NGỒI TẠI BÀN
+              if (me || (p.ps && p.ps.length > 0)) {
+                const meGold = me && me.As && me.As.gold !== undefined ? me.As.gold : (me && me.m !== undefined ? me.m : null);
+                if (meGold !== null && !isNaN(Number(meGold))) {
+                  window.postMessage({
+                    type: "AUTOTOOL_BALANCE_UPDATE",
+                    profile_name: getProfileName(),
+                    balance: Number(meGold),
+                  }, "*");
+                }
+
+                const rid = (p.ri && p.ri.rid) || G.__ws_pending_rid || null;
                 G.__last_room_info = {
-                  rid: null,
-                  rn: p.Mu === 2 ? `Bàn Solo $${p.b || 100}` : `Bàn $${p.b || 100}`,
+                  rid: rid,
+                  rn: p.rn || (p.Mu === 2 ? `Bàn Solo $${p.b || 100}` : `Bàn $${p.b || 100}`),
                   b: p.b || 100,
                   Mu: p.Mu || 2,
                 };
+                G.__ws_last_room_id = rid;
+
+                window.postMessage({
+                  type: "AUTOTOOL_ROOM_INFO",
+                  profile_name: getProfileName(),
+                  room_info: G.__last_room_info,
+                  players: G.__room_players,
+                  state: G.__room_state,
+                }, "*");
               }
-              // Bắn event lên isolated world -> Extension Hub
-              window.postMessage({
-                type: "AUTOTOOL_ROOM_INFO",
-                profile_name: getProfileName(),
-                room_info: G.__last_room_info,
-                players: G.__room_players,
-                state: G.__room_state,
-              }, "*");
             }
 
-            // cmd 203: Rời phòng
+            // cmd 203: Rời phòng -> Về lại sảnh
             if (p.cmd === 203) {
               G.__room_players = [];
               G.__last_room_info = null;
               G.__ws_last_room_id = null;
+              G.__ws_pending_rid = null;
               window.postMessage({
-                type: "AUTOTOOL_BRIDGE_PACKET",
-                action: "ROOM_LEFT",
+                type: "AUTOTOOL_ROOM_LEFT",
                 profile_name: getProfileName(),
               }, "*");
             }
 
-            // cmd 305 / 308: Cập nhật phòng hoặc join thành công
-            if (p.cmd === 305 || p.cmd === 308) {
-              if (p.ri && p.ri.rid) {
-                G.__last_room_info = p.ri;
-                G.__ws_last_room_id = p.ri.rid;
+            // cmd 308: Join phòng thành công (KHÔNG lấy cmd 305 sảnh)
+            if (p.cmd === 308) {
+              const rid = (p.ri && p.ri.rid) || p.rid || G.__ws_pending_rid;
+              if (rid && Number(rid) > 0 && Number(rid) !== 100) {
+                G.__ws_pending_rid = Number(rid);
+                if (G.__last_room_info) {
+                  G.__last_room_info.rid = Number(rid);
+                } else {
+                  G.__last_room_info = {
+                    rid: Number(rid),
+                    b: p.b || 100,
+                    Mu: p.Mu || 2,
+                    rn: `Bàn #${rid}`,
+                  };
+                }
                 window.postMessage({
                   type: "AUTOTOOL_ROOM_INFO",
                   profile_name: getProfileName(),
