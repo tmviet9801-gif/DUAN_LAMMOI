@@ -188,6 +188,189 @@
     obs.observe(document, { childList: true, subtree: true });
   }
 
+  // ---- CƠ CHẾ HTTP_PROXY QUA BACKGROUND SERVICE WORKER ----
+  function requestControl(path, body = null, method = "GET") {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(
+          { type: "HTTP_PROXY", path, method, body },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              resolve({ ok: false, error: chrome.runtime.lastError.message });
+            } else {
+              resolve(response || { ok: false, error: "Empty response" });
+            }
+          }
+        );
+      } catch (err) {
+        resolve({ ok: false, error: err.message });
+      }
+    });
+  }
+
+  // ---- GIAO DIỆN NÚT BẤM NỔI CỐ ĐỊNH GÓC TRÁI DƯỚI (#autotool-connect-btn) ----
+  let isToolArmed = true;
+  let isHubConnected = false;
+  let activeProfileName = "";
+
+  function ensureButtonStyles() {
+    if (document.getElementById("autotool-btn-styles")) return;
+    const style = document.createElement("style");
+    style.id = "autotool-btn-styles";
+    style.textContent = `
+      #autotool-connect-btn {
+        position: fixed !important;
+        left: 12px !important;
+        bottom: 12px !important;
+        z-index: 2147483647 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        padding: 8px 15px !important;
+        border-radius: 9999px !important;
+        border: 1.5px solid #f0c040 !important;
+        background: #0b1220 !important;
+        color: #f0c040 !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif !important;
+        font-size: 12px !important;
+        font-weight: 700 !important;
+        line-height: 1 !important;
+        letter-spacing: 0.3px !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6) !important;
+      }
+      #autotool-connect-btn:hover {
+        transform: translateY(-2px) scale(1.02) !important;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.75) !important;
+      }
+      #autotool-connect-btn:active {
+        transform: translateY(0px) scale(0.98) !important;
+      }
+      #autotool-connect-btn .at-dot {
+        width: 8px !important;
+        height: 8px !important;
+        border-radius: 50% !important;
+        background: #f0c040 !important;
+        display: inline-block !important;
+        box-shadow: 0 0 8px #f0c040 !important;
+      }
+      #autotool-connect-btn.on {
+        background: #14532d !important;
+        border-color: #22c55e !important;
+        color: #86efac !important;
+        box-shadow: 0 0 16px rgba(34, 197, 94, 0.4), 0 4px 16px rgba(0, 0, 0, 0.6) !important;
+      }
+      #autotool-connect-btn.on .at-dot {
+        background: #4ade80 !important;
+        box-shadow: 0 0 8px #4ade80 !important;
+        animation: atPulse 1.8s infinite !important;
+      }
+      #autotool-connect-btn.wait {
+        background: #451a03 !important;
+        border-color: #f59e0b !important;
+        color: #fde68a !important;
+        box-shadow: 0 0 14px rgba(245, 158, 11, 0.4), 0 4px 16px rgba(0, 0, 0, 0.6) !important;
+      }
+      #autotool-connect-btn.wait .at-dot {
+        background: #fbbf24 !important;
+        box-shadow: 0 0 8px #fbbf24 !important;
+      }
+      #autotool-connect-btn.err {
+        background: #450a0a !important;
+        border-color: #ef4444 !important;
+        color: #fca5a5 !important;
+        box-shadow: 0 0 14px rgba(239, 68, 68, 0.4), 0 4px 16px rgba(0, 0, 0, 0.6) !important;
+      }
+      #autotool-connect-btn.err .at-dot {
+        background: #f87171 !important;
+        box-shadow: 0 0 8px #f87171 !important;
+      }
+      #autotool-connect-btn.disarmed {
+        opacity: 0.75 !important;
+        border-color: #94a3b8 !important;
+        color: #cbd5e1 !important;
+      }
+      #autotool-connect-btn.disarmed .at-dot {
+        background: #94a3b8 !important;
+        box-shadow: none !important;
+      }
+      @keyframes atPulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.3); opacity: 0.6; }
+      }
+    `;
+    document.head ? document.head.appendChild(style) : document.documentElement.appendChild(style);
+  }
+
+  function initFloatingConnectButton() {
+    if (document.getElementById("autotool-connect-btn") || window !== window.top) return;
+    ensureButtonStyles();
+
+    const btn = document.createElement("button");
+    btn.id = "autotool-connect-btn";
+    btn.className = "wait";
+    btn.innerHTML = `<span class="at-dot"></span><span id="autotool-btn-text">⚡ TOOL V3: ĐANG KẾT NỐI...</span>`;
+
+    btn.addEventListener("click", () => {
+      if (!isHubConnected) {
+        // Đang mất kết nối -> kích hoạt kết nối lại ngay lập tức
+        btn.className = "wait";
+        const label = document.getElementById("autotool-btn-text");
+        if (label) label.textContent = "⏳ ĐANG KẾT NỐI LẠI...";
+
+        const pName = activeProfileName || localStorage.getItem("AUTOTOOL_PROFILE_NAME") || localStorage.getItem("KEY_USER_NAME") || document.title || "";
+        chrome.runtime.sendMessage({ type: "RECONNECT_HUB", profile_name: pName }, () => {
+          updateButtonState();
+        });
+      } else {
+        // Đang kết nối -> Bấm để chuyển đổi chế độ BẬT/TẮT TỰ ĐỘNG (ARM / DISARM)
+        isToolArmed = !isToolArmed;
+        chrome.runtime.sendMessage({ type: "TOGGLE_ARM", armed: isToolArmed }, () => {});
+        window.postMessage({ type: "AUTOTOOL_SET_ARM", armed: isToolArmed }, "*");
+        updateButtonState();
+      }
+    });
+
+    document.body.appendChild(btn);
+    updateButtonState();
+  }
+
+  function updateButtonState() {
+    const btn = document.getElementById("autotool-connect-btn");
+    const txt = document.getElementById("autotool-btn-text");
+    if (!btn || !txt) return;
+
+    chrome.runtime.sendMessage({ type: "CHECK_HEALTH" }, (res) => {
+      if (chrome.runtime.lastError || !res || !res.ok) {
+        isHubConnected = false;
+        btn.className = "err";
+        txt.textContent = "🔴 MẤT KẾT NỐI HUB (Bấm để thử lại)";
+        return;
+      }
+
+      isHubConnected = res.hub_connected;
+      if (res.profile_name) activeProfileName = res.profile_name;
+
+      const pLabel = activeProfileName || "Tool V3";
+      const room = window.__last_room_info;
+      const roomStr = room && room.rid ? ` [Bàn #${room.rid}]` : "";
+
+      if (!isHubConnected) {
+        btn.className = "wait";
+        txt.textContent = `⏳ ĐANG KẾT NỐI HUB (${pLabel})...`;
+      } else if (!isToolArmed) {
+        btn.className = "on disarmed";
+        txt.textContent = `⏸️ TOOL V3: TẠM DỪNG (${pLabel})${roomStr}`;
+      } else {
+        btn.className = "on";
+        txt.textContent = `🟢 TOOL V3: ĐÃ KẾT NỐI (${pLabel})${roomStr}`;
+      }
+    });
+  }
+
   // ---- IN-PAGE FLOATING HUD (Hiển thị trực quan trên view game) ----
   function initInPageHUD() {
     if (document.getElementById("autotool-hud") || window !== window.top) return;
@@ -251,25 +434,10 @@
     });
 
     document.getElementById("hud-xa").addEventListener("click", () => {
-      try {
-        chrome.runtime.sendMessage(
-          {
-            type: "API_CALL",
-            path: "/api/autoplay/test-discard",
-            method: "POST",
-            body: { profile_name: "Account01", delay_ms: 500 },
-          },
-          () => {}
-        );
-      } catch (_) {
-        try {
-          fetch("http://127.0.0.1:8000/api/autoplay/test-discard", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ profile_name: "Account01", delay_ms: 500 }),
-          }).catch(() => {});
-        } catch (_) {}
-      }
+      requestControl("/api/autoplay/test-discard", {
+        profile_name: activeProfileName || "Account01",
+        delay_ms: 500
+      }, "POST").catch(() => {});
     });
 
     // Cập nhật dữ liệu thời gian thực
@@ -299,8 +467,11 @@
         } else {
           alertEl.style.display = "none";
         }
+
+        // Cập nhật nút bấm nổi
+        updateButtonState();
       } catch (_) {}
-    }, 1000);
+    }, 1500);
   }
 
   function handleRoomInfo(ri) {
@@ -311,20 +482,15 @@
     if (hudRoom) hudRoom.textContent = ri.rn || `#${ri.rid}`;
     if (hudBet && ri.b) hudBet.textContent = `$${Number(ri.b).toLocaleString()}`;
 
-    try {
-      chrome.runtime.sendMessage({
-        type: "API_CALL",
-        path: "/api/autoplay/report-room",
-        method: "POST",
-        body: {
-          profile_name: localStorage.getItem("KEY_USER_NAME") || document.title || "",
-          rid: ri.rid,
-          b: ri.b,
-          rn: ri.rn,
-          Mu: ri.Mu
-        }
-      });
-    } catch (_) {}
+    requestControl("/api/autoplay/report-room", {
+      profile_name: activeProfileName || localStorage.getItem("KEY_USER_NAME") || document.title || "",
+      rid: ri.rid,
+      b: ri.b,
+      rn: ri.rn,
+      Mu: ri.Mu
+    }, "POST").catch(() => {});
+
+    updateButtonState();
   }
 
   // 1. Nhận lệnh từ background.js (Backend Hub) -> Chuyển tiếp xuống Main World
@@ -336,6 +502,11 @@
         data: msg.data || {},
       }, "*");
       sendResponse({ ok: true });
+    } else if (msg.type === "SET_ARM") {
+      isToolArmed = !!msg.armed;
+      window.postMessage({ type: "AUTOTOOL_SET_ARM", armed: isToolArmed }, "*");
+      updateButtonState();
+      sendResponse({ ok: true });
     }
     return true;
   });
@@ -345,22 +516,24 @@
     if (!ev.data) return;
 
     if (ev.data.type === "AUTOTOOL_INIT_PROFILE" && ev.data.profile_name) {
+      activeProfileName = ev.data.profile_name;
       chrome.runtime.sendMessage({
         type: "REGISTER_PROFILE",
         profile_name: ev.data.profile_name,
       });
+      updateButtonState();
     } else if (ev.data.type === "AUTOTOOL_ROOM_INFO") {
       handleRoomInfo(ev.data.room_info);
       chrome.runtime.sendMessage({
         type: "ROOM_UPDATE",
-        profile_name: ev.data.profile_name,
+        profile_name: ev.data.profile_name || activeProfileName,
         room_info: ev.data.room_info,
         players: ev.data.players,
       });
     } else if (ev.data.type === "AUTOTOOL_BRIDGE_PACKET") {
       chrome.runtime.sendMessage({
         type: "BRIDGE_PACKET",
-        profile_name: ev.data.profile_name,
+        profile_name: ev.data.profile_name || activeProfileName,
         action: ev.data.action,
         data: ev.data,
       });
@@ -373,9 +546,15 @@
     }
   });
 
-  if (document.readyState === "complete" || document.readyState === "interactive") {
+  function initUI() {
+    initFloatingConnectButton();
     initInPageHUD();
+  }
+
+  if (document.readyState === "complete" || document.readyState === "interactive") {
+    initUI();
   } else {
-    document.addEventListener("DOMContentLoaded", initInPageHUD);
+    document.addEventListener("DOMContentLoaded", initUI);
   }
 })();
+

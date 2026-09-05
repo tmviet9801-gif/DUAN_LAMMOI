@@ -221,9 +221,19 @@
     return true;
   };
 
+  G.__AUTOTOOL_ARMED = true;
+
   // Lắng nghe lệnh từ Extension isolated script (từ Backend Hub gửi xuống)
   window.addEventListener("message", (event) => {
-    if (!event.data || event.data.type !== "AUTOTOOL_EXEC_COMMAND") return;
+    if (!event.data) return;
+
+    if (event.data.type === "AUTOTOOL_SET_ARM") {
+      G.__AUTOTOOL_ARMED = !!event.data.armed;
+      console.log(`[AutoTool V3] Tình trạng ARM chuyển sang: ${G.__AUTOTOOL_ARMED ? "BẬT" : "TẠM DỪNG"}`);
+      return;
+    }
+
+    if (event.data.type !== "AUTOTOOL_EXEC_COMMAND") return;
     const { action, data } = event.data;
     console.log(`[AutoTool V3] Nhận lệnh từ Hub qua Extension Bridge: action=${action}`, data);
 

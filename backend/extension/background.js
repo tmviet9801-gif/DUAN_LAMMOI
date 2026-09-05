@@ -128,14 +128,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // 3. Hỗ trợ REST API Call cũ cho popup và các component khác
-  if (message.type === "API_CALL") {
-    handleApiCall(message)
-      .then((res) => sendResponse({ ok: true, data: res }))
+  // 3. Proxy HTTP qua Background (bỏ qua CORS & Private Network Access restrictions của Chrome)
+  if (message.type === "HTTP_PROXY" || message.type === "API_CALL") {
+    handleHttpProxy(message)
+      .then((res) => sendResponse({ ok: true, ...res }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
 
+  // 4. Kiểm tra sức khỏe kết nối Hub và Profile
   if (message.type === "CHECK_HEALTH") {
     sendResponse({
       ok: true,
@@ -144,17 +145,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+
+  // 5. Yêu cầu chủ động kết nối lại WebSocket Hub
+  if (message.type === "RECONNECT_HUB") {
+    if (message.profile_name) {
+      currentProfileName = message.profile_name;
+      chrome.storage.local.set({ profile_name: currentProfileName });
+    }
+    try {
+      if (hubSocket) hubSocket.close();
+    } catch (_) {}
+    connectToHub(currentProfileName);
+    sendResponse({ ok: true, profile_name: currentProfileName });
+    return true;
+  }
+
+  // 6. Chuyển tiếp trạng thái ARM / DISARM
+  if (message.type === "TOGGLE_ARM") {
+    chrome.tabs.query({}, (tabs) => {
+      for (const tab of tabs) {
+        if (tab.id) {
+          chrome.tabs.sendMessage(tab.id, { type: "SET_ARM", armed: message.armed }).catch(() => {});
+        }
+      }
+    });
+    sendResponse({ ok: true, armed: message.armed });
+    return true;
+  }
 });
 
-async function handleApiCall({ path, method = "GET", body = null }) {
+async function handleHttpProxy({ path, method = "GET", body = null }) {
   const opts = {
-    method,
+    method: method || "GET",
     headers: { "Content-Type": "application/json" },
   };
-  if (body && method !== "GET") {
+  if (body && opts.method !== "GET") {
     opts.body = typeof body === "string" ? body : JSON.stringify(body);
   }
 
-  const res = await fetch(`${BACKEND_BASE}${path}`, opts);
-  return await res.json();
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  const url = `${BACKEND_BASE}${cleanPath}`;
+  try {
+    const res = await fetch(url, opts);
+    let data = null;
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      data = await res.json().catch(() => null);
+    } else {
+      data = await res.text().catch(() => null);
+    }
+    return { status: res.status, ok: res.ok, data };
+  } catch (err) {
+    throw new Error(`[HTTP_PROXY Error] ${err.message} (${url})`);
+  }
 }
