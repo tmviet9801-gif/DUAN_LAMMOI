@@ -14,11 +14,6 @@ async def get_config():
     return load_config()
 
 
-@router.get("/api/gamesim/config")
-async def get_gamesim_config():
-    return {"groups": {}, "game": {}}
-
-
 @router.post("/api/config")
 async def set_config(cfg: dict, request: Request):
     manager = request.app.state.manager

@@ -27,6 +27,7 @@ from controllers import (
     auto_flow_controller,
     browser_controller,
     config_controller,
+    game_sim_controller,
     info_controller,
     license_controller,
     proxy_controller,
@@ -67,6 +68,9 @@ def create_app() -> FastAPI:
         app.state.hub = hub
         app.state.manager = manager
         app.state.events = emitter
+        gs = GameSimManager(browser_manager=manager)
+        gs.set_event_sink(emitter.publish)
+        app.state.game_sim = gs
 
         # Migration: bật lưu session (save_session) cho mọi profile cũ + tạo
         # profile_dir nếu thiếu, để login được giữ lại khi mở lại.
@@ -114,6 +118,7 @@ def create_app() -> FastAPI:
 
     app.include_router(info_controller.router)
     app.include_router(config_controller.router)
+    app.include_router(game_sim_controller.router)
     app.include_router(account_controller.router)
     app.include_router(browser_controller.router)
     app.include_router(auto_flow_controller.router)
