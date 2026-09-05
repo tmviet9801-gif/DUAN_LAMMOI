@@ -45,7 +45,17 @@
       }
       if (ev.type === "accounts_updated" || ev.type === "cards_updated" || ev.type === "room_info_updated" || ev.type === "balance_updated" || ev.type === "log_updated" || ev.type === "room_left") {
         if (ev.profile_name && Array.isArray(App.state.accounts)) {
-          const acc = App.state.accounts.find(a => a.name === ev.profile_name || a.username === ev.profile_name || a.id === ev.profile_name);
+          const p = (ev.profile_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+          const acc = App.state.accounts.find(a => {
+            if (!a) return false;
+            const n = (a.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+            const u = (a.username || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+            const i = String(a.index || a.id || "").toLowerCase();
+            if (p === n || p === u || p === i) return true;
+            if (p.endsWith("1") && (n.endsWith("1") || i === "1")) return true;
+            if (p.endsWith("2") && (n.endsWith("2") || i === "2")) return true;
+            return false;
+          });
           if (acc) {
             if (ev.balance !== undefined) acc.balance = ev.balance;
             if (ev.room !== undefined) acc.room = ev.room;

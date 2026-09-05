@@ -154,8 +154,8 @@
 
   function getMyRole() {
     if (G.__AUTOTOOL_ROLE) return G.__AUTOTOOL_ROLE;
-    const pName = (getProfileName() || "").toLowerCase();
-    if (pName.includes("2") || pName.includes("sub") || pName.includes("phu")) {
+    const pName = ((G.__my_dn || "") + " " + (getProfileName() || "")).toLowerCase();
+    if (pName.includes("2") || pName.includes("sub") || pName.includes("phu") || pName.includes("xabai2") || pName.includes("dump")) {
       return "dump";
     }
     return "winner";
@@ -165,14 +165,9 @@
     if (!myCards || !myCards.length) return null;
     const combs = findCombinations(myCards);
 
-    // 1. LƯỢT TỰ DO (Free Turn / Mở ván hoặc đối phương vừa Pass)
+    // 1. LƯỢT TỰ DO (Free Turn / Mở ván hoặc đối phương vừa Pass) -> BẮT BUỘC ĐÁNH RA BÀI (KHÔNG BAO GIỜ NULL)
     if (!tableCards || tableCards.length === 0) {
       if (role === "dump") {
-        if (myCards.length === 1) {
-          // Nick xả chỉ còn 1 lá -> PASS nhường đường cho Winner về Nhất!
-          console.log("[AutoTool V3] [Role: DUMP] Còn đúng 1 lá rác đáy bài -> BỎ LƯỢT (cmd 254) để giữ thua tối thiểu!");
-          return null;
-        }
         // Ưu tiên xả: Sảnh dài nhất -> Tứ quý -> Ba -> Đôi -> Heo -> Rác to nhất
         if (combs.straights.length > 0) return combs.straights[0];
         if (combs.quads.length > 0) return combs.quads[combs.quads.length - 1];
@@ -209,13 +204,11 @@
           return null;
         }
       } else {
-        // Role là Dump: Đồng đội (Winner) vừa đánh bài
-        if (myCards.length > 1) {
-          for (const cat of ["straights", "triples", "pairs", "singles"]) {
-            const list = combs[cat].slice().reverse();
-            for (const cand of list) {
-              if (canBeat(cand, tableCards)) return cand;
-            }
+        // Role là Dump: Đồng đội (Winner) vừa đánh bài -> Dump cố gắng đè bằng bài to nhất để giành lượt xả tiếp
+        for (const cat of ["straights", "triples", "pairs", "singles"]) {
+          const list = combs[cat].slice().reverse();
+          for (const cand of list) {
+            if (canBeat(cand, tableCards)) return cand;
           }
         }
         return null;
@@ -364,11 +357,12 @@
             // Hàm kiểm tra người chơi là chính mình
             function isMe(x) {
               if (!x) return false;
+              if (x.cs !== undefined) return true; // Trong phòng, chỉ có tab local mới có mảng bài cs
               if (G.__my_uid && x.uid && String(x.uid) === String(G.__my_uid)) return true;
               if (G.__my_dn) {
                 const d1 = String(x.dn || x.u || "").trim().toLowerCase();
                 const d2 = String(G.__my_dn).trim().toLowerCase();
-                if (d1 === d2) return true;
+                if (d1 && d1 === d2) return true;
               }
               const pName = (getProfileName() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
               const dn = (x.dn || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -386,11 +380,15 @@
               for (const pt of partnerList) {
                 if (!pt) continue;
                 if (dn === pt || u === pt) return true;
-                if (dn.length >= 6 && pt.length >= 6 && dn.slice(0, 8) === pt.slice(0, 8)) return true;
+                if (dn.length >= 5 && pt.length >= 5 && (dn.includes(pt) || pt.includes(dn))) return true;
               }
               // Heuristic dự phòng: Nếu cả 2 account cùng prefix nick test
-              const myName = (getProfileName() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-              if (myName.length >= 8 && dn.length >= 8 && dn.slice(0, 8) === myName.slice(0, 8)) {
+              const myName = (G.__my_dn || getProfileName() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+              if (myName.length >= 6 && dn.length >= 6 && dn.slice(0, 6) === myName.slice(0, 6)) {
+                return true;
+              }
+              // Nếu đã có xác nhận khớp bàn từ Extension Hub
+              if (G.__is_matched_locked && G.__last_room_info && G.__last_room_info.partner_found) {
                 return true;
               }
               return false;
@@ -398,78 +396,67 @@
 
             // HÀM ĐIỀU PHỐI XÁC MINH SẴN SÀNG & BẮT ĐẦU VÁN (TWO-WAY HANDSHAKE & RETRY START PULSE)
             function triggerVerifiedMatchReadyAndStart(partnerName, sourceReason) {
-              if (!G.__AUTOTOOL_AUTO_HUNT) return;
               console.log(`[AutoTool V3] 🟢 >>> XÁC MINH KHỚP BÀN THÀNH CÔNG: ${partnerName || "Đồng đội"} [${sourceReason || 'OK'}]! <<<`);
 
-              // 1. Khóa khớp bàn - HỦY NGAY LẬP TỨC mọi timer out bàn
+              // 1. DỪNG / KILL TOÀN BỘ QUY TRÌNH JOIN BÀN VÀ TIMEOUT OUT BÀN
               G.__is_matched_locked = true;
+              G.__AUTOTOOL_AUTO_HUNT = false; // KILL hunt loop ngay lập tức khi đã khớp!
               if (G.__hunt_wait_timer) {
                 clearTimeout(G.__hunt_wait_timer);
                 G.__hunt_wait_timer = null;
+              }
+              if (G.__hunt_retry_timer) {
+                clearTimeout(G.__hunt_retry_timer);
+                G.__hunt_retry_timer = null;
               }
               if (G.__last_room_info) {
                 G.__last_room_info.partner_found = true;
                 if (partnerName) G.__last_room_info.partner_name = partnerName;
               }
 
-              // Bắn sự kiện lên Isolated content.js để hiện Banner / Toast & báo Extension Hub
+              // Bắn sự kiện lên Isolated content.js để hiện Banner / Toast, báo Extension Hub & lưu log
               window.postMessage({
                 type: "AUTOTOOL_MATCH_SUCCESS",
                 profile_name: getProfileName(),
                 partner_name: partnerName || (G.__last_room_info && G.__last_room_info.partner_name) || "Đồng đội",
                 verified: true,
+                rid: (G.__last_room_info && G.__last_room_info.rid) || 2,
               }, "*");
 
-              // 2. GỬI LỆNH SẴN SÀNG (cmd 363, aRd: "true")
-              // Gửi ngay lập tức (150ms) và nhắc lại an toàn (500ms)
+              // 2. CẢ 2 NICK ĐỀU GỬI LỆNH SẴN SÀNG & BẮT ĐẦU CHUẨN CỦA HITCLUB (cmd 5 + cmd 363)
               setTimeout(() => {
-                console.log("[AutoTool V3] Tự động gửi lệnh SẴN SÀNG (cmd 363)...");
+                console.log("[AutoTool V3] Tự động gửi lệnh SẴN SÀNG / BẮT ĐẦU (cmd 5)...");
                 G.__autotool_exec_ready();
               }, 150);
 
               setTimeout(() => {
                 if (!G.__game_in_progress && (!G.__my_cards || G.__my_cards.length === 0)) {
-                  console.log("[AutoTool V3] Tự động gửi nhắc SẴN SÀNG lần 2 (cmd 363)...");
+                  console.log("[AutoTool V3] Tự động gửi nhắc SẴN SÀNG lần 2 (cmd 5)...");
                   G.__autotool_exec_ready();
                 }
-              }, 500);
+              }, 450);
 
-              // 3. CHỦ BÀN GỬI LỆNH BẮT ĐẦU VÁN (cmd 364) VỚI VÒNG LẶP RETRY AN TOÀN
-              const me = (G.__room_players || []).find(isMe);
-              const pName = (getProfileName() || "").toLowerCase();
-              const isHost = (me && (me.C === true || me.sit === 0)) || pName.includes("1") || G.__is_hunt_initiator;
-
-              if (isHost) {
-                // Đợi 450ms để lệnh Sẵn Sàng của khách kịp ghi nhận trên Server HitClub
-                setTimeout(() => {
-                  if (G.__game_in_progress || (G.__my_cards && G.__my_cards.length > 0)) return;
-                  console.log("[AutoTool V3] Chủ bàn -> Gửi lệnh BẮT ĐẦU VÁN (cmd 364)...");
-                  G.__autotool_exec_start();
-
-                  // KÍCH HOẠT VÒNG LẶP RETRY BẮT ĐẦU (Retry Start Pulse)
-                  // Nếu sau 650ms chưa có cmd 250 (chia bài), gửi lại cmd 364 (tối đa 5 lần)
-                  if (G.__start_retry_timer) {
-                    clearInterval(G.__start_retry_timer);
-                    G.__start_retry_timer = null;
-                  }
-                  let attempts = 0;
-                  G.__start_retry_timer = setInterval(() => {
-                    if (G.__game_in_progress || (G.__my_cards && G.__my_cards.length > 0) || !G.__is_matched_locked) {
-                      clearInterval(G.__start_retry_timer);
-                      G.__start_retry_timer = null;
-                      return;
-                    }
-                    attempts++;
-                    if (attempts > 5) {
-                      clearInterval(G.__start_retry_timer);
-                      G.__start_retry_timer = null;
-                      return;
-                    }
-                    console.log(`[AutoTool V3] [Retry Start #${attempts}] Chủ bàn gửi lại BẮT ĐẦU VÁN (cmd 364)...`);
-                    G.__autotool_exec_start();
-                  }, 650);
-                }, 450);
+              // 3. VÒNG LẶP RETRY START PULSE (Mỗi 600ms, tối đa 6 lần) cho đến khi nhận cmd 250 (chia bài)
+              if (G.__start_retry_timer) {
+                clearInterval(G.__start_retry_timer);
+                G.__start_retry_timer = null;
               }
+              let attempts = 0;
+              G.__start_retry_timer = setInterval(() => {
+                if (G.__game_in_progress || (G.__my_cards && G.__my_cards.length > 0) || !G.__is_matched_locked) {
+                  clearInterval(G.__start_retry_timer);
+                  G.__start_retry_timer = null;
+                  return;
+                }
+                attempts++;
+                if (attempts > 6) {
+                  clearInterval(G.__start_retry_timer);
+                  G.__start_retry_timer = null;
+                  return;
+                }
+                console.log(`[AutoTool V3] [Retry Start #${attempts}] Gửi lại SẴN SÀNG / BẮT ĐẦU (cmd 5)...`);
+                G.__autotool_exec_ready();
+              }, 600);
             }
 
             // cmd 200: Người chơi mới bước vào bàn (t: 1) hoặc rời bàn (t: 2)
@@ -528,7 +515,17 @@
               G.__room_players = p.ps || [];
               G.__room_state = p.gS;
 
-              const me = (p.ps || []).find(isMe) || (p.ps && p.ps[0]);
+              // Trích xuất chính xác 100% "Chính mình" từ cờ cs (chỉ tab local mới có cs)
+              const me = (p.ps || []).find((x) => x && x.cs !== undefined) || (p.ps || []).find(isMe) || (p.ps && p.ps[0]);
+              if (me) {
+                G.__my_uid = me.uid;
+                G.__my_dn = me.dn || me.u;
+                G.__my_sit = me.sit;
+                if (!G.__AUTOTOOL_PROFILE_NAME || G.__AUTOTOOL_PROFILE_NAME.includes("HitClub")) {
+                  G.__AUTOTOOL_PROFILE_NAME = me.dn || me.u;
+                }
+              }
+
               const partner = (p.ps || []).find(isPartner);
               const strangers = (p.ps || []).filter((x) => !isMe(x) && !isPartner(x));
 
@@ -550,6 +547,9 @@
                     cards: G.__my_cards,
                     first_turn: p.aid !== undefined ? { sit: p.aid } : null,
                   }, "*");
+                } else {
+                  // Chưa chia bài -> đảm bảo bài là rỗng
+                  G.__my_cards = [];
                 }
               }
               if (partner && partner.rmC !== undefined) {
@@ -816,7 +816,14 @@
       const ws = new OrigWebSocket(...args);
       try {
         if (!G.__ws_instances.includes(ws)) G.__ws_instances.push(ws);
-        ws.addEventListener("message", (e) => push("recv", e.data));
+        ws.addEventListener("message", (e) => {
+          try {
+            if (typeof e.data === "string" && e.data.includes('"Simms"')) {
+              G.__ws_simms_instance = ws;
+            }
+          } catch (_) {}
+          push("recv", e.data);
+        });
       } catch (_) {}
       return ws;
     };
@@ -832,6 +839,9 @@
     OrigWebSocket.prototype.send = function (data) {
       try {
         if (!G.__ws_instances.includes(this)) G.__ws_instances.push(this);
+        if (typeof data === "string" && data.includes('"Simms"')) {
+          G.__ws_simms_instance = this;
+        }
         push("send", data);
       } catch (_) {}
       return origSend.apply(this, arguments);
@@ -841,8 +851,21 @@
   // 3. Helper gửi WS qua game socket
   G.__ws_get_simms = function () {
     try {
+      if (G.__ws_simms_instance && G.__ws_simms_instance.readyState === 1) {
+        return G.__ws_simms_instance;
+      }
       const list = (G.__ws_instances || []).filter((s) => s && s.readyState === 1);
-      return list.find((s) => (s.url || "").includes("carkgwaiz") || (s.url || "").includes("simms")) || null;
+      const found = list.find((s) => (s.url || "").toLowerCase().includes("carkgwaiz") || (s.url || "").toLowerCase().includes("simms"));
+      if (found) {
+        G.__ws_simms_instance = found;
+        return found;
+      }
+      const gameWs = list.find((s) => !(s.url || "").includes("millicast") && !(s.url || "").includes("socket.io"));
+      if (gameWs) {
+        G.__ws_simms_instance = gameWs;
+        return gameWs;
+      }
+      return list[0] || null;
     } catch (_) {
       return null;
     }
@@ -946,21 +969,21 @@
   };
 
   G.__autotool_exec_ready = function () {
-    console.log("[AutoTool V3] Thực thi lệnh SẴN SÀNG...");
-    const packet = '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]';
-    if (!G.__ws_send_channel("Simms", packet)) {
-      G.__ws_send(packet);
+    console.log("[AutoTool V3] Thực thi lệnh SẴN SÀNG & BẮT ĐẦU (cmd 5 + cmd 363)...");
+    const p1 = '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]';
+    const p2 = '[5,"Simms",-1,{"cmd":5}]';
+    const simms = G.__ws_get_simms();
+    if (simms && simms.readyState === 1) {
+      try { simms.send(p1); push("inject", p1); } catch (_) {}
+      try { simms.send(p2); push("inject", p2); } catch (_) {}
+      return true;
     }
-    return true;
+    return false;
   };
 
   G.__autotool_exec_start = function () {
-    console.log("[AutoTool V3] Thực thi lệnh BẮT ĐẦU VÁN...");
-    const packet = '[6,"Simms","channelPlugin",{"cmd":364}]';
-    if (!G.__ws_send_channel("Simms", packet)) {
-      G.__ws_send(packet);
-    }
-    return true;
+    console.log("[AutoTool V3] Thực thi lệnh BẮT ĐẦU VÁN (cmd 5)...");
+    return G.__autotool_exec_ready();
   };
 
   G.__autotool_exec_play = function (cardIds) {
@@ -1046,6 +1069,11 @@
         cards: data.cards,
       }, "*");
     } else if (action === "JOIN_ROOM" && data && data.rid) {
+      // NẾU ĐÃ TRONG VÁN BÀI HOẶC ĐÃ KHÓA BÀN: BỎ QUA LỆNH JOIN_ROOM (KILL JOIN)
+      if (G.__game_in_progress || (G.__is_matched_locked && G.__last_room_info && G.__last_room_info.partner_found)) {
+        console.log(`[AutoTool V3] Đã khớp bàn và đang trong ván (${(G.__last_room_info && G.__last_room_info.rid) || 2}) -> BỎ QUA lệnh JOIN_ROOM mới!`);
+        return;
+      }
       G.__autotool_exec_join(data.rid, data.bet || 100, data.mu || 2);
     } else if (action === "LEAVE_ROOM") {
       G.__is_matched_locked = false;

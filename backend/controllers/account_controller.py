@@ -121,9 +121,19 @@ async def get_accounts(request: Request):
                     a["log"] = s_log
                 elif "log" not in a or not a["log"]:
                     a["log"] = "Đang kết nối..."
+
+            # 4. Bài trên tay: Nếu không ở trong bàn (room == -1), bài bắt buộc là []
+            cur_room = a.get("room", -1)
+            if cur_room == -1 or cur_room is None or str(cur_room) == "-1":
+                a["cards"] = []
+            elif p_state and p_state.get("cards") is not None:
+                a["cards"] = p_state["cards"]
+            else:
+                a["cards"] = a.get("cards") or []
         else:
             a["status"] = "Idle"
             a["connected"] = False
+            a["cards"] = []
             if "room" not in a:
                 a["room"] = -1
             if "log" not in a:
@@ -181,9 +191,11 @@ async def update_account_cards(body: UpdateCardsIn, request: Request):
     cards = body.cards or []
     accounts = load_accounts()
     updated = False
+    canonical_name = p_name
     for a in accounts:
         if _match_account(a, p_name):
             a["cards"] = cards
+            canonical_name = a.get("name") or p_name
             updated = True
             break
     if updated:
@@ -191,14 +203,17 @@ async def update_account_cards(body: UpdateCardsIn, request: Request):
 
     ext_hub = getattr(request.app.state, "ext_hub", None)
     if ext_hub:
-        ext_hub.handle_message(p_name, {"type": "CARDS_DEALT", "cards": cards})
+        ext_hub.handle_message(canonical_name, {"type": "CARDS_DEALT", "cards": cards})
 
     events = getattr(request.app.state, "events", None)
     if events:
         events.publish({"type": "cards_updated", "profile_name": p_name, "cards": cards})
         events.publish({"type": "accounts_updated", "profile_name": p_name, "cards": cards})
+        if canonical_name != p_name:
+            events.publish({"type": "cards_updated", "profile_name": canonical_name, "cards": cards})
+            events.publish({"type": "accounts_updated", "profile_name": canonical_name, "cards": cards})
 
-    return {"ok": True, "profile_name": p_name, "cards": cards}
+    return {"ok": True, "profile_name": canonical_name, "cards": cards}
 
 
 class UpdateLogIn(BaseModel):

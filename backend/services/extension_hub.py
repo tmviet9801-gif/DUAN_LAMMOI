@@ -331,14 +331,15 @@ class ExtensionHubManager:
                 cards = msg.get("data", {}).get("cards")
             if isinstance(cards, list):
                 state["cards"] = cards
+                matched_n = profile_name
                 try:
                     from models.config_model import load_accounts, save_accounts
                     accounts = load_accounts()
                     for a in accounts:
-                        if (a.get("name") == profile_name or 
-                            a.get("username") == profile_name or 
-                            str(a.get("id")) == str(profile_name)):
+                        from controllers.account_controller import _match_account
+                        if _match_account(a, profile_name):
                             a["cards"] = cards
+                            matched_n = a.get("name") or profile_name
                             save_accounts(accounts)
                             break
                 except Exception:
@@ -354,6 +355,17 @@ class ExtensionHubManager:
                     "profile_name": profile_name,
                     "cards": cards,
                 })
+                if matched_n != profile_name:
+                    self._emit({
+                        "type": "cards_updated",
+                        "profile_name": matched_n,
+                        "cards": cards,
+                    })
+                    self._emit({
+                        "type": "accounts_updated",
+                        "profile_name": matched_n,
+                        "cards": cards,
+                    })
 
                 # Chuyển tiếp bài đồng đội sang các tab khác cùng online (<2ms)
                 for other_profile in list(self.active_sockets.keys()):
@@ -363,22 +375,24 @@ class ExtensionHubManager:
                             "cards": cards,
                         }))
 
-        # 6. Trạng thái rời bàn / Đang ở sảnh
+        # 6. Trạng thái rời bàn / Đang ở sảnh -> XÓA SẠCH BÀI TRÊN TAY
         elif msg_type in ("ROOM_LEFT", "LEAVE_ROOM", "AUTOTOOL_ROOM_LEFT"):
             state["room_info"] = None
             state["room_id"] = -1
-            state["log"] = "Đang ở sảnh"
+            state["log"] = "Đang ở sảnh (Chưa vào bàn)"
             state["players"] = []
             state["cards"] = []
+            matched_n = profile_name
             try:
                 from models.config_model import load_accounts, save_accounts
                 accounts = load_accounts()
                 for a in accounts:
-                    if (a.get("name") == profile_name or 
-                        a.get("username") == profile_name or 
-                        str(a.get("id")) == str(profile_name)):
+                    from controllers.account_controller import _match_account
+                    if _match_account(a, profile_name):
                         a["room"] = -1
-                        a["log"] = "Đang ở sảnh"
+                        a["log"] = "Đang ở sảnh (Chưa vào bàn)"
+                        a["cards"] = []
+                        matched_n = a.get("name") or profile_name
                         save_accounts(accounts)
                         break
             except Exception:
@@ -392,18 +406,46 @@ class ExtensionHubManager:
                 "type": "accounts_updated",
                 "profile_name": profile_name,
                 "room": -1,
-                "log": "Đang ở sảnh",
+                "log": "Đang ở sảnh (Chưa vào bàn)",
+                "cards": [],
             })
+            self._emit({
+                "type": "cards_updated",
+                "profile_name": profile_name,
+                "cards": [],
+            })
+            if matched_n != profile_name:
+                self._emit({
+                    "type": "accounts_updated",
+                    "profile_name": matched_n,
+                    "room": -1,
+                    "log": "Đang ở sảnh (Chưa vào bàn)",
+                    "cards": [],
+                })
+                self._emit({
+                    "type": "cards_updated",
+                    "profile_name": matched_n,
+                    "cards": [],
+                })
 
     def get_profile_state(self, profile_name: str) -> dict:
-        """Lấy thông tin trạng thái mới nhất của profile."""
-        return self.profile_states.get(profile_name, {
+        """Lấy thông tin trạng thái mới nhất của profile (hỗ trợ so khớp mềm)."""
+        if not profile_name:
+            return {"profile_name": "", "connected": False, "room_info": None, "players": [], "cards": []}
+        if profile_name in self.profile_states:
+            return self.profile_states[profile_name]
+        p_clean = "".join(c for c in profile_name.lower() if c.isalnum())
+        for k, v in self.profile_states.items():
+            k_clean = "".join(c for c in k.lower() if c.isalnum())
+            if k_clean == p_clean or (p_clean.endswith("1") and k_clean.endswith("1")) or (p_clean.endswith("2") and k_clean.endswith("2")):
+                return v
+        return {
             "profile_name": profile_name,
             "connected": False,
             "room_info": None,
             "players": [],
             "cards": [],
-        })
+        }
 
     def get_status(self) -> dict:
         """Báo cáo tổng thể toàn bộ kết nối Extension Hub."""

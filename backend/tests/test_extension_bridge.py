@@ -48,8 +48,14 @@ def test_bridge_websocket_lifecycle_and_two_way_messaging():
 
         # 3. Test Ping - Pong Keep-Alive
         ws.send_text(json.dumps({"action": "PING", "ts": 98765}))
-        pong_raw = ws.receive_text()
-        pong = json.loads(pong_raw)
+        pong = None
+        for _ in range(3):
+            msg_raw = ws.receive_text()
+            msg = json.loads(msg_raw)
+            if msg.get("action") == "PONG":
+                pong = msg
+                break
+        assert pong is not None
         assert pong.get("action") == "PONG"
         assert pong.get("ts") == 98765
 

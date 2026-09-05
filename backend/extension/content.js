@@ -540,6 +540,15 @@
         type: "REGISTER_PROFILE",
         profile_name: ev.data.profile_name,
       });
+      // Xóa sạch bài rác lưu cũ nếu đang ở sảnh
+      requestControl("/api/accounts/update-cards", {
+        profile_name: activeProfileName,
+        cards: [],
+      }, "POST").catch(() => {});
+      requestControl("/api/accounts/update-log", {
+        profile_name: activeProfileName,
+        log: "Đang ở sảnh (Chờ tìm bàn)",
+      }, "POST").catch(() => {});
       updatePill();
       updateViewBanner(`🏠 <b>${activeProfileName}</b>: Đang ở sảnh (Chờ tìm bàn)`, "lobby");
     }
@@ -589,12 +598,20 @@
         // Cập nhật log về App Desktop
         const logMsg = guestNames 
           ? `Bàn ${rid}${betStr} (Thấy khách lạ: ${guestNames})` 
-          : `Bàn ${rid}${betStr} (Bàn trống)`;
+          : `Bàn ${rid}${betStr} (Chờ bắt đầu)`;
 
         requestControl("/api/accounts/update-log", {
           profile_name: activeProfileName,
           log: logMsg,
         }, "POST").catch(() => {});
+
+        // Đảm bảo không hiển thị bài cũ khi mới vào bàn chưa chia bài
+        if (!ev.data.cards || !ev.data.cards.length) {
+          requestControl("/api/accounts/update-cards", {
+            profile_name: activeProfileName,
+            cards: [],
+          }, "POST").catch(() => {});
+        }
 
         requestControl("/api/autoplay/report-room", {
           profile_name: activeProfileName || localStorage.getItem("KEY_USER_NAME") || document.title || "",
@@ -627,26 +644,37 @@
       const pLabel = activeProfileName || "Tool V3";
       updateViewBanner(`🏠 <b>${pLabel}</b>: Đang ở sảnh (Chờ tìm bàn)`, "lobby");
 
+      // XÓA BÀI & CẬP NHẬT LOG KHI VỀ SẢNH
       requestControl("/api/accounts/update-log", {
         profile_name: activeProfileName,
-        log: "Đang ở sảnh",
+        log: "Đang ở sảnh (Chưa vào bàn)",
+      }, "POST").catch(() => {});
+
+      requestControl("/api/accounts/update-cards", {
+        profile_name: activeProfileName,
+        cards: [],
       }, "POST").catch(() => {});
 
       safeSendMessage({
         type: "ROOM_LEFT",
         profile_name: activeProfileName,
       });
+      safeSendMessage({
+        type: "CARDS_UPDATED",
+        profile_name: activeProfileName,
+        cards: [],
+      });
       updatePill();
     }
 
     // KHỚP BÀN THÀNH CÔNG (CẢ 2 NICK Ở CÙNG NHAU) -> TỰ ĐỘNG SẴN SÀNG & BẮT ĐẦU VÁN
-    else if (ev.data.type === "AUTOTOOL_MATCH_SUCCESS") {
+    else if (ev.data.type === "AUTOTOOL_MATCH_SUCCESS" || ev.data.type === "AUTOTOOL_MATCH_LOCKED") {
       const partner = ev.data.partner_name || "Đồng đội";
       const pLabel = activeProfileName || "Tool V3";
-      updateViewBanner(`🟢 <b>ĐÃ KHỚP BÀN & XÁC MINH CẢ 2 TÀI KHOẢN! (${pLabel} & ${partner})</b> - TỰ ĐỘNG BẮT ĐẦU!`, "active");
-      showToast(`🟢 <b>KHỚP BÀN THÀNH CÔNG!</b><br>${pLabel} & ${partner}<br>⚡ Tự động Sẵn Sàng & Bắt Đầu!`, "success");
+      updateViewBanner(`🟢 <b>ĐÃ KHỚP BÀN (${pLabel} & ${partner})</b> - ĐÃ KHÓA BÀN & BẮT ĐẦU!`, "active");
+      showToast(`🟢 <b>KHỚP BÀN THÀNH CÔNG!</b><br>${pLabel} & ${partner}<br>⚡ Đã khóa bàn & tự động Sẵn Sàng!`, "success");
 
-      // Báo ngay lên Extension Hub để cứu hẹn giờ của đồng đội
+      // Báo ngay lên Extension Hub để cứu hẹn giờ của đồng đội và dừng mọi lệnh Join
       safeSendMessage({
         type: "PARTNER_MATCHED",
         profile_name: activeProfileName,
@@ -655,7 +683,7 @@
 
       requestControl("/api/accounts/update-log", {
         profile_name: activeProfileName,
-        log: `🟢 Đã khớp bàn cùng ${partner} -> Đang bắt đầu ván`,
+        log: `🟢 Đã khớp bàn cùng ${partner} (Đã khóa bàn & bắt đầu)`,
       }, "POST").catch(() => {});
     }
 
