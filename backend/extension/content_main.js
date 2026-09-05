@@ -11,9 +11,17 @@
   G.__room_players = [];
   G.__room_state = 0;
 
-  // Lấy định danh profile được inject từ Playwright hoặc localStorage
+  // Lấy định danh profile được inject từ Playwright hoặc localStorage của game
   function getProfileName() {
-    return G.__AUTOTOOL_PROFILE_NAME || localStorage.getItem("AUTOTOOL_PROFILE_NAME") || document.title || "";
+    if (G.__AUTOTOOL_PROFILE_NAME) return G.__AUTOTOOL_PROFILE_NAME;
+    try {
+      const localUser = localStorage.getItem("KEY_USER_NAME") || localStorage.getItem("AUTOTOOL_PROFILE_NAME");
+      if (localUser) {
+        G.__AUTOTOOL_PROFILE_NAME = localUser;
+        return localUser;
+      }
+    } catch (_) {}
+    return document.title || "";
   }
 
   // Thông báo nhận diện Profile lên isolated context
@@ -67,6 +75,16 @@
           if (p) {
             // cmd 100: Thông tin User, Số dư & Trạng thái Sảnh
             if (p.cmd === 100) {
+              if (p.dn || p.u) {
+                const realUser = p.dn || p.u;
+                if (!G.__AUTOTOOL_PROFILE_NAME || G.__AUTOTOOL_PROFILE_NAME.includes("HitClub")) {
+                  G.__AUTOTOOL_PROFILE_NAME = realUser;
+                  window.postMessage({
+                    type: "AUTOTOOL_INIT_PROFILE",
+                    profile_name: realUser,
+                  }, "*");
+                }
+              }
               const gold = (p.As && p.As.gold !== undefined) ? p.As.gold : (p.gold !== undefined ? p.gold : (p.m !== undefined ? p.m : (p.g !== undefined ? p.g : null)));
               if (gold !== null && !isNaN(Number(gold))) {
                 window.postMessage({

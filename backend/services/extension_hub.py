@@ -236,9 +236,13 @@ class ExtensionHubManager:
                     from models.config_model import load_accounts, save_accounts
                     accounts = load_accounts()
                     for a in accounts:
-                        if (a.get("name") == profile_name or 
-                            a.get("username") == profile_name or 
-                            str(a.get("id")) == str(profile_name)):
+                        name_low = str(a.get("name") or "").lower()
+                        user_low = str(a.get("username") or "").lower()
+                        p_low = str(profile_name).lower()
+                        idx_str = str(a.get("index") or "")
+                        if (name_low == p_low or user_low == p_low or str(a.get("id")) == profile_name or
+                            (p_low.endswith("1") and (name_low.endswith("1") or idx_str == "1")) or
+                            (p_low.endswith("2") and (name_low.endswith("2") or idx_str == "2"))):
                             a["room"] = rid
                             a["log"] = room_display
                             save_accounts(accounts)
@@ -257,42 +261,50 @@ class ExtensionHubManager:
                     "room": rid,
                 })
 
-                # Tự động chia sẻ thông tin phòng cho các profile đối tác với độ trễ <2ms
-                last_rid = getattr(self, "_last_broadcast_rid", None)
-                now_t = time.time()
-                last_t = getattr(self, "_last_broadcast_time", 0)
+                # Kiểm tra xem bàn có khách lạ hay không
+                has_stranger = ri.get("has_stranger") or bool(msg.get("guests"))
+                partner_found = ri.get("partner_found")
 
-                # Tránh lặp lại cùng 1 rid trong 1.5 giây
-                if str(rid) != str(last_rid) or (now_t - last_t > 1.5):
-                    self._last_broadcast_rid = rid
-                    self._last_broadcast_time = now_t
-                    self._last_shared_room = {
-                        "rid": rid,
-                        "b": ri.get("b", 100),
-                        "Mu": ri.get("Mu", 2),
-                        "source_profile": profile_name,
-                        "timestamp": now_t,
-                    }
+                # CHỈ GỬI LỆNH JOIN_ROOM CHO PROFILE 2 KHI BÀN LÀ BÀN TRỐNG (KHÔNG CÓ KHÁCH LẠ)
+                if has_stranger:
+                    log.info("ExtensionHub V3: Profile '%s' vào bàn có khách lạ -> KHÔNG gửi lệnh join cho đồng đội!", profile_name)
+                else:
+                    # Bàn trống thực sự -> Gọi đồng đội vào ngay!
+                    last_rid = getattr(self, "_last_broadcast_rid", None)
+                    now_t = time.time()
+                    last_t = getattr(self, "_last_broadcast_time", 0)
 
-                    # 1. Báo về cho Profile A (Chủ phòng) biết đã chia sẻ thành công khi có đồng đội online
-                    target_count = max(0, len(self.active_sockets) - 1)
-                    if target_count > 0:
-                        asyncio.create_task(self.send_command(profile_name, "ROOM_SHARED_CONFIRM", {
+                    # Tránh lặp lại cùng 1 rid trong 1.5 giây
+                    if str(rid) != str(last_rid) or (now_t - last_t > 1.5):
+                        self._last_broadcast_rid = rid
+                        self._last_broadcast_time = now_t
+                        self._last_shared_room = {
                             "rid": rid,
-                            "target_count": target_count,
-                        }))
+                            "b": ri.get("b", 100),
+                            "Mu": ri.get("Mu", 2),
+                            "source_profile": profile_name,
+                            "timestamp": now_t,
+                        }
 
-                    # 2. Bắn lệnh JOIN_ROOM ngay lập tức (<2ms) tới tất cả các profile khác đang online!
-                    for other_profile in list(self.active_sockets.keys()):
-                        if other_profile != profile_name:
-                            log.info("ExtensionHub V3: >>> TỰ ĐỘNG CHUYỂN TIẾP BÀN '%s' TỪ '%s' SANG '%s' TỨC THỜI (<2ms)! <<<",
-                                     rid, profile_name, other_profile)
-                            asyncio.create_task(self.send_command(other_profile, "JOIN_ROOM", {
+                        # 1. Báo về cho Profile A (Chủ phòng) biết đã chia sẻ thành công khi có đồng đội online
+                        target_count = max(0, len(self.active_sockets) - 1)
+                        if target_count > 0:
+                            asyncio.create_task(self.send_command(profile_name, "ROOM_SHARED_CONFIRM", {
                                 "rid": rid,
-                                "bet": ri.get("b", 100),
-                                "mu": ri.get("Mu", 2),
-                                "source_profile": profile_name,
+                                "target_count": target_count,
                             }))
+
+                        # 2. Bắn lệnh JOIN_ROOM ngay lập tức (<2ms) tới tất cả các profile khác đang online!
+                        for other_profile in list(self.active_sockets.keys()):
+                            if other_profile != profile_name:
+                                log.info("ExtensionHub V3: >>> BÀN TRỐNG! TỰ ĐỘNG CHUYỂN TIẾP BÀN '%s' TỪ '%s' SANG '%s' TỨC THỜI (<2ms)! <<<",
+                                         rid, profile_name, other_profile)
+                                asyncio.create_task(self.send_command(other_profile, "JOIN_ROOM", {
+                                    "rid": rid,
+                                    "bet": ri.get("b", 100),
+                                    "mu": ri.get("Mu", 2),
+                                    "source_profile": profile_name,
+                                }))
 
         # 4. Xác nhận khớp bàn thành công giữa các đối tác (Cứu hẹn giờ out)
         elif msg_type in ("PARTNER_MATCHED", "AUTOTOOL_MATCH_SUCCESS"):

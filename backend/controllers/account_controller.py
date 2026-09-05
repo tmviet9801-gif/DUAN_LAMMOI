@@ -174,6 +174,34 @@ class UpdateLogIn(BaseModel):
     log: str
 
 
+def _match_account(acc: dict, p_name: str) -> bool:
+    if not p_name:
+        return False
+    name = str(acc.get("name") or "").strip().lower()
+    username = str(acc.get("username") or "").strip().lower()
+    acc_id = str(acc.get("id") or "").strip()
+    idx = str(acc.get("index") or "").strip()
+    target = p_name.strip().lower()
+
+    if target in (name, username, acc_id, idx):
+        return True
+
+    norm_target = "".join(c for c in target if c.isalnum())
+    norm_name = "".join(c for c in name if c.isalnum())
+    norm_user = "".join(c for c in username if c.isalnum())
+
+    if norm_target and (norm_target == norm_name or norm_target == norm_user):
+        return True
+
+    # Khớp chính xác theo hậu tố số 1 hoặc 2 (Profile 1 vs Profile 2)
+    if norm_target.endswith("1") and (norm_name.endswith("1") or idx == "1"):
+        return True
+    if norm_target.endswith("2") and (norm_name.endswith("2") or idx == "2"):
+        return True
+
+    return False
+
+
 @router.post("/api/accounts/update-log")
 async def update_account_log(body: UpdateLogIn, request: Request):
     """Cập nhật log trạng thái tài khoản hiển thị trên Desktop App."""
@@ -181,10 +209,12 @@ async def update_account_log(body: UpdateLogIn, request: Request):
     log_text = body.log.strip()
 
     accounts = load_accounts()
+    matched_profile = p_name
     updated = False
     for a in accounts:
-        if a.get("name") == p_name or a.get("username") == p_name or str(a.get("id")) == p_name:
+        if _match_account(a, p_name):
             a["log"] = log_text
+            matched_profile = a.get("name") or p_name
             updated = True
             break
     if updated:
@@ -192,13 +222,13 @@ async def update_account_log(body: UpdateLogIn, request: Request):
 
     ext_hub = getattr(request.app.state, "ext_hub", None)
     if ext_hub:
-        ext_hub.handle_message(p_name, {"type": "LOG_UPDATE", "log": log_text})
+        ext_hub.handle_message(matched_profile, {"type": "LOG_UPDATE", "log": log_text})
 
     events = getattr(request.app.state, "events", None)
     if events:
-        events.publish({"type": "accounts_updated", "profile_name": p_name, "log": log_text})
+        events.publish({"type": "accounts_updated", "profile_name": matched_profile, "log": log_text})
 
-    return {"ok": True, "profile_name": p_name, "log": log_text}
+    return {"ok": True, "profile_name": matched_profile, "log": log_text}
 
 
 @router.post("/api/accounts/import")
