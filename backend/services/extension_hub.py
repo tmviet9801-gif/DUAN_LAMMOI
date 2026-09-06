@@ -35,6 +35,34 @@ class ExtensionHubManager:
         self._room_share_enabled = bool(enabled)
         log.info("ExtensionHub V3: room_share_enabled = %s", self._room_share_enabled)
 
+    def relay_toast(self, source_profile: str, text: str, type_: str = "info", title: str = "AutoTool"):
+        """Gửi thông báo nổi (toast 2s tự xoá) từ profile nguồn tới MỌI profile khác
+        đang online — giúp Account phụ luôn biết Account chính đang làm gì:
+        vào phòng nào, phòng có khách/trống, đang hủy/tìm bàn khác...
+        """
+        if not text:
+            return
+        try:
+            key = (source_profile, type_, text[:40])
+            now_t = time.time()
+            last_map = getattr(self, "_last_relay_ts", {})
+            if now_t - last_map.get(key, 0) < 2.0:
+                return
+            last_map[key] = now_t
+            self._last_relay_ts = last_map
+        except Exception:
+            pass
+        for other_profile in list(self.active_sockets.keys()):
+            if other_profile == source_profile:
+                continue
+            asyncio.create_task(self.send_command(other_profile, "TOAST", {
+                "title": title,
+                "text": text,
+                "type": type_,
+                "source_profile": source_profile,
+                "duration": 2200,
+            }))
+
     def set_event_sink(self, on_event: Callable[[dict], Any]):
         self.on_event = on_event
 
@@ -501,6 +529,9 @@ class ExtensionHubManager:
 
                 if has_stranger:
                     log.info("ExtensionHub V3: Profile '%s' vào bàn có khách lạ -> KHÔNG gửi lệnh join cho đồng đội!", profile_name)
+                    self.relay_toast(profile_name,
+                                     f"Bàn #{rid} có NGƯỜI LẠ — đồng đội đừng vào; sẽ out & tìm bàn trống khác",
+                                     "warn", f"⚠️ {profile_name}")
                 elif not getattr(self, "_room_share_enabled", True):
                     # User đã bấm Dừng -> chặn mọi lệnh mời tự động phát ra trễ (zombie gom bàn)
                     log.info("ExtensionHub V3: room_share ĐANG TẮT (đã Dừng) -> bỏ qua phát lệnh mời bàn #%s từ '%s'", rid, profile_name)
@@ -521,6 +552,11 @@ class ExtensionHubManager:
                             "source_profile": profile_name,
                             "timestamp": now_t,
                         }
+
+                        # Thông báo realtime cho đồng đội: chủ bàn ĐANG GIỮ BÀN TRỐNG
+                        self.relay_toast(profile_name,
+                                         f"Đang GIỮ bàn #{rid} TRỐNG (${ri.get('b', 100)}) — đồng đội vào ghép ngay!",
+                                         "active", f"🎯 {profile_name}")
 
                         # 1. Báo về cho Profile A (Chủ phòng) biết đã chia sẻ thành công khi có đồng đội online
                         target_count = max(0, len(self.active_sockets) - 1)
@@ -559,6 +595,9 @@ class ExtensionHubManager:
             reason = msg.get("reason") or "Phát hiện người lạ / Bàn full"
             log.warning("ExtensionHub V3: Profile '%s' HỦY LỆNH MỜI BÀN #%s (%s) -> LẬP TỨC GỬI LEAVE_ROOM CHO CÁC PROFILE PHỤ!",
                         profile_name, rid, reason)
+            self.relay_toast(profile_name,
+                             f"HỦY bàn #{rid}: {reason} — chủ bàn out tìm bàn trống khác, đứng yên chờ lệnh",
+                             "warn", f"🔄 {profile_name}")
             self._last_shared_room = None
             self._last_broadcast_rid = None
             for other_profile in list(self.active_sockets.keys()):
@@ -568,6 +607,17 @@ class ExtensionHubManager:
                         "reason": f"Chủ bàn {profile_name} hủy bàn #{rid}: {reason}",
                         "source": profile_name,
                     }))
+
+        # 3c. PROFILE TỰ RỜI BÀN (khách lạ / hết giờ / sai bàn...) -> báo realtime cho đồng đội
+        elif msg_type in ("AUTO_LEAVING", "AUTOTOOL_AUTO_LEAVING"):
+            reason = msg.get("reason") or "Tự rời bàn"
+            state["log"] = f"Đã rời bàn ({reason})"
+            log.info("ExtensionHub V3: Profile '%s' rời bàn: %s", profile_name, reason)
+            self.relay_toast(profile_name,
+                             f"Đã out bàn: {reason} — đang tìm bàn trống thực sự, chờ lệnh vào tiếp",
+                             "info", f"🚪 {profile_name}")
+            self._last_shared_room = None
+            self._last_broadcast_rid = None
 
         # 4. Xác nhận khớp bàn thành công giữa các đối tác (Cứu hẹn giờ out)
         elif msg_type in ("PARTNER_MATCHED", "AUTOTOOL_MATCH_SUCCESS"):

@@ -541,14 +541,32 @@ async def autoplay_stop(request: Request):
     global _GOM_BAN_STOP
     _GOM_BAN_STOP = True
 
-    # 1. Ngắt tức thì tiến trình gom bàn / tìm bàn đang chạy
+    # 1. Ngắt tiến trình gom bàn / tìm bàn đang chạy:
+    # - Đặt cờ _GOM_BAN_STOP để vòng lặp tự thoát sạch (trả HTTP bình thường).
+    # - KHÔNG cancel() cắt ngang ngay lập tức (dễ làm treo response khiến nút
+    #   "GOM BÀN & XẢ" trên UI kẹt ở trạng thái "ĐANG DÒ TÌM PHÒNG").
+    # - Nếu task không tự thoát trong 15s thì mới cancel như phương án cuối.
     active_match_task = getattr(request.app.state, "active_match_task", None)
     if active_match_task and not active_match_task.done():
-        try:
-            active_match_task.cancel()
-            log.info("autoplay_stop: Đã cancel active_match_task thành công!")
-        except Exception as e:
-            log.warning("autoplay_stop: Lỗi cancel active_match_task: %s", e)
+        import inspect as _inspect
+        if _inspect.isawaitable(active_match_task):
+            try:
+                await asyncio.wait_for(asyncio.shield(active_match_task), timeout=15.0)
+                log.info("autoplay_stop: Tiến trình gom bàn đã tự kết thúc sau cờ DỪNG!")
+            except asyncio.TimeoutError:
+                try:
+                    active_match_task.cancel()
+                    log.warning("autoplay_stop: Tiến trình gom bàn không thoát sau 15s -> cancel cưỡng bức!")
+                except Exception as e:
+                    log.warning("autoplay_stop: Lỗi cancel active_match_task: %s", e)
+            except (asyncio.CancelledError, Exception):
+                pass
+        else:
+            try:
+                active_match_task.cancel()
+                log.info("autoplay_stop: Đã cancel active_match_task (task không awaitable)!")
+            except Exception as e:
+                log.warning("autoplay_stop: Lỗi cancel active_match_task: %s", e)
     request.app.state.active_match_task = None
 
     # 2. Dập tắt NGAY LẬP TỨC toàn bộ trạng thái auto-hunt & timers trên tất cả các trang Chrome qua Playwright evaluate

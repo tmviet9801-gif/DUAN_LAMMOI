@@ -761,6 +761,20 @@
           action: "RESET_STATE",
           data: data,
         }, "*");
+      } else if (action === "TOAST" || action === "RELAY_TOAST") {
+        // Thông báo realtime relay từ Account chính (Hub) — hiện 2.2s rồi tự xoá
+        const payload = data || {};
+        const text = payload.text || "";
+        if (text) {
+          const src = payload.source_profile || "";
+          const title = payload.title || (src ? `📡 ${src}` : "AutoTool");
+          showSweetToast(title, text, payload.type || "info", payload.duration || 2200);
+          updatePill();
+          requestControl("/api/accounts/update-log", {
+            profile_name: activeProfileName,
+            log: text,
+          }, "POST").catch(() => {});
+        }
       } else {
         window.postMessage({
           type: "AUTOTOOL_EXEC_COMMAND",
@@ -1026,6 +1040,14 @@
       const pLabel = activeProfileName || "Tool V3";
       updateViewBanner(`⚠️ <b>${reason.toUpperCase()}!</b> ĐANG TỰ ĐỘNG OUT BÀN (0.3s)...`, "joining");
       showToast(`⚠️ <b>${reason}</b><br>Đang tự động Out bàn để ghép lại...`, "warn");
+
+      // Forward lên Hub để Hub báo realtime cho đồng đội (Account phụ luôn biết
+      // Account chính vừa out vì lý do gì -> đứng chờ, không vào bàn đó)
+      safeSendMessage({
+        type: "AUTO_LEAVING",
+        profile_name: activeProfileName,
+        reason,
+      });
 
       requestControl("/api/accounts/update-log", {
         profile_name: activeProfileName,

@@ -2,6 +2,7 @@
   // Auto gom bàn & xả bài — Quản lý Profile Chính (A) & Profile Phụ (B) đồng bộ
   const App = (window.App = window.App || {});
   const $ = App.$;
+  if (!App.state.gcRunId) App.state.gcRunId = 0;
 
   function populateSelect(selectEl, accounts, defaultIndex) {
     if (!selectEl) return;
@@ -158,6 +159,8 @@
     const autoLeaveAfter = $("gcAutoLeaveAfter") ? $("gcAutoLeaveAfter").checked : true;
 
     const btnSync = $("btnGcSyncMatch");
+    // Token chống kẹt nút: chỉ phiên chạy MỚI NHẤT được phép đổi trạng thái nút
+    const runId = ++App.state.gcRunId;
     if (btnSync) {
       btnSync.disabled = true;
       btnSync.textContent = "⏳ ĐANG DÒ TÌM PHÒNG...";
@@ -199,10 +202,14 @@
         App.toast(res.error || "Gom bàn thất bại", "warn");
       }
     } catch (e) {
-      setStatus(`❌ Lỗi gom bàn: ${e.message}`, "error");
-      App.toast("Lỗi: " + e.message, "error");
+      if (App.state.gcRunId === runId) {
+        setStatus(`❌ Lỗi gom bàn: ${e.message}`, "error");
+        App.toast("Lỗi: " + e.message, "error");
+      }
     } finally {
-      if (btnSync) {
+      // Chỉ reset nút nếu phiên này vẫn là phiên mới nhất (tránh request cũ
+      // bị treo/đã Dừng ghi đè trạng thái "đang chạy" của phiên mới)
+      if (App.state.gcRunId === runId && btnSync) {
         btnSync.disabled = false;
         btnSync.textContent = "🚀 GOM BÀN & XẢ";
       }
@@ -210,6 +217,14 @@
   }
 
   async function stop() {
+    // Vô hiệu hoá phiên chạy hiện tại + trả nút về trạng thái sẵn sàng NGAY
+    // (không chờ request find-and-match cũ trả về — tránh nút kẹt "ĐANG DÒ TÌM PHÒNG")
+    App.state.gcRunId++;
+    const btnSync = $("btnGcSyncMatch");
+    if (btnSync) {
+      btnSync.disabled = false;
+      btnSync.textContent = "🚀 GOM BÀN & XẢ";
+    }
     try {
       await App.api("/api/autoplay/stop", { method: "POST" });
       setStatus("Đã dừng toàn bộ quá trình Gom bàn & xả (các tài khoản về sảnh).");
