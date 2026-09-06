@@ -41,6 +41,30 @@ def _load_game_config() -> dict:
     return {}
 
 
+async def _notify_all(ext_hub, text, type_="info", title="AutoTool"):
+    """Kênh báo realtime TỪ SERVER tới MỌI extension đang online (không phụ thuộc
+    Extension của Account chính có báo sự kiện hay không). Server luôn biết chính
+    xác Account chính đang làm gì -> gửi TOAST (2.5s tự xoá) để Account phụ thấy."""
+    if not text:
+        return
+    if ext_hub is None:
+        return
+    sockets = getattr(ext_hub, "active_sockets", None)
+    if not sockets:
+        return
+    for p_name in list(sockets.keys()):
+        try:
+            await ext_hub.send_command(p_name, "TOAST", {
+                "title": title,
+                "text": text,
+                "type": type_,
+                "source_profile": "server",
+                "duration": 2500,
+            })
+        except Exception:
+            pass
+
+
 def _build_adapter(request, config):
     from game_sim.adapters.hitclub import HitClubAdapter
     from services.page_pool import PagePool
@@ -1637,6 +1661,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
         log.info("find-and-match: Khởi động tìm kiếm bàn: Account 1 (%s) tìm bàn, %d nick phụ (%s) đợi ở sảnh (Cược $%s)", 
                  first_name, len(other_profiles), other_profiles, bet_val)
+        await _notify_all(ext_hub,
+                          f"🚀 Bắt đầu GOM BÀN ${bet_val}: {first_name} quét tìm bàn TRỐNG, {', '.join(other_profiles) or 'không có phụ'} đứng chờ ở sảnh...",
+                          "active", f"🚀 Gom bàn ${bet_val}")
 
         raw_tries = int(body.get("max_tries", 0) or 0)
         infinite_mode = (raw_tries <= 0)
@@ -1782,6 +1809,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
             if not is_empty:
                 log.info("find-and-match: Account 1 vào bàn có người lạ / bàn full -> out về sảnh bàn Đếm Lá ngay & HỦY LỆNH cho các profile phụ")
+                await _notify_all(ext_hub,
+                                  f"⚠️ {first_name} vào bàn có NGƯỜI LẠ/BÀN FULL → đang OUT về sảnh; {', '.join(other_profiles) or 'đồng đội'} đứng yên chờ bàn trống khác",
+                                  "warn", f"⚠️ {first_name}")
                 ext_hub = getattr(request.app.state, "ext_hub", None)
                 for sub_name in other_profiles:
                     if ext_hub and ext_hub.is_connected(sub_name):
@@ -1865,6 +1895,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             if wrong_bet:
                 log.info("find-and-match: Account 1 đang ở BÀN $%s (không đúng mức cược $%s đã cấu hình) -> Out về sảnh & thử lại!",
                          room_b, bet_val)
+                await _notify_all(ext_hub,
+                                  f"⚠️ {anchor_name} lọt vào bàn ${room_b} ≠ cấu hình ${bet_val} → đang OUT để quét lại bàn ${bet_val}",
+                                  "warn", f"⚠️ Nhầm mức cược")
                 for sub_name in other_profiles:
                     sub_p = pages.get(sub_name)
                     if ext_hub and ext_hub.is_connected(sub_name):
@@ -1879,6 +1912,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
             log.info("find-and-match: Account 1 đang giữ bàn công cộng trống #%s ($%s). Điều phối các nick phụ join vào nhanh chóng...", 
                      selected_rid, bet_val)
+            await _notify_all(ext_hub,
+                              f"🎯 {anchor_name} ĐANG GIỮ bàn #{selected_rid} TRỐNG (${bet_val}) → đồng đội vào ghép NGAY!",
+                              "active", f"🎯 {anchor_name}")
             await _set_hud_status(anchor_page, f"Đang giữ bàn #{selected_rid}! Đợi đồng đội vào...")
 
             # Lấy định danh username, display name và uid của Account 1
@@ -1916,6 +1952,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 await asyncio.sleep(0.4)
             if not still_alone:
                 log.info("find-and-match: KHÁCH LẠ VÀO BÀN TRONG LÚC Account 1 giữ bàn -> HỦY MỜI & OUT NGAY, báo Account 2!")
+                await _notify_all(ext_hub,
+                                  f"🔄 Khách lạ vào bàn #{selected_rid} lúc {anchor_name} đang giữ → HỦY lệnh, out tìm bàn trống khác",
+                                  "warn", f"🔄 {anchor_name}")
                 for sub_name in other_profiles:
                     if ext_hub and ext_hub.is_connected(sub_name):
                         await ext_hub.send_command(sub_name, "LEAVE_ROOM", {"reason": "Stranger joined anchor table before invite"})
@@ -2081,6 +2120,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             if all_subs_matched:
                 found_match = True
                 log.info("find-and-match: >>> GOM BÀN THÀNH CÔNG! TẤT CẢ TÀI KHOẢN ĐÃ Ở CHUNG BÀN #%s! <<<", selected_rid)
+                await _notify_all(ext_hub,
+                                  f"✅ {anchor_name} và {', '.join(other_profiles)} ĐÃ NGỒI CHUNG bàn #{selected_rid} (${bet_val}) → Sẵn sàng → Bắt đầu → Xả bài!",
+                                  "success", "✅ Gặp nhau thành công")
                 break
             else:
                 log.info("find-and-match: Ghép phòng chưa thành công -> Account 1 (%s) thoát ra sảnh bàn Đếm Lá để tìm bàn mới...", anchor_name)

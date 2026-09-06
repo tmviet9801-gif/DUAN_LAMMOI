@@ -919,7 +919,6 @@
   G.__autotool_auto_enter_tldl = autoEnterTLDLLobby;
   G.__autotool_dismiss_popups = dismissPopupsAndBanners;
   G.__autotool_is_on_login_screen = isOnLoginScreen;
-  G.__autotool_check_logged_out = checkAndHandleLoggedOut;
 
   // Hàm điều phối xác minh sẵn sàng & bắt đầu ván (Two-way Handshake & Retry Start Pulse)
   function triggerVerifiedMatchReadyAndStart(partnerName, sourceReason) {
