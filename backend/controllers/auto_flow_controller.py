@@ -293,7 +293,7 @@ async def _get_screen_size_util(p):
 
 
 async def _is_in_tldl_lobby_util(p):
-    if not p:
+    if not p or (hasattr(p, "is_closed") and p.is_closed()):
         return False
     try:
         # Kiểm tra trạng thái sảnh qua biến bộ nhớ Extension V3 (0ms, không tốn CPU/CDP)
@@ -355,7 +355,7 @@ def _match_template_cv(screenshot_bytes, template_path, threshold=0.75):
 
 
 async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
-    if not p:
+    if not p or (hasattr(p, "is_closed") and p.is_closed()):
         return False
     sw, sh = await _get_screen_size_util(p)
 
@@ -465,7 +465,7 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
 
 
 async def _do_leave_room(p, name="Profile", target_mu=2):
-    if not p:
+    if not p or (hasattr(p, "is_closed") and p.is_closed()):
         return
     sw, sh = await _get_screen_size_util(p)
 
@@ -1652,17 +1652,34 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             found_anchor = False
             anchor_rid = None
 
-            # 1. Gửi lệnh join trực tiếp qua Simms WebSocket để vào chính xác mức cược mong muốn
-            try:
-                await first_page.evaluate(f"() => {{ if (typeof window.__autotool_exec_join === 'function') window.__autotool_exec_join(null, {bet_val}, {target_mu}); }}")
-            except Exception:
-                pass
+            if hasattr(first_page, "is_closed") and first_page.is_closed():
+                log.info("find-and-match: Trình duyệt Account 1 đã đóng. Dừng chu trình.")
+                return {"ok": False, "error": "Trình duyệt Account 1 đã bị đóng.", "stopped": True}
 
-            # 2. Click dự phòng trên canvas tại tọa độ ô cược
-            w_p, h_p = await _get_screen_size(first_page)
-            cx_p = int(w_p * rx)
-            cy_p = int(h_p * ry)
-            await first_page.mouse.click(cx_p, cy_p)
+            # 1. Gửi lệnh join trực tiếp qua Simms WebSocket để vào chính xác mức cược mong muốn
+            ws_join_sent = False
+            try:
+                ws_join_sent = bool(await first_page.evaluate(
+                    f"() => {{ if (typeof window.__autotool_exec_join === 'function') return window.__autotool_exec_join(null, {bet_val}, {target_mu}); return false; }}"
+                ))
+            except Exception as e:
+                if "closed" in str(e).lower() or "target" in str(e).lower():
+                    log.info("find-and-match: Trình duyệt đã đóng (%s). Dừng chu trình.", e)
+                    return {"ok": False, "error": "Trình duyệt đã bị đóng.", "stopped": True}
+
+            # 2. Click dự phòng trên canvas tại tọa độ ô cược CHỈ KHI WebSocket join chưa gửi được
+            if not ws_join_sent:
+                try:
+                    if not (hasattr(first_page, "is_closed") and first_page.is_closed()):
+                        w_p, h_p = await _get_screen_size(first_page)
+                        cx_p = int(w_p * rx)
+                        cy_p = int(h_p * ry)
+                        await first_page.mouse.click(cx_p, cy_p)
+                except Exception as e:
+                    if "closed" in str(e).lower() or "target" in str(e).lower():
+                        log.info("find-and-match: Trình duyệt đã đóng (%s). Dừng chu trình.", e)
+                        return {"ok": False, "error": "Trình duyệt đã bị đóng.", "stopped": True}
+                    log.debug("Canvas click fallback warning: %s", e)
             await asyncio.sleep(1.6)
 
             if _GOM_BAN_STOP:

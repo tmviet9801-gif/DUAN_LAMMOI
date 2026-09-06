@@ -1455,7 +1455,6 @@
                   }
                 }
               }
-            }
 
             // cmd 203: Rời phòng -> Về lại sảnh
             if (p.cmd === 203) {
