@@ -86,14 +86,6 @@
         case "toggle-theme":
           if (window.App.toggleTheme) window.App.toggleTheme();
           break;
-        case "af-start":
-          const btnAf = document.getElementById("afStart");
-          if (btnAf) btnAf.click();
-          break;
-        case "af-stop":
-          const btnStop = document.getElementById("afStop");
-          if (btnStop) btnStop.click();
-          break;
         case "exit":
           window.close();
           break;

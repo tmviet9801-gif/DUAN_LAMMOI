@@ -25,38 +25,13 @@
     const accs = App.state.accounts || [];
     const gameAccs = accs.filter((a) => a.username || a.name);
 
-    // Old gamesim dropdowns (if existing)
-    populateSelect($("afProfileMain"), gameAccs, 0);
-    populateSelect($("afProfileSub"), gameAccs, gameAccs.length > 1 ? 1 : 0);
-
-    // New Dashboard dropdowns
+    // Dashboard dropdowns (Chính / Phụ)
     populateSelect($("gcProfileMain"), gameAccs, 0);
     populateSelect($("gcProfileSub"), gameAccs, gameAccs.length > 1 ? 1 : 0);
   }
 
   function setStatus(text, type = "info") {
-    // 1. Status trong view-gamesim cũ
-    const box = $("afStatusBox");
-    const label = $("afStatus");
-    if (box && label) {
-      box.style.display = "block";
-      label.textContent = text;
-      if (type === "success") {
-        box.style.background = "rgba(46, 204, 113, 0.15)";
-        box.style.borderColor = "rgba(46, 204, 113, 0.4)";
-        label.style.color = "#2ecc71";
-      } else if (type === "error") {
-        box.style.background = "rgba(231, 76, 60, 0.15)";
-        box.style.borderColor = "rgba(231, 76, 60, 0.4)";
-        label.style.color = "#e74c3c";
-      } else {
-        box.style.background = "rgba(245, 176, 65, 0.15)";
-        box.style.borderColor = "rgba(245, 176, 65, 0.4)";
-        label.style.color = "#f5b041";
-      }
-    }
-
-    // 2. Status trong All-in-One Dashboard mới
+    // Status trong All-in-One Dashboard
     const gcBox = $("gcSyncStatusBox");
     const gcText = $("gcSyncStatusText");
     const gcIcon = $("gcSyncStatusIcon");
@@ -108,10 +83,10 @@
       }
     }
 
-    // Ưu tiên 4: Lấy từ 2 dropdown bất kể isFromDashboard
+    // Ưu tiên 4: Lấy từ 2 dropdown trên thanh Gom Bàn
     if (selectedProfiles.length < 2) {
-      const mainSelect = $("gcProfileMain") || $("afProfileMain");
-      const subSelect = $("gcProfileSub") || $("afProfileSub");
+      const mainSelect = $("gcProfileMain");
+      const subSelect = $("gcProfileSub");
       const mainName = mainSelect ? mainSelect.value : "";
       const subName = subSelect ? subSelect.value : "";
       if (mainName && subName && mainName !== subName) {
@@ -164,22 +139,18 @@
     const hostName = selectedProfiles[0];
     const clientProfiles = selectedProfiles.slice(1);
 
-    // Lấy cấu hình cược chính xác (ưu tiên theo bảng điều khiển kích hoạt)
+    // Lấy cấu hình cược chính xác từ thanh Gom Bàn
     let targetBet = 100;
-    if (isFromDashboard && $("gcBetSelect") && $("gcBetSelect").value) {
-      targetBet = parseInt($("gcBetSelect").value || 100, 10);
-    } else if ($("afTargetBet") && $("afTargetBet").value) {
-      targetBet = parseInt($("afTargetBet").value || 100, 10);
-    } else if ($("gcBetSelect") && $("gcBetSelect").value) {
+    if ($("gcBetSelect") && $("gcBetSelect").value) {
       targetBet = parseInt($("gcBetSelect").value || 100, 10);
     }
     if (isNaN(targetBet) || targetBet <= 0) targetBet = 100;
 
-    const targetMu = $("gcSlotCount") ? parseInt($("gcSlotCount").value || 2) : ($("afTargetMu") ? parseInt($("afTargetMu").value || 2) : 2);
-    const chongPha = $("afChongPha") ? $("afChongPha").checked : true;
-    const outGuest = $("afOutGuest") ? $("afOutGuest").checked : true;
+    const targetMu = parseInt(($("gcSlotCount") && $("gcSlotCount").value) || "2", 10) || 2;
+    const chongPha = true;
+    const outGuest = true;
     const xaDelayMs = $("gcDelay") ? (parseInt($("gcDelay").value || 2) * 1000) : 1000;
-    const maxTries = $("afMaxTries") ? parseInt($("afMaxTries").value || 0) : 0;
+    const maxTries = 0; // 0 = Thử lại vô hạn cho tới khi gom được bàn
 
     // Các tuỳ chọn mới từ người dùng
     const autoXa = $("gcAutoXaBai") ? $("gcAutoXaBai").checked : true;
@@ -187,14 +158,9 @@
     const autoLeaveAfter = $("gcAutoLeaveAfter") ? $("gcAutoLeaveAfter").checked : true;
 
     const btnSync = $("btnGcSyncMatch");
-    const btnAfStart = $("afStart");
     if (btnSync) {
       btnSync.disabled = true;
       btnSync.textContent = "⏳ ĐANG DÒ TÌM PHÒNG...";
-    }
-    if (btnAfStart) {
-      btnAfStart.disabled = true;
-      btnAfStart.textContent = "⏳ Đang dò tìm phòng...";
     }
 
     setStatus(`[1/3] Đang điều phối ${selectedProfiles.length} tài khoản (${selectedProfiles.join(", ")}) cùng quét tìm/tạo bàn trống mức $${targetBet.toLocaleString()}...`);
@@ -240,26 +206,20 @@
         btnSync.disabled = false;
         btnSync.textContent = "🚀 GOM BÀN & XẢ";
       }
-      if (btnAfStart) {
-        btnAfStart.disabled = false;
-        btnAfStart.textContent = "🚀 Bắt đầu gom bàn";
-      }
     }
   }
 
   async function stop() {
     try {
       await App.api("/api/autoplay/stop", { method: "POST" });
-      setStatus("Đã dừng chu trình gom bàn.");
-      App.toast("Đã dừng gom bàn", "warn");
+      setStatus("Đã dừng toàn bộ quá trình Gom bàn & xả (các tài khoản về sảnh).");
+      App.toast("Đã dừng Gom bàn & xả", "warn");
     } catch (e) {
       App.toast("Stop lỗi: " + e.message, "error");
     }
   }
 
-  // Bind Buttons
-  if ($("afStart")) $("afStart").onclick = () => start(false);
-  if ($("afStop")) $("afStop").onclick = stop;
+  // Bind Buttons (chỉ còn 1 cặp nút trên Dashboard: GOM BÀN & XẢ / Dừng)
   if ($("btnGcSyncMatch")) $("btnGcSyncMatch").onclick = () => start(true);
   if ($("btnGcStopSync")) $("btnGcStopSync").onclick = stop;
 
@@ -270,20 +230,6 @@
     if (selMain && mainName) selMain.value = mainName;
     if (selSub && subName) selSub.value = subName;
   };
-
-  // Đồng bộ 2 chiều giữa gcBetSelect (thanh trên) và afTargetBet (bảng dưới)
-  setTimeout(() => {
-    const gcBet = $("gcBetSelect");
-    const afBet = $("afTargetBet");
-    if (gcBet && afBet) {
-      gcBet.addEventListener("change", () => {
-        if (afBet.value !== gcBet.value) afBet.value = gcBet.value;
-      });
-      afBet.addEventListener("change", () => {
-        if (gcBet.value !== afBet.value) gcBet.value = afBet.value;
-      });
-    }
-  }, 100);
 
   App.autoplayRenderProfiles = renderProfiles;
   renderProfiles();

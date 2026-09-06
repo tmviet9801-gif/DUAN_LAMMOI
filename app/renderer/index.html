@@ -26,15 +26,6 @@
           </div>
         </div>
         <div class="mroot-wrap">
-          <button class="mroot" data-menu="mm-game">Game</button>
-          <div class="mmenu hidden" id="mm-game">
-            <button class="menu-item" data-view="gamesim">Gom Bàn & Xả Bài</button>
-            <div class="menu-sep"></div>
-            <button class="menu-item" data-action="af-start">🚀 Bắt đầu gom bàn</button>
-            <button class="menu-item" data-action="af-stop">■ Dừng gom bàn</button>
-          </div>
-        </div>
-        <div class="mroot-wrap">
           <button class="mroot" data-menu="mm-proxy">Proxy</button>
           <div class="mmenu hidden" id="mm-proxy">
             <button class="menu-item" data-view="proxy">Quản lý proxy</button>
@@ -158,13 +149,7 @@
             </div>
           </div>
 
-          <!-- Row 2: Action Buttons (Thoát hết, Dừng) -->
-          <div class="gc-row row-2">
-            <button id="btnGcLeaveAll" class="btn-gc red">THOÁT HẾT</button>
-            <button id="btnGcStop" class="btn-gc red-dark">DỪNG</button>
-          </div>
-
-          <!-- Row 3: Auto options & Random Join -->
+          <!-- Auto options & Random Join -->
           <div class="gc-row row-3">
             <label class="gc-check-lbl"><input id="gcSSWhenEnter" type="checkbox" checked /> SS Khi Vào</label>
             <label class="gc-check-lbl"><input id="gcAutoLeave" type="checkbox" checked /> Tự Out</label>
@@ -173,10 +158,9 @@
               <input id="gcSlotNum" type="number" value="2" style="width:40px" />
             </div>
             <button id="btnGcRandomJoin" class="btn-gc blue">RANDOM VÀO PHÒNG</button>
-            <button id="btnGcStopLeave" class="btn-gc red">DỪNG/THOÁT</button>
           </div>
 
-          <!-- Row 4: TÍCH HỢP GOM BÀN ĐỒNG BỘ (ACCOUNT CHÍNH & PHỤ) -->
+          <!-- TÍCH HỢP GOM BÀN ĐỒNG BỘ (ACCOUNT CHÍNH & PHỤ) -->
           <div class="gc-sync-bar">
             <div class="gc-sync-pair">
               <div class="gc-sync-field">
@@ -193,11 +177,11 @@
               <button id="btnGcSyncMatch" class="btn-gc sync-bold" title="Kích hoạt gom bàn đồng bộ: A vào trước -> B vào ghép -> Sẵn sàng -> Bắt đầu -> Xả bài">
                 🚀 GOM BÀN & XẢ
               </button>
-              <button id="btnGcStopSync" class="btn-gc red-dark" title="Dừng quá trình gom bàn">Dừng</button>
+              <button id="btnGcStopSync" class="btn-gc red-dark" title="Dừng TOÀN BỘ quá trình Gom bàn & xả: hủy ghép bàn, thoát tất cả bàn đang mở về sảnh">⏹ Dừng</button>
             </div>
           </div>
 
-          <!-- Row 5: Tuỳ chọn xả bài, bẫy khách SS, tự out -->
+          <!-- Tuỳ chọn xả bài, bẫy khách SS, tự out -->
           <div class="gc-row gc-match-options">
             <label class="gc-check-lbl opt-xa" title="Tự động xả bài sau khi các tài khoản tìm thấy nhau và vào chung bàn. Nếu bỏ tích: Dừng chờ thao tác tay">
               <input id="gcAutoXaBai" type="checkbox" checked /> ⚡ Tự động xả bài khi thấy nhau
@@ -393,64 +377,6 @@
           <div class="actions">
             <button id="btnSaveConfig" class="primary">Lưu cấu hình</button>
             <button id="btnLayout2">Xếp lưới ngay</button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="view-gamesim" class="view hidden">
-      <div class="cards">
-        <div class="panel wide">
-          <h2>Auto Gom Bàn — Tìm Nhau & Xả Bài</h2>
-          <div class="quick-actions">
-            <label class="check"><input id="afAutoOut" type="checkbox" checked /> Tự rời sau khi xả</label>
-            <label class="check"><input id="afOutGuest" type="checkbox" checked /> Thoát khi có khách lạ</label>
-            <label class="check"><input id="afChongPha" type="checkbox" checked /> Chống phá bàn</label>
-            <label class="check"><input id="afAutoStart" type="checkbox" /> Tự bắt đầu</label>
-            <label class="num-lbl" style="font-size:12px;color:var(--text-muted);display:inline-flex;align-items:center;gap:4px">Delay xả: <input id="afXaDelay" type="number" value="1000" min="0" step="200" style="width:65px;padding:2px 4px" /> ms</label>
-            <label class="num-lbl" style="font-size:12px;color:var(--text-muted);display:inline-flex;align-items:center;gap:4px">Số lần thử lại: <input id="afMaxTries" type="number" value="0" min="0" max="999" title="0 = Thử lại vô hạn cho tới khi thấy bàn trống" style="width:55px;padding:2px 4px;border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border)" /> (0 = Vô hạn)</label>
-            <label style="font-size:12px;color:var(--text-muted);display:inline-flex;align-items:center;gap:4px">Mức cược: 
-              <select id="afTargetBet" style="padding:2px 6px;border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border)">
-                <option value="100" selected>100đ</option>
-                <option value="500">500đ</option>
-                <option value="1000">1.000đ (1K)</option>
-                <option value="2000">2.000đ (2K)</option>
-                <option value="5000">5.000đ (5K)</option>
-                <option value="10000">10.000đ (10K)</option>
-                <option value="20000">20.000đ (20K)</option>
-                <option value="50000">50.000đ (50K)</option>
-                <option value="100000">100.000đ (100K)</option>
-                <option value="0">Tự động (thấp nhất)</option>
-              </select>
-            </label>
-            <label style="font-size:12px;color:var(--text-muted);display:inline-flex;align-items:center;gap:4px">Loại bàn: 
-              <select id="afTargetMu" style="padding:2px 6px;border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border)">
-                <option value="2" selected>Solo 2 người</option>
-                <option value="4">Bàn 4 người</option>
-              </select>
-            </label>
-          </div>
-          <div class="field" style="display:flex; gap:16px; margin: 14px 0; padding:12px; background:rgba(0,0,0,0.2); border-radius:8px; border:1px solid var(--border)">
-            <div style="flex:1;">
-              <label for="afProfileMain" style="font-weight:bold; color:var(--text-primary); margin-bottom:6px; display:block;">⭐ Profile Chính (Vào tìm bàn trống trước):</label>
-              <select id="afProfileMain" style="width:100%; padding:8px 12px; border-radius:6px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border); font-size:13px; font-weight:bold;">
-              </select>
-              <p class="hint" style="margin-top:4px; font-size:11px;">Profile này sẽ quét và vào giữ bàn trống trước. Nếu có khách lạ sẽ tự thoát ngay.</p>
-            </div>
-            <div style="flex:1;">
-              <label for="afProfileSub" style="font-weight:bold; color:var(--text-primary); margin-bottom:6px; display:block;">👥 Profile Phụ (Vào sau ghép bàn):</label>
-              <select id="afProfileSub" style="width:100%; padding:8px 12px; border-radius:6px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border); font-size:13px; font-weight:bold;">
-              </select>
-              <p class="hint" style="margin-top:4px; font-size:11px;">Chỉ khi Profile Chính đã ngồi an toàn 1 mình, Profile Phụ mới được kích hoạt vào ghép.</p>
-            </div>
-          </div>
-
-          <div class="quick-actions" style="margin-top:12px;">
-            <button id="afStart" class="primary" style="font-size:14px; padding:10px 20px; font-weight:bold;">🚀 Bắt đầu gom bàn</button>
-            <button id="afStop" class="danger" style="font-size:14px; padding:10px 20px;">■ Dừng</button>
-          </div>
-          <div id="afStatusBox" style="margin-top:12px; padding:10px 14px; border-radius:6px; background:rgba(245,176,65,0.1); border:1px solid rgba(245,176,65,0.3); display:none;">
-            <p id="afStatus" style="margin:0; font-weight:bold; color:var(--text-primary); font-size:13px;"></p>
           </div>
         </div>
       </div>

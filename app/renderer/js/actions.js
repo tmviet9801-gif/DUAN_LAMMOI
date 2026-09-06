@@ -564,40 +564,6 @@
     };
   }
 
-  if ($("btnGcLeaveAll")) {
-    $("btnGcLeaveAll").onclick = async () => {
-      App.toast("Đang gửi lệnh thoát tất cả phòng ra sảnh...", "info");
-      try {
-        const res = await App.api("/api/autoplay/leave-all", { method: "POST", body: "{}" });
-        // Cập nhật giao diện tức thì trên bảng danh sách tài khoản
-        document.querySelectorAll("#profileTbody tr").forEach(row => {
-          const tdRoom = row.querySelector(".td-room");
-          if (tdRoom) tdRoom.textContent = "-";
-          const tdLog = row.querySelector(".td-log");
-          if (tdLog) tdLog.textContent = "Đã thoát phòng";
-        });
-        if (window.App && window.App.refreshAccounts) window.App.refreshAccounts();
-        App.toast(res.detail || "Đã thoát tất cả phòng về sảnh thành công!", "success");
-      } catch (err) {
-        App.toast("Thoát phòng lỗi: " + err.message, "error");
-      }
-    };
-  }
-
-  if ($("btnGcStop") || $("btnGcStopLeave")) {
-    const handleStop = async () => {
-      App.toast("Đang dừng toàn bộ auto...", "warn");
-      try {
-        await App.api("/api/autoplay/stop", { method: "POST", body: "{}" });
-        App.toast("Đã dừng auto!", "success");
-      } catch (err) {
-        App.toast("Dừng lỗi: " + err.message, "error");
-      }
-    };
-    if ($("btnGcStop")) $("btnGcStop").onclick = handleStop;
-    if ($("btnGcStopLeave")) $("btnGcStopLeave").onclick = handleStop;
-  }
-
   if ($("btnGcRandomJoin")) {
     $("btnGcRandomJoin").onclick = async () => {
       const game = $("gcGameSelect") ? $("gcGameSelect").value : "TLDL";
