@@ -7,6 +7,7 @@
 3. ExtensionHub: khi socket đăng ký bằng tên in-game, cập nhật balance/log vẫn
    tìm đúng account trong accounts.json và emit event theo tên chuẩn (name).
 """
+import asyncio
 import copy
 import json
 
@@ -129,6 +130,41 @@ class FakeHubWs:
 
     async def close(self):
         pass
+
+
+@pytest.mark.anyio
+async def test_hub_room_share_disabled_blocks_zombie_join_after_stop():
+    """Sau khi bấm Dừng (set_room_share(False)), anchor báo "bàn trống" KHÔNG được
+    phép phát JOIN_ROOM cho profile phụ nữa — chặn zombie gom bàn lặp lại."""
+    from services.extension_hub import ExtensionHubManager
+
+    hub = ExtensionHubManager()
+    ws_a = FakeHubWs()
+    ws_b = FakeHubWs()
+    hub.active_sockets["ProfileA"] = ws_a
+    hub.active_sockets["ProfileB"] = ws_b
+    hub.profile_states["ProfileA"] = {"profile_name": "ProfileA", "connected": True}
+    hub.profile_states["ProfileB"] = {"profile_name": "ProfileB", "connected": True}
+
+    anchor_msg = {
+        "type": "ANCHOR_ROOM_VERIFIED_EMPTY",
+        "room_info": {"rid": 12345, "rn": "Bàn Solo $100", "b": 100, "Mu": 2, "is_verified_empty": True, "player_count": 1},
+    }
+
+    # 1. Đang khoá (sau Dừng) -> B KHÔNG nhận JOIN_ROOM
+    hub.set_room_share(False)
+    hub.handle_message("ProfileA", anchor_msg)
+    await asyncio.sleep(0.01)
+    b_actions = [c.get("action") for c in ws_b.sent]
+    assert "JOIN_ROOM" not in b_actions
+
+    # 2. Bắt đầu gom bàn lại -> B nhận JOIN_ROOM bình thường
+    hub.set_room_share(True)
+    ws_b.sent.clear()
+    hub.handle_message("ProfileA", anchor_msg)
+    await asyncio.sleep(0.01)
+    b_actions = [c.get("action") for c in ws_b.sent]
+    assert "JOIN_ROOM" in b_actions
 
 
 @pytest.mark.anyio

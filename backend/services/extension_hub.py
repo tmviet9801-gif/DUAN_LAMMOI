@@ -26,6 +26,14 @@ class ExtensionHubManager:
         self.profile_states: Dict[str, dict] = {}
         self.on_event = on_event
         self._lock = asyncio.Lock()
+        # Khi user bấm Dừng: tắt chia sẻ bàn (chặn mọi JOIN_ROOM tự động do anchor
+        # báo "bàn trống" phát ra trễ) cho tới khi bắt đầu gom bàn lại.
+        self._room_share_enabled = True
+
+    def set_room_share(self, enabled: bool):
+        """Bật/tắt cơ chế tự động chia sẻ bàn trống giữa các profile."""
+        self._room_share_enabled = bool(enabled)
+        log.info("ExtensionHub V3: room_share_enabled = %s", self._room_share_enabled)
 
     def set_event_sink(self, on_event: Callable[[dict], Any]):
         self.on_event = on_event
@@ -493,6 +501,9 @@ class ExtensionHubManager:
 
                 if has_stranger:
                     log.info("ExtensionHub V3: Profile '%s' vào bàn có khách lạ -> KHÔNG gửi lệnh join cho đồng đội!", profile_name)
+                elif not getattr(self, "_room_share_enabled", True):
+                    # User đã bấm Dừng -> chặn mọi lệnh mời tự động phát ra trễ (zombie gom bàn)
+                    log.info("ExtensionHub V3: room_share ĐANG TẮT (đã Dừng) -> bỏ qua phát lệnh mời bàn #%s từ '%s'", rid, profile_name)
                 elif is_verified_empty and not partner_found:
                     # BÀN TRỐNG THỰC SỰ ĐÃ XÁC MINH (Chỉ 1 mình Anchor) -> Gọi đồng đội vào ngay tức thời (<2ms)!
                     last_rid = getattr(self, "_last_broadcast_rid", None)

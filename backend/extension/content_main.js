@@ -1421,6 +1421,12 @@
                   // 3. BÀN 100% TRỐNG (CHỈ CÓ 1 MÌNH)!
                   if (isSubProfile) {
                     // Profile phụ không được tự ý ngồi giữ bàn trống một mình khi không có chủ bàn A
+                    // NGOẠI LỆ: nếu đang theo LỜI MỜI (JOIN_ROOM) của chủ bàn thì CHỜ chủ bàn vào,
+                    // không tự out 100ms (tránh "2 acc gặp nhau nhưng chưa kịp xác minh đã out mất").
+                    const waitingInvite = !!(G.__active_room_invite && (Date.now() - G.__active_room_invite.ts) < 20000);
+                    if (waitingInvite) {
+                      console.warn("[AutoTool V3] Nick phụ vào bàn trống theo lời mời chủ bàn -> CHỜ chủ bàn vào, không tự out!");
+                    } else {
                     console.warn("[AutoTool V3] Nick phụ vào bàn trống nhưng KHÔNG CÓ chủ bàn -> Out về sảnh chờ lệnh!");
                     window.postMessage({
                       type: "AUTOTOOL_AUTO_LEAVING",
@@ -1430,7 +1436,13 @@
                     setTimeout(() => {
                       G.__autotool_exec_leave();
                     }, 100);
+                    }
                   } else {
+                    if (!G.__AUTOTOOL_AUTO_HUNT) {
+                      // Đã bấm Dừng (hoặc chưa bật Săn bàn): ngồi im KHÔNG tự mời đồng đội
+                      // -> chặn zombie "gom bàn lặp lại" sau khi Dừng.
+                      console.log(`[AutoTool V3] Ngồi 1 mình bàn #${targetRid} nhưng SĂN BÀN đang TẮT -> KHÔNG mời đồng đội (đứng im chờ lệnh).`);
+                    } else {
                     // Profile A (Chính / Anchor): ĐÂY LÀ BÀN TRỐNG ĐÃ XÁC MINH 100% -> PHÁT LỆNH GỌI ĐỒNG ĐỘI VÀO NGAY!
                     console.log(`[AutoTool V3] 🎯 >>> BÀN #${targetRid} 100% TRỐNG (Đang ngồi 1 mình)! GỌI ĐỒNG ĐỘI VÀO TỨC THÌ! <<<`);
                     window.postMessage({
@@ -1464,6 +1476,7 @@
                         }
                       }, 5000);
                     }
+                    } // Đóng guard "KHÔNG săn bàn -> đứng im, không mời đồng đội"
                   }
                 }
               }
@@ -2023,9 +2036,27 @@
     return G.__autotool_exec_play(cardIds);
   };
 
-  G.__AUTOTOOL_ARMED = true;
-  G.__AUTOTOOL_AUTO_HUNT = true; // Mặc định BẬT tự động săn bàn & out khi thấy khách lạ
+  // Nếu user đã bấm DỪNG ở phiên trước (localStorage) thì KHÔNG tự bật săn bàn
+  // lại khi trang reload — nếu không sau khi Dừng, mỗi lần F5/navigation là
+  // Account 1 lại tự chạy gom bàn (bug "bấm Dừng không dừng hẳn").
+  const AUTOTOOL_STOP_KEY = "AUTOTOOL_STOPPED";
+  let __user_stopped = false;
+  try {
+    __user_stopped = localStorage.getItem(AUTOTOOL_STOP_KEY) === "1";
+  } catch (_) {}
+
+  G.__AUTOTOOL_ARMED = !__user_stopped;
+  G.__AUTOTOOL_AUTO_HUNT = !__user_stopped; // Mặc định BẬT (trừ khi đã bấm Dừng trước đó)
   G.__autotool_partners = [];
+
+  function persistStopState(stopped) {
+    try {
+      if (stopped) localStorage.setItem(AUTOTOOL_STOP_KEY, "1");
+      else localStorage.removeItem(AUTOTOOL_STOP_KEY);
+    } catch (_) {}
+    // Đồng bộ trạng thái lên isolated world (cập nhật nút "Săn Bàn" trên overlay)
+    window.postMessage({ type: "AUTOTOOL_HUNT_STATE", auto_hunt: !stopped, armed: !stopped }, "*");
+  }
 
   // Lắng nghe lệnh từ Extension isolated script (từ Backend Hub gửi xuống)
   window.addEventListener("message", (event) => {
@@ -2033,12 +2064,17 @@
 
     if (event.data.type === "AUTOTOOL_SET_ARM") {
       G.__AUTOTOOL_ARMED = !!event.data.armed;
+      if (!G.__AUTOTOOL_ARMED) {
+        G.__AUTOTOOL_AUTO_HUNT = false;
+        persistStopState(true);
+      }
       console.log(`[AutoTool V3] Tình trạng ARM chuyển sang: ${G.__AUTOTOOL_ARMED ? "BẬT" : "TẠM DỪNG"}`);
       return;
     }
 
     if (event.data.type === "AUTOTOOL_SET_HUNT") {
       G.__AUTOTOOL_AUTO_HUNT = !!event.data.auto_hunt;
+      persistStopState(!G.__AUTOTOOL_AUTO_HUNT);
       if (event.data.auto_start_guest_ss !== undefined) {
         G.__auto_start_guest_ss = !!event.data.auto_start_guest_ss;
       }
@@ -2165,11 +2201,13 @@
         console.log(`[AutoTool V3] Nick phụ (${getProfileName()}): Ở sảnh bàn Đếm Lá chờ lệnh mời từ Account 1...`);
         G.__AUTOTOOL_AUTO_HUNT = false;
         G.__is_hunt_initiator = false;
+        persistStopState(true);
         return;
       }
 
       G.__AUTOTOOL_AUTO_HUNT = true;
       G.__is_hunt_initiator = true;
+      persistStopState(false);
       G.__is_matched_locked = false;
       G.__game_in_progress = false;
       G.__last_room_info = null;
@@ -2185,6 +2223,7 @@
       console.log("[AutoTool V3] Nhận lệnh STOP_HUNT -> Dừng chế độ săn bàn & rời bàn");
       G.__AUTOTOOL_AUTO_HUNT = false;
       G.__AUTOTOOL_ARMED = false;
+      persistStopState(true);
       G.__is_hunt_initiator = false;
       G.__is_matched_locked = false;
       G.__game_in_progress = false;
@@ -2238,5 +2277,14 @@
     }
   });
 
-  console.log("[AutoTool V3] Main World Engine & WebSocket Bridge đã sẵn sàng (Auto-Hunt: BẬT)!");
+  // Thông báo trạng thái hunt thực tế cho overlay (nếu trước đó user đã Dừng)
+  try {
+    window.postMessage({
+      type: "AUTOTOOL_HUNT_STATE",
+      auto_hunt: !!G.__AUTOTOOL_AUTO_HUNT,
+      armed: !!G.__AUTOTOOL_ARMED,
+    }, "*");
+  } catch (_) {}
+
+  console.log(`[AutoTool V3] Main World Engine & WebSocket Bridge đã sẵn sàng (Auto-Hunt: ${G.__AUTOTOOL_AUTO_HUNT ? "BẬT" : "ĐÃ DỪNG/TẮT"})!`);
 })();

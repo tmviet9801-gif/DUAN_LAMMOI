@@ -558,6 +558,7 @@ async def autoplay_stop(request: Request):
             if s.page:
                 try:
                     await s.page.evaluate("""() => {
+                        try { localStorage.setItem('AUTOTOOL_STOPPED', '1'); } catch(e) {}
                         window.__AUTOTOOL_AUTO_HUNT = false;
                         window.__AUTOTOOL_ARMED = false;
                         window.__is_matched_locked = false;
@@ -595,6 +596,8 @@ async def autoplay_stop(request: Request):
     ext_hub = getattr(request.app.state, "ext_hub", None)
     if ext_hub:
         try:
+            # Khoá cơ chế chia sẻ bàn: chặn mọi JOIN_ROOM "zombie" phát ra trễ sau khi Dừng
+            ext_hub.set_room_share(False)
             await ext_hub.broadcast_command("STOP_HUNT", {"reset": True})
             log.info("autoplay_stop: Đã broadcast STOP_HUNT tới tất cả các extensions!")
         except Exception as e:
@@ -1579,7 +1582,19 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         ext_hub = getattr(request.app.state, "ext_hub", None)
         if ext_hub:
             try:
+                # Bắt đầu phiên gom bàn mới -> bật lại cơ chế chia sẻ bàn (đã bị khoá khi Dừng)
+                ext_hub.set_room_share(True)
                 await ext_hub.broadcast_command("RESET_STATE", {})
+                # Xoá cờ "đã Dừng" lưu trong localStorage của trang Anchor (nếu extension chưa nhận START_HUNT)
+                try:
+                    await first_page.evaluate("""() => {
+                        try { localStorage.removeItem('AUTOTOOL_STOPPED'); } catch(e) {}
+                        window.__AUTOTOOL_AUTO_HUNT = true;
+                        window.__AUTOTOOL_ARMED = true;
+                        window.__is_hunt_initiator = true;
+                    }""")
+                except Exception:
+                    pass
                 # CHỈ gửi START_HUNT đích danh cho Account 1 (Anchor / Chủ bàn)
                 if ext_hub.is_connected(first_name):
                     await ext_hub.send_command(first_name, "START_HUNT", {
@@ -1943,6 +1958,23 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         "anchor_u": anchor_u,
                         "anchor_uid": anchor_uid,
                     })
+                try:
+                    # Đặt cờ "đang theo lời mời của chủ bàn" NGAY TRƯỚC khi join để nick phụ
+                    # không tự out khi bàn trống chưa thấy chủ (fix: gặp nhau nhưng out nhầm,
+                    # không kịp ready/start/xả). Đồng thời seed expected anchor cho isPartner.
+                    await sub_p.evaluate(f"""() => {{
+                        try {{
+                            const _inv = {_json.dumps({"rid": int(selected_rid), "ts": "PLACEHOLDER"})};
+                            _inv.ts = Date.now();
+                            window.__active_room_invite = _inv;
+                            window.__expected_anchor_dn = {_json.dumps(anchor_dn)};
+                            window.__expected_anchor_u = {_json.dumps(anchor_u)};
+                            window.__expected_anchor_uid = {_json.dumps(anchor_uid)};
+                            window.__expected_anchor_profile = {_json.dumps(anchor_name)};
+                        }} catch(e) {{}}
+                    }}""")
+                except Exception:
+                    pass
                 try:
                     await sub_p.evaluate(f"() => {{ if (typeof window.__autotool_exec_join === 'function') window.__autotool_exec_join({selected_rid}, {bet_val}, {target_mu}); }}")
                 except Exception:

@@ -781,6 +781,19 @@
     if (!ev.data) return;
 
     // Khởi tạo Profile
+    if (ev.data.type === "AUTOTOOL_HUNT_STATE") {
+      // Main world báo trạng thái Săn bàn thực tế (vd: sau reload vẫn còn "Đã Dừng")
+      isHuntOn = !!ev.data.auto_hunt;
+      const hBtn = document.getElementById("autotool-hunt-btn");
+      if (hBtn) {
+        hBtn.innerHTML = isHuntOn ? "🎯 Săn Bàn: BẬT" : "⚪ Săn Bàn: TẮT";
+        hBtn.style.background = isHuntOn ? "rgba(69,26,3,0.9)" : "rgba(30,41,59,0.9)";
+        hBtn.style.color = isHuntOn ? "#fde68a" : "#94a3b8";
+        hBtn.style.borderColor = isHuntOn ? "rgba(245,158,11,0.5)" : "rgba(255,255,255,0.2)";
+      }
+      return;
+    }
+
     if (ev.data.type === "AUTOTOOL_INIT_PROFILE" && ev.data.profile_name) {
       activeProfileName = ev.data.profile_name;
       safeSendMessage({
