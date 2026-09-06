@@ -1788,6 +1788,18 @@
     const cleanBet = Number(bet || 100);
     const cleanMu = Number(mu || 2);
     const specificRid = (rid && !isNaN(Number(rid)) && Number(rid) > 28) ? Number(rid) : null;
+
+    // CHỐNG FLOOD JOIN (bằng chứng ws_capture: 18 cặp LEAVE+308 trong 2s -> server
+    // trả [4,false,...,102] từ chối liên tục, kẹt vĩnh viễn ở bàn cũ):
+    // mỗi lệnh join thực sự cách nhau tối thiểu 2.5s (open) / 1.2s (rid cụ thể).
+    const now = Date.now();
+    const minGap = specificRid ? 1200 : 2500;
+    if (G.__last_join_ts && (now - G.__last_join_ts) < minGap) {
+      console.warn(`[AutoTool V3] [Anti-Flood] Bỏ qua lệnh join (cách lần trước ${now - G.__last_join_ts}ms < ${minGap}ms)!`);
+      return false;
+    }
+    G.__last_join_ts = now;
+
     console.log(`[AutoTool V3] Thực thi lệnh JOIN phòng: bet=$${cleanBet}, slot=${cleanMu}, rid=${specificRid || 'auto'}...`);
     const simms = G.__ws_get_simms();
     if (!simms || simms.readyState !== 1) {
@@ -1832,22 +1844,43 @@
       return sent;
     };
 
+    const stillInsideTable = () => {
+      try {
+        return (G.__room_players && G.__room_players.length > 0) ||
+               (G.__last_room_info && G.__last_room_info.rid > 0 && G.__last_room_info.rid !== 100) ||
+               (typeof isInsideGameTable === "function" && isInsideGameTable());
+      } catch (_) { return true; }
+    };
+
     // Với open join (tìm bàn trống công cộng): Nếu client đang kẹt TRONG bàn cũ (vd bàn 500)
     // thì gửi LEAVE TRƯỚC để về sảnh, tránh game client tự động rejoin đúng bàn 500 (cũ)
     // làm lệch mức cược đã cấu hình. Nếu đã ở sảnh thì JOIN ngay không cần LEAVE.
     if (!specificRid) {
-      const insideTable = (G.__room_players && G.__room_players.length > 0) ||
-                          (G.__last_room_info && G.__last_room_info.rid > 0 && G.__last_room_info.rid !== 100) ||
-                          (typeof isInsideGameTable === "function" && isInsideGameTable());
-      if (insideTable) {
+      if (stillInsideTable()) {
         try {
           simms.send('[4,"Simms",-1]');
           push("inject", '[4,"Simms",-1]');
           console.log(`[AutoTool V3] Đã gửi LEAVE trước để đảm bảo ở sảnh trước khi join bàn $${cleanBet}`);
         } catch (_) {}
-        // Delay ngắn để server xử lý leave xong rồi mới join bàn mới
-        setTimeout(doJoin, 400);
-        return true; // Trả về true vì lệnh sẽ được thực thi sau 400ms
+        // KHÔNG join mù sau 400ms: chỉ join khi đã XÁC NHẬN rời được bàn cũ (game gửi
+        // cmd 203 / xoá room_players). Nếu sau 1.2s vẫn kẹt trong bàn cũ -> HUỶ lượt
+        // này (server sẽ thử lại vòng sau) chứ KHÔNG spam 308 để bị từ chối 102.
+        let joined = false;
+        const tryJoinWhenLobby = () => {
+          if (G.__is_matched_locked) return;
+          if (stillInsideTable()) {
+            console.warn("[AutoTool V3] [Chống nhầm bàn] Vẫn còn TRONG bàn cũ sau LEAVE -> huỷ join lượt này, chờ vòng lặp mới!");
+            G.__last_join_ts = 0; // cho phép vòng lặp sau thử lại sớm
+            return;
+          }
+          if (!joined) {
+            joined = true;
+            doJoin();
+          }
+        };
+        setTimeout(tryJoinWhenLobby, 550);
+        setTimeout(tryJoinWhenLobby, 1200);
+        return true; // Trả về true vì lệnh sẽ được thực thi sau khi xác nhận đã về sảnh
       }
       return doJoin();
     }

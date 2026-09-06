@@ -1715,21 +1715,37 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             # hoặc tự rejoin ĐÚNG bàn cũ $500. Hàm __autotool_is_inside_table đọc scene
             # Cocos TRỰC TIẾP (không phụ thuộc biến nhớ vừa reset) -> phát hiện kẹt bàn
             # và LEAVE TRƯỚC, đảm bảo join lần sau vào ĐÚNG mức cược đã cấu hình.
-            try:
-                stuck_in_old_table = await first_page.evaluate("""() => {
-                    if (typeof window.__autotool_is_inside_table === 'function') {
-                        return window.__autotool_is_inside_table();
-                    }
-                    return !!(window.__room_players && window.__room_players.length > 0);
-                }""")
+            # CỔNG XÁC NHẬN: chỉ được gửi cmd 308 khi CHẮC CHẮN đang ở sảnh bàn TLDL
+            # (lobby && KHÔNG ngồi trong bàn && không còn room cũ). Capture cho thấy:
+            # khi còn ngồi bàn 500 mà gửi 308 -> game trả [4,false,...,102] từ chối,
+            # spam 18 lần/2s càng làm kẹt vĩnh viễn.
+            lobby_confirmed = False
+            for _gate_try in range(6):
+                try:
+                    stuck_in_old_table = await first_page.evaluate("""() => {
+                        if (typeof window.__autotool_is_inside_table === 'function') {
+                            return window.__autotool_is_inside_table();
+                        }
+                        return !!(window.__room_players && window.__room_players.length > 0);
+                    }""")
+                except Exception:
+                    stuck_in_old_table = False
+                in_lobby = await _is_in_tldl_lobby(first_page)
+                if in_lobby and not stuck_in_old_table:
+                    lobby_confirmed = True
+                    break
                 if stuck_in_old_table:
-                    log.warning("find-and-match: [Chống nhầm bàn] Account 1 ĐANG KẸT TRONG BÀN CŨ (biến nhớ vừa reset) -> chủ động LEAVE trước khi join bàn $%s!", bet_val)
+                    log.warning("find-and-match: [Chống nhầm bàn] Account 1 ĐANG KẸT TRONG BÀN CŨ -> chủ động LEAVE (lần %d/6) trước khi join bàn $%s!", _gate_try + 1, bet_val)
                     await _set_hud_status(first_page, "Đang thoát bàn cũ (chống vào nhầm bàn)...")
                     await _do_leave_room(first_page, name=first_name, target_mu=target_mu)
-                    await asyncio.sleep(1.2)
+                    await asyncio.sleep(0.8)
+                else:
                     await _ensure_in_tldl_lobby(first_page, first_name)
-            except Exception:
-                pass
+                    await asyncio.sleep(0.6)
+            if not lobby_confirmed:
+                log.warning("find-and-match: [Chống nhầm bàn] Account 1 KHÔNG xác nhận được sảnh sau 6 lần -> nghỉ 3s bỏ qua lượt join này (tránh spam 308 bị 102)!")
+                await asyncio.sleep(3.0)
+                continue
 
             # BƯỚC 1: DUY NHẤT ACCOUNT 1 TÌM BÀN CÔNG CỘNG MỚI TRỐNG (THEO MỨC CƯỢC CHÍNH XÁC)
             found_anchor = False
