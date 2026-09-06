@@ -1194,6 +1194,7 @@ _REPORTED_ROOMS = {}
 @router.post("/api/autoplay/report-room")
 async def autoplay_report_room(body: dict, request: Request):
     """Extension tự động báo cáo thông tin bàn cược hiện tại lên Backend."""
+    import time as _time
     p_name = str(body.get("profile_name") or "").strip().lower()
     rid = int(body.get("rid") or 0)
     if rid > 0:
@@ -1201,7 +1202,7 @@ async def autoplay_report_room(body: dict, request: Request):
             "rid": rid,
             "b": body.get("b"),
             "rn": body.get("rn"),
-            "ts": time.time(),
+            "ts": _time.time(),
             "data": body,
         }
         # Nếu có cả tên nick thì map thêm key Account01/Account02
@@ -1713,7 +1714,10 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         if is_empty:
                             break
                         # NẾU BẬT auto_start_guest_ss VÀ KHÁCH ĐÃ SẴN SÀNG (SS):
-                        if auto_start_guest_ss and (r_info.get("guest_ready") or r_info.get("in_game")):
+                        # CHỈ áp dụng khi KHÔNG đang gom bàn cho đồng đội (không có nick phụ tham gia).
+                        # Khi có Account 2 đang chờ -> Account 1 phải OUT bàn có khách lạ, KHÔNG được
+                        # tự ý bắt đầu ván với khách (đồng đội sẽ không vào được bàn 2 người).
+                        if auto_start_guest_ss and not other_profiles and (r_info.get("guest_ready") or r_info.get("in_game")):
                             log.info("find-and-match: ⚡ PHÁT HIỆN KHÁCH LẠ ĐÃ SẴN SÀNG! Kích hoạt BẮT ĐẦU VÁN NGAY!")
                             guest_ss_triggered = True
                             await first_page.evaluate("() => { if (typeof window.__autotool_exec_start === 'function') window.__autotool_exec_start(); }")
@@ -1748,10 +1752,12 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 ext_hub = getattr(request.app.state, "ext_hub", None)
                 for sub_name in other_profiles:
                     if ext_hub and ext_hub.is_connected(sub_name):
-                        asyncio.create_task(ext_hub.send_command(sub_name, "LEAVE_ROOM", {"reason": "Anchor table has stranger"}))
+                        # CHỜ GỬI XONG (await) để đảm bảo Account 2 LUÔN nhận được lệnh hủy/rời
+                        # trước khi Account 1 out khỏi bàn -> không bỏ sót thông báo.
+                        await ext_hub.send_command(sub_name, "LEAVE_ROOM", {"reason": "Anchor table has stranger"})
                     sub_page = pages.get(sub_name)
                     if sub_page:
-                        asyncio.create_task(_do_leave_room(sub_page, name=sub_name, target_mu=target_mu))
+                        await _do_leave_room(sub_page, name=sub_name, target_mu=target_mu)
                 await _do_leave_room(first_page, name=first_name, target_mu=target_mu)
                 await _ensure_in_tldl_lobby(first_page, first_name)
                 # TĂNG DELAY NGHỈ AN TOÀN (3.5s) ĐỂ TRÁNH TRIỆT ĐỂ LỖI 'BẠN THAO TÁC QUÁ NHANH'
@@ -1808,6 +1814,36 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 anchor_rid = expected_fixed_rid
 
             selected_rid = anchor_rid
+
+            # KIỂM TRA MỨC CƯỢC THỰC TẾ CỦA BÀN Account 1 ĐANG NGỒI: PHẢI KHỚP bet đã cấu hình.
+            # (Sửa bug: cấu hình bàn 100 nhưng game tự đưa vào bàn 500 -> phải out ngay, không mời B.)
+            wrong_bet = False
+            try:
+                room_b = await anchor_page.evaluate("() => (window.__last_room_info && window.__last_room_info.b) || null")
+                if room_b is not None:
+                    try:
+                        room_b_int = int(float(str(room_b).replace(",", "").replace(".", "").strip()))
+                        if room_b_int != bet_val:
+                            wrong_bet = True
+                    except Exception:
+                        wrong_bet = False
+            except Exception:
+                wrong_bet = False
+            if wrong_bet:
+                log.info("find-and-match: Account 1 đang ở BÀN $%s (không đúng mức cược $%s đã cấu hình) -> Out về sảnh & thử lại!",
+                         room_b, bet_val)
+                for sub_name in other_profiles:
+                    sub_p = pages.get(sub_name)
+                    if ext_hub and ext_hub.is_connected(sub_name):
+                        await ext_hub.send_command(sub_name, "LEAVE_ROOM", {"reason": f"Anchor joined wrong bet table (${room_b})"})
+                    if sub_p:
+                        await _do_leave_room(sub_p, name=sub_name, target_mu=target_mu)
+                await _do_leave_room(anchor_page, name=anchor_name, target_mu=target_mu)
+                await _ensure_in_tldl_lobby(anchor_page, anchor_name)
+                log.info("find-and-match: [Anti-Flood Delay] Nghỉ 3.5s sau khi out bàn sai mức cược...")
+                await asyncio.sleep(3.5)
+                continue
+
             log.info("find-and-match: Account 1 đang giữ bàn công cộng trống #%s ($%s). Điều phối các nick phụ join vào nhanh chóng...", 
                      selected_rid, bet_val)
             await _set_hud_status(anchor_page, f"Đang giữ bàn #{selected_rid}! Đợi đồng đội vào...")
@@ -1825,6 +1861,35 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             anchor_u = str(anchor_user_info.get("u") or "").lower().strip()
             anchor_dn = str(anchor_user_info.get("dn") or "").lower().strip()
             anchor_uid = str(anchor_user_info.get("uid") or "").strip()
+
+            # KIỂM TRA LẠI NGAY TRƯỚC KHI MỜI: Account 1 PHẢI VẪN ĐANG NGỒI MỘT MÌNH Ở BÀN TRỐNG.
+            # Nếu khách lạ đã vào bàn trong lúc Account 1 giữ bàn -> HỦY mời (báo Account 2) + out ngay.
+            ext_hub = getattr(request.app.state, "ext_hub", None)
+            still_alone = False
+            for _ in range(5):
+                try:
+                    alive_check = await anchor_page.evaluate("""() => ({
+                        player_count: (window.__room_players || []).length,
+                        has_stranger: !!(window.__last_room_info && window.__last_room_info.has_stranger),
+                        in_game: !!window.__game_in_progress
+                    })""")
+                    if alive_check.get("in_game"):
+                        break
+                    if int(alive_check.get("player_count") or 0) <= 1 and not alive_check.get("has_stranger"):
+                        still_alone = True
+                        break
+                except Exception:
+                    break
+                await asyncio.sleep(0.4)
+            if not still_alone:
+                log.info("find-and-match: KHÁCH LẠ VÀO BÀN TRONG LÚC Account 1 giữ bàn -> HỦY MỜI & OUT NGAY, báo Account 2!")
+                for sub_name in other_profiles:
+                    if ext_hub and ext_hub.is_connected(sub_name):
+                        await ext_hub.send_command(sub_name, "LEAVE_ROOM", {"reason": "Stranger joined anchor table before invite"})
+                await _do_leave_room(anchor_page, name=anchor_name, target_mu=target_mu)
+                await _ensure_in_tldl_lobby(anchor_page, anchor_name)
+                await asyncio.sleep(3.5)
+                continue
 
             # BƯỚC 3: ĐIỀU PHỐI CÁC TÀI KHOẢN PHỤ JOIN VÀO NHANH CHÓNG THEO ID (BÀN CÔNG CỘNG KHÔNG PASS)
             all_subs_matched = True
@@ -2126,7 +2191,8 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 try:
                     import cv2
                     import numpy as np
-                    tmpl_file = os.path.join(ROOT, "data", "templates", "btn_ready.png")
+                    tmpl_dir = Path(__file__).resolve().parent.parent / "data" / "templates"
+                    tmpl_file = tmpl_dir / "btn_ready.png"
                     if os.path.exists(tmpl_file):
                         tmpl_img = cv2.imread(tmpl_file)
                         if tmpl_img is not None:
@@ -2227,6 +2293,14 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
         # BƯỚC 7: BẪY KHÁCH LẠ SẴN SÀNG (NẾU BẬT auto_start_guest_ss)
         guest_found = False
+        start_x = 0
+        start_y = 0
+        try:
+            start_sw, start_sh = await _get_screen_size(anchor_page)
+            start_x = int(start_sw * 0.500)
+            start_y = int(start_sh * 0.525)
+        except Exception:
+            pass
         if auto_start_guest_ss:
             log.info("find-and-match: Chế độ 'Bắt đầu nếu khách SS' đang bật, chủ bàn canh 5 giây xem có khách...")
             for _ in range(10):
@@ -2237,7 +2311,8 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     guest_ss = any(pl.get("aRd") is True or pl.get("ss") is True for pl in pls if pl.get("dn") not in pages and pl.get("u") not in pages)
                     if guest_ss:
                         log.info("find-and-match: ⚡ PHÁT HIỆN KHÁCH LẠ SẴN SÀNG! Kích hoạt BẮT ĐẦU NGAY!")
-                        await anchor_page.mouse.click(start_x, start_y)
+                        if start_x and start_y:
+                            await anchor_page.mouse.click(start_x, start_y)
                         guest_found = True
                         await asyncio.sleep(1.0)
                         break

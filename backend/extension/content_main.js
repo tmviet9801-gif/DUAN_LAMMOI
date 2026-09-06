@@ -1347,7 +1347,12 @@
               } else if (hasStrangerOrFull) {
                 // 2. BÀN CÓ KHÁCH LẠ HOẶC BÀN FULL
                 const guestSS = strangers.some((x) => x && (x.aRd === true || x.aRd === "true" || x.ss === true || x.ready === true));
-                if (G.__auto_start_guest_ss && !isSubProfile) {
+
+                // KHI ĐANG Ở CHẾ ĐỘ SĂN BÀN (tìm đồng đội cụ thể) -> LUÔN LUÔN OUT NGAY, không bao giờ bắt đầu với khách lạ!
+                const huntModeActive = !!(G.__AUTOTOOL_AUTO_HUNT && !G.__is_matched_locked && !partner);
+
+                if (!huntModeActive && G.__auto_start_guest_ss && !isSubProfile) {
+                  // Chế độ bắt đầu với khách SS: CHỈ áp dụng khi KHÔNG trong hunt mode
                   if (guestSS) {
                     console.log("[AutoTool V3] ⚡ PHÁT HIỆN KHÁCH LẠ ĐÃ SẴN SÀNG (SS) & BẬT 'Bắt đầu nếu khách SS'! KÍCH HOẠT BẮT ĐẦU NGAY!");
                     G.__is_matched_locked = true;
@@ -1760,53 +1765,75 @@
   };
 
   // 4. API điều khiển game trực tiếp từ Extension Hub
-  G.__autotool_exec_join = function (rid, bet = 100, mu = 2) {
+  G.__autotool_exec_join = function (rid, bet, mu) {
     const cleanBet = Number(bet || 100);
     const cleanMu = Number(mu || 2);
     const specificRid = (rid && !isNaN(Number(rid)) && Number(rid) > 28) ? Number(rid) : null;
     console.log(`[AutoTool V3] Thực thi lệnh JOIN phòng: bet=$${cleanBet}, slot=${cleanMu}, rid=${specificRid || 'auto'}...`);
     const simms = G.__ws_get_simms();
-    if (!simms) {
-      console.warn("[AutoTool V3] Chưa tìm thấy socket Simms của game bài!");
+    if (!simms || simms.readyState !== 1) {
+      console.warn("[AutoTool V3] Chưa tìm thấy socket Simms của game bài hoặc chưa kết nối!");
       return false;
     }
 
-    // Gói tin chuẩn 100% của HitClub: cmd 308 channelPlugin
-    const payload308 = {
-      cmd: 308,
-      aid: 1,
-      gid: 1, // Tiến Lên Đếm Lá
-      b: cleanBet,
-      Mu: cleanMu,
-      iJ: true,
-      inc: false,
-      pwd: "",
-    };
-    if (specificRid) {
-      payload308.rid = specificRid;
-    }
-    const msg308 = JSON.stringify([6, "Simms", "channelPlugin", payload308]);
+    const doJoin = () => {
+      const payload308 = {
+        cmd: 308,
+        aid: 1,
+        gid: 1, // Tiến Lên Đếm Lá
+        b: cleanBet,
+        Mu: cleanMu,
+        iJ: true,
+        inc: false,
+        pwd: "",
+      };
+      if (specificRid) {
+        payload308.rid = specificRid;
+      }
+      const msg308 = JSON.stringify([6, "Simms", "channelPlugin", payload308]);
 
-    let sent = false;
-    try {
-      simms.send(msg308);
-      push("inject", msg308);
-      console.log(`[AutoTool V3] Đã gửi lệnh vào bàn [cmd 308, cược $${cleanBet}, slot ${cleanMu}${specificRid ? ', rid=' + specificRid : ''}] thành công!`);
-      sent = true;
-    } catch (e) {
-      console.error("[AutoTool V3] Lỗi gửi lệnh cmd 308:", e);
-    }
-
-    // Nếu có ID phòng cụ thể (> 28), gửi bổ sung lệnh direct join
-    if (specificRid) {
+      let sent = false;
       try {
-        const directJoin = JSON.stringify([3, "Simms", 1, String(specificRid)]);
-        simms.send(directJoin);
-        push("inject", directJoin);
-      } catch (_) {}
+        simms.send(msg308);
+        push("inject", msg308);
+        console.log(`[AutoTool V3] Đã gửi lệnh vào bàn [cmd 308, cược $${cleanBet}, slot ${cleanMu}${specificRid ? ', rid=' + specificRid : ''}] thành công!`);
+        sent = true;
+      } catch (e) {
+        console.error("[AutoTool V3] Lỗi gửi lệnh cmd 308:", e);
+      }
+
+      // Nếu có ID phòng cụ thể (> 28), gửi bổ sung lệnh direct join
+      if (specificRid) {
+        try {
+          const directJoin = JSON.stringify([3, "Simms", 1, String(specificRid)]);
+          simms.send(directJoin);
+          push("inject", directJoin);
+        } catch (_) {}
+      }
+      return sent;
+    };
+
+    // Với open join (tìm bàn trống công cộng): Nếu client đang kẹt TRONG bàn cũ (vd bàn 500)
+    // thì gửi LEAVE TRƯỚC để về sảnh, tránh game client tự động rejoin đúng bàn 500 (cũ)
+    // làm lệch mức cược đã cấu hình. Nếu đã ở sảnh thì JOIN ngay không cần LEAVE.
+    if (!specificRid) {
+      const insideTable = (G.__room_players && G.__room_players.length > 0) ||
+                          (G.__last_room_info && G.__last_room_info.rid > 0 && G.__last_room_info.rid !== 100);
+      if (insideTable) {
+        try {
+          simms.send('[4,"Simms",-1]');
+          push("inject", '[4,"Simms",-1]');
+          console.log(`[AutoTool V3] Đã gửi LEAVE trước để đảm bảo ở sảnh trước khi join bàn $${cleanBet}`);
+        } catch (_) {}
+        // Delay ngắn để server xử lý leave xong rồi mới join bàn mới
+        setTimeout(doJoin, 400);
+        return true; // Trả về true vì lệnh sẽ được thực thi sau 400ms
+      }
+      return doJoin();
     }
 
-    return sent;
+    // Với direct join (join theo rid cụ thể): join ngay không cần delay
+    return doJoin();
   };
 
   function execCocosLeaveTable() {

@@ -50,8 +50,9 @@
             if (!a) return false;
             const n = (a.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
             const u = (a.username || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+            const c = (a.character_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
             const i = String(a.index || a.id || "").toLowerCase();
-            if (p === n || p === u || p === i) return true;
+            if (p === n || p === u || p === c || p === i) return true;
             if (p.endsWith("1") && (n.endsWith("1") || i === "1")) return true;
             if (p.endsWith("2") && (n.endsWith("2") || i === "2")) return true;
             return false;

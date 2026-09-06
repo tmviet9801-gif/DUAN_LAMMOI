@@ -13,6 +13,8 @@ import time
 from typing import Any, Callable, Dict, Optional
 from fastapi import WebSocket
 
+from controllers.account_controller import _match_account, _parse_balance
+
 log = logging.getLogger("extension_hub")
 
 
@@ -385,24 +387,24 @@ class ExtensionHubManager:
             if bal is None and isinstance(msg.get("data"), dict):
                 bal = msg.get("data", {}).get("balance")
             if bal is not None:
-                try:
-                    bal_val = int(float(str(bal).replace(",", "").replace(".", "").strip()))
-                except Exception:
+                bal_val = _parse_balance(bal)
+                if isinstance(bal_val, str):
                     bal_val = bal
 
                 state["balance"] = bal_val
+                state["last_balance_ts"] = time.time()
                 log.info("ExtensionHub V3: Profile '%s' cập nhật số dư mới: %s", profile_name, bal_val)
 
-                # Cập nhật và lưu vào accounts.json
+                # Cập nhật và lưu vào accounts.json (khớp mềm theo mọi alias: name/username/character_name/uid...)
+                matched_profile = profile_name
                 try:
                     from models.config_model import load_accounts, save_accounts
                     accounts = load_accounts()
                     updated = False
                     for a in accounts:
-                        if (a.get("name") == profile_name or 
-                            a.get("username") == profile_name or 
-                            str(a.get("id")) == str(profile_name)):
+                        if _match_account(a, profile_name):
                             a["balance"] = bal_val
+                            matched_profile = a.get("name") or profile_name
                             updated = True
                             break
                     if updated:
@@ -412,7 +414,7 @@ class ExtensionHubManager:
 
                 self._emit({
                     "type": "accounts_updated",
-                    "profile_name": profile_name,
+                    "profile_name": matched_profile,
                     "balance": bal_val,
                 })
 
@@ -423,22 +425,26 @@ class ExtensionHubManager:
                 log_text = msg.get("data", {}).get("log")
             if log_text:
                 state["log"] = str(log_text)
+                state["last_log_ts"] = time.time()
+                matched_profile = profile_name
                 try:
                     from models.config_model import load_accounts, save_accounts
                     accounts = load_accounts()
+                    updated = False
                     for a in accounts:
-                        if (a.get("name") == profile_name or 
-                            a.get("username") == profile_name or 
-                            str(a.get("id")) == str(profile_name)):
+                        if _match_account(a, profile_name):
                             a["log"] = str(log_text)
-                            save_accounts(accounts)
+                            matched_profile = a.get("name") or profile_name
+                            updated = True
                             break
+                    if updated:
+                        save_accounts(accounts)
                 except Exception:
                     pass
 
                 self._emit({
                     "type": "accounts_updated",
-                    "profile_name": profile_name,
+                    "profile_name": matched_profile,
                     "log": str(log_text),
                 })
 
@@ -451,19 +457,15 @@ class ExtensionHubManager:
                 state["room_id"] = rid
                 room_display = f"Bàn #{rid}" if str(rid).isdigit() else f"Bàn {rid}"
                 state["log"] = f"{room_display} (${ri.get('b', 100)})"
+                matched_profile = profile_name
                 try:
                     from models.config_model import load_accounts, save_accounts
                     accounts = load_accounts()
                     for a in accounts:
-                        name_low = str(a.get("name") or "").lower()
-                        user_low = str(a.get("username") or "").lower()
-                        p_low = str(profile_name).lower()
-                        idx_str = str(a.get("index") or "")
-                        if (name_low == p_low or user_low == p_low or str(a.get("id")) == profile_name or
-                            (p_low.endswith("1") and (name_low.endswith("1") or idx_str == "1")) or
-                            (p_low.endswith("2") and (name_low.endswith("2") or idx_str == "2"))):
+                        if _match_account(a, profile_name):
                             a["room"] = rid
                             a["log"] = room_display
+                            matched_profile = a.get("name") or profile_name
                             save_accounts(accounts)
                             break
                 except Exception:
@@ -471,12 +473,12 @@ class ExtensionHubManager:
 
                 self._emit({
                     "type": "room_info_updated",
-                    "profile_name": profile_name,
+                    "profile_name": matched_profile,
                     "room_info": ri,
                 })
                 self._emit({
                     "type": "accounts_updated",
-                    "profile_name": profile_name,
+                    "profile_name": matched_profile,
                     "room": rid,
                 })
 
@@ -591,7 +593,6 @@ class ExtensionHubManager:
                     from models.config_model import load_accounts, save_accounts
                     accounts = load_accounts()
                     for a in accounts:
-                        from controllers.account_controller import _match_account
                         if _match_account(a, profile_name):
                             a["cards"] = cards
                             matched_n = a.get("name") or profile_name
@@ -642,7 +643,6 @@ class ExtensionHubManager:
                 from models.config_model import load_accounts, save_accounts
                 accounts = load_accounts()
                 for a in accounts:
-                    from controllers.account_controller import _match_account
                     if _match_account(a, profile_name):
                         a["room"] = -1
                         a["log"] = "Đang ở sảnh (Chưa vào bàn)"

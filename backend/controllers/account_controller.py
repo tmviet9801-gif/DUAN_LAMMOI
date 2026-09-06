@@ -164,16 +164,15 @@ class UpdateBalanceIn(BaseModel):
 async def update_account_balance(body: UpdateBalanceIn, request: Request):
     """Cập nhật số dư tài khoản từ extension hoặc luồng game."""
     p_name = body.profile_name.strip()
-    try:
-        val = int(float(str(body.balance).replace(",", "").replace(".", "").strip()))
-    except Exception:
-        val = body.balance
+    val = _parse_balance(body.balance)
 
     accounts = load_accounts()
+    matched_profile = p_name
     updated = False
     for a in accounts:
-        if a.get("name") == p_name or a.get("username") == p_name or str(a.get("id")) == p_name:
+        if _match_account(a, p_name):
             a["balance"] = val
+            matched_profile = a.get("name") or p_name
             updated = True
             break
     if updated:
@@ -181,13 +180,44 @@ async def update_account_balance(body: UpdateBalanceIn, request: Request):
 
     ext_hub = getattr(request.app.state, "ext_hub", None)
     if ext_hub:
-        ext_hub.handle_message(p_name, {"type": "BALANCE_UPDATE", "balance": val})
+        ext_hub.handle_message(matched_profile, {"type": "BALANCE_UPDATE", "balance": val})
 
     events = getattr(request.app.state, "events", None)
     if events:
-        events.publish({"type": "accounts_updated", "profile_name": p_name, "balance": val})
+        events.publish({"type": "accounts_updated", "profile_name": matched_profile, "balance": val})
 
-    return {"ok": True, "profile_name": p_name, "balance": val}
+    return {"ok": True, "profile_name": matched_profile, "balance": val}
+
+
+def _parse_balance(raw) -> int | float | str:
+    """Chuyển balance từ Extension (số nguyên / có dấu phân cách) về số.
+
+    - "54068" -> 54068
+    - "54.068" -> 54068 (dấu chấm phân tách hàng nghìn)
+    - "1.234.567" -> 1234567
+    - "10.000" -> 10000
+    - "1234,56" -> 1234.56 (số thập phân, không nhân 100)
+    """
+    s = str(raw).strip()
+    if not s:
+        return raw
+    # Bỏ dấu phẩy phân tách hàng nghìn (1,234 / 12,345)
+    cleaned = s.replace(",", "")
+    # Nếu có NHIỀU dấu chấm -> chấm là phân tách hàng nghìn (VN: 1.234.567)
+    if cleaned.count(".") > 1:
+        cleaned = cleaned.replace(".", "")
+    elif cleaned.count(".") == 1:
+        before, after = cleaned.split(".")
+        # "1.234" / "10.000" -> phân tách hàng nghìn (3 chữ số sau chấm), không phải số thập phân
+        if len(after) == 3:
+            cleaned = before + after
+    try:
+        f = float(cleaned)
+        if f.is_integer():
+            return int(f)
+        return f
+    except Exception:
+        return raw
 
 
 class UpdateCardsIn(BaseModel):
@@ -232,25 +262,46 @@ class UpdateLogIn(BaseModel):
     log: str
 
 
+def _account_aliases(acc: dict) -> list[str]:
+    """Tập hợp toàn bộ định danh của 1 tài khoản để so khớp mềm từ Extension.
+
+    Extension gửi lên các tên khác nhau tuỳ ngữ cảnh: tên profile (Account01),
+    username đăng nhập, tên nhân vật in-game (dn), uid... Nên phải khớp được
+    hết các trường này nếu không balance/log/cards từ Extension sẽ bị bỏ qua
+    âm thầm (nguyên nhân: "số dư không realtime", "log cũ không được xoá").
+    """
+    if not isinstance(acc, dict):
+        return []
+    aliases = []
+    for key in ("name", "username", "character_name", "game_username", "id", "uid"):
+        val = acc.get(key)
+        if isinstance(val, (str, int)) and str(val).strip():
+            aliases.append(str(val).strip())
+    ws_local = (acc.get("web_storage") or {}).get("local") or {}
+    for key in ("KEY_USER_NAME", "AUTOTOOL_PROFILE_NAME", "AUTOTOOL_IN_GAME_DN", "AUTOTOOL_IN_GAME_U"):
+        val = ws_local.get(key)
+        if isinstance(val, str) and val.strip():
+            aliases.append(val.strip())
+    return aliases
+
+
 def _match_account(acc: dict, p_name: str) -> bool:
     if not p_name:
         return False
-    name = str(acc.get("name") or "").strip().lower()
-    username = str(acc.get("username") or "").strip().lower()
     acc_id = str(acc.get("id") or "").strip()
     idx = str(acc.get("index") or "").strip()
     target = p_name.strip().lower()
 
-    if target in (name, username, acc_id, idx):
+    aliases = [a.lower() for a in _account_aliases(acc)]
+    if target in aliases:
         return True
 
     norm_target = "".join(c for c in target if c.isalnum())
-    norm_name = "".join(c for c in name if c.isalnum())
-    norm_user = "".join(c for c in username if c.isalnum())
-
-    if norm_target and (norm_target == norm_name or norm_target == norm_user):
+    norm_aliases = ["".join(c for c in a if c.isalnum()) for a in aliases]
+    if norm_target and norm_target in norm_aliases:
         return True
 
+    norm_name = "".join(c for c in str(acc.get("name") or "").lower() if c.isalnum())
     # Khớp chính xác theo hậu tố số 1 hoặc 2 (Profile 1 vs Profile 2)
     if norm_target.endswith("1") and (norm_name.endswith("1") or idx == "1"):
         return True
