@@ -595,6 +595,40 @@
     return false;
   }
 
+  // Phát hiện tài khoản BỊ ĐĂNG XUẤT -> DỪNG MỌI HÀNH ĐỘNG WS NGAY (giữ phiên, tránh
+  // server game kick thêm). Trước đây hàm này bị mất (ReferenceError làm chết cả
+  // content_main) nên bot vẫn bắn lệnh khi đã đăng xuất -> bị kick liên tục.
+  function checkAndHandleLoggedOut() {
+    if (!isOnLoginScreen()) {
+      return false;
+    }
+    console.warn("[AutoTool V3] ⚠️ PHÁT HIỆN TÀI KHOẢN BỊ ĐĂNG XUẤT! DỪNG TOÀN BỘ HÀNH ĐỘNG ĐỂ GIỮ PHIÊN!");
+    G.__AUTOTOOL_AUTO_HUNT = false;
+    G.__AUTOTOOL_ARMED = false;
+    G.__AUTOTOOL_AUTO_DISCARD = false;
+    G.__is_matched_locked = false;
+    G.__game_in_progress = false;
+    G.__is_hunt_initiator = false;
+    G.__last_room_info = null;
+    G.__room_players = [];
+    G.__active_room_invite = null;
+    const timers = ["__start_retry_timer", "__hunt_wait_timer", "__hunt_retry_timer", "__guest_ss_wait_timer", "__auto_turn_timer"];
+    for (const t of timers) {
+      if (G[t]) {
+        if (t.includes("retry") || t === "__start_retry_timer") clearInterval(G[t]);
+        else clearTimeout(G[t]);
+        G[t] = null;
+      }
+    }
+    try { localStorage.setItem("AUTOTOOL_STOPPED", "1"); } catch (_) {}
+    window.postMessage({
+      type: "AUTOTOOL_ACCOUNT_LOGGED_OUT",
+      profile_name: getProfileName(),
+      reason: "Phát hiện màn hình đăng nhập (bị đăng xuất)",
+    }, "*");
+    return true;
+  }
+
   function dismissPopupsAndBanners() {
     let closedCount = 0;
     try {
@@ -919,6 +953,7 @@
   G.__autotool_auto_enter_tldl = autoEnterTLDLLobby;
   G.__autotool_dismiss_popups = dismissPopupsAndBanners;
   G.__autotool_is_on_login_screen = isOnLoginScreen;
+  G.__autotool_check_logged_out = checkAndHandleLoggedOut;
 
   // Hàm điều phối xác minh sẵn sàng & bắt đầu ván (Two-way Handshake & Retry Start Pulse)
   function triggerVerifiedMatchReadyAndStart(partnerName, sourceReason) {
@@ -1509,7 +1544,8 @@
               }, "*");
 
               // Nếu đang bật Auto Hunt và là Account 1 (Anchor): Tự động tìm lại lượt mới với ADAPTIVE BACKOFF (#1)
-              if (G.__AUTOTOOL_AUTO_HUNT) {
+              // TRỪ KHI TÀI KHOẢN ĐÃ BỊ ĐĂNG XUẤT -> KHÔNG gửi thêm bất kỳ lệnh WS nào (giữ phiên đăng nhập)
+              if (G.__AUTOTOOL_AUTO_HUNT && !(typeof checkAndHandleLoggedOut === "function" && checkAndHandleLoggedOut())) {
                 const pName = (getProfileName() || "").toLowerCase();
                 if (pName.includes("1") || G.__is_hunt_initiator) {
                   if (G.__hunt_retry_timer) clearTimeout(G.__hunt_retry_timer);
@@ -1785,6 +1821,10 @@
 
   // 4. API điều khiển game trực tiếp từ Extension Hub
   G.__autotool_exec_join = function (rid, bet, mu) {
+    // KHÔNG gửi bất kỳ lệnh WS nào khi account đã bị đăng xuất (giữ phiên đăng nhập)
+    if (typeof checkAndHandleLoggedOut === "function" && checkAndHandleLoggedOut()) {
+      return false;
+    }
     const cleanBet = Number(bet || 100);
     const cleanMu = Number(mu || 2);
     const specificRid = (rid && !isNaN(Number(rid)) && Number(rid) > 28) ? Number(rid) : null;
@@ -1988,6 +2028,10 @@
   };
 
   G.__autotool_exec_ready = function () {
+    // KHÔNG gửi lệnh khi tài khoản đã bị đăng xuất (giữ phiên đăng nhập)
+    if (typeof checkAndHandleLoggedOut === "function" && checkAndHandleLoggedOut()) {
+      return false;
+    }
     // BẢO VỆ CHẶN: Chỉ chặn nếu không có đồng đội VÀ KHÔNG BẬT auto_start_guest_ss
     const partner = (G.__room_players || []).find(isPartner);
     if (!partner && G.__room_players && G.__room_players.length > 1 && !G.__auto_start_guest_ss) {

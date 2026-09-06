@@ -1665,6 +1665,43 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                           f"🚀 Bắt đầu GOM BÀN ${bet_val}: {first_name} quét tìm bàn TRỐNG, {', '.join(other_profiles) or 'không có phụ'} đứng chờ ở sảnh...",
                           "active", f"🚀 Gom bàn ${bet_val}")
 
+        # CÀI ĐÈ HÀM JOIN CHUẨN LÊN TẤT CẢ CÁC TRANG (dứt điểm lỗi vào nhầm bàn 500):
+        # Bằng chứng ws_capture: extension CŨ gửi cmd 308 KHÔNG kèm b/Mu -> game xếp
+        # vào bàn mặc định (bàn $500 cuối cùng). Hàm này đảm bảo MỌI lệnh join (kể cả
+        # do content_main cũ gọi) đều gửi payload đầy đủ b/Mu + chống flood 2.5s.
+        server_join_fn = """(function (rid, bet, mu) {
+            const now = Date.now();
+            if (window.__last_join_ts && (now - window.__last_join_ts) < 2500) {
+                console.warn('[AutoTool V3][SRV] [Anti-Flood] Bỏ qua join (mới cách ' + (now - window.__last_join_ts) + 'ms)');
+                return false;
+            }
+            window.__last_join_ts = now;
+            const cleanBet = Number(bet || 100);
+            const cleanMu = Number(mu || 2);
+            const specificRid = (rid && !isNaN(Number(rid)) && Number(rid) > 28) ? Number(rid) : null;
+            const simms = (window.__ws_get_simms && window.__ws_get_simms()) || null;
+            if (!simms || simms.readyState !== 1) {
+                console.warn('[AutoTool V3][SRV] Chưa có socket Simms hoặc chưa kết nối!');
+                return false;
+            }
+            const payload = { cmd: 308, aid: 1, gid: 1, b: cleanBet, Mu: cleanMu, iJ: true, inc: false, pwd: '' };
+            if (specificRid) payload.rid = specificRid;
+            try {
+                simms.send(JSON.stringify([6, 'Simms', 'channelPlugin', payload]));
+                console.log('[AutoTool V3][SRV] Đã gửi join đầy đủ: b=' + cleanBet + ', Mu=' + cleanMu + (specificRid ? ', rid=' + specificRid : ' (auto)'));
+                return true;
+            } catch (e) {
+                console.error('[AutoTool V3][SRV] Lỗi gửi join:', e);
+                return false;
+            }
+        })"""
+        for p_n, p in pages.items():
+            try:
+                await p.evaluate(f"() => {{ window.__autotool_exec_join = {server_join_fn}; window.__last_join_ts = 0; }}")
+                log.info("find-and-match: Đã cài đè hàm join chuẩn (b/Mu đầy đủ) cho %s", p_n)
+            except Exception as e:
+                log.warning("find-and-match: Cài đè join cho %s thất bại: %s", p_n, e)
+
         raw_tries = int(body.get("max_tries", 0) or 0)
         infinite_mode = (raw_tries <= 0)
         max_tries = 999999 if infinite_mode else raw_tries
@@ -1682,6 +1719,30 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     await _do_leave_room(p, name=p_n, target_mu=target_mu)
                     await _ensure_in_tldl_lobby(p, p_n)
                 return {"ok": False, "error": "Đã dừng chu trình gom bàn theo lệnh của bạn.", "stopped": True}
+
+            # ACCOUNT BỊ ĐĂNG XUẤT? -> DỪNG GOM BÀN NGAY, KHÔNG GỬI THÊM LỆNH WS
+            # (nguyên nhân đăng xuất trước đây: bot vẫn bắn lệnh khi đã bị kick
+            # -> server game đăng xuất phiên). Giữ phiên đăng nhập cho user.
+            try:
+                on_login = await first_page.evaluate("""() => {
+                    if (typeof window.__autotool_is_on_login_screen === 'function') {
+                        return window.__autotool_is_on_login_screen();
+                    }
+                    return false;
+                }""")
+            except Exception:
+                on_login = False
+            if on_login:
+                log.warning("find-and-match: Account 1 (%s) đang ở MÀN HÌNH ĐĂNG NHẬP (bị đăng xuất) -> DỪNG chu trình ngay!", first_name)
+                await _notify_all(ext_hub,
+                                  f"❌ {first_name} bị ĐĂNG XUẤT! Vui lòng đăng nhập lại rồi mới chạy Gom bàn.",
+                                  "error", "❌ Đăng xuất")
+                for p_n, p in pages.items():
+                    try:
+                        await p.evaluate("() => { if (typeof window.__autotool_check_logged_out === 'function') window.__autotool_check_logged_out(); }")
+                    except Exception:
+                        pass
+                return {"ok": False, "error": f"{first_name} bị đăng xuất, hãy đăng nhập lại tài khoản rồi chạy lại.", "stopped": True}
 
             attempt_str = f"Lần {attempt} (Vô hạn)" if infinite_mode else f"Lần {attempt}/{max_tries}"
             log.info("find-and-match: [%s] Account 1 (%s) tìm bàn trống $%s (Nick phụ chờ ở sảnh)...", 
