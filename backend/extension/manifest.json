@@ -4,7 +4,6 @@
   "version": "3.0.0",
   "description": "AutoTool V3: 3-Tier Multi-Profile Extension Bridge Hub, điều khiển WebSocket 2 chiều độ trễ 0ms.",
   "action": {
-    "default_popup": "popup.html",
     "default_title": "AutoTool Gom Bàn V3"
   },
   "background": {
@@ -19,8 +18,6 @@
   "host_permissions": [
     "http://127.0.0.1:17832/*",
     "http://localhost:17832/*",
-    "ws://127.0.0.1:17832/*",
-    "ws://localhost:17832/*",
     "<all_urls>"
   ],
   "content_scripts": [

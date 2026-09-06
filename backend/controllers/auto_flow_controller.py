@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 
@@ -13,6 +14,21 @@ log = logging.getLogger("auto_flow_controller")
 router = APIRouter()
 
 AUTOPLAY_CONFIG_FILE = DATA_DIR / "autoplay_config.json"
+
+BET_RATIOS = {
+    100: (0.290, 0.310),      # Hàng 1 - Cột 1 ($100)
+    500: (0.500, 0.310),      # Hàng 1 - Cột 2 ($500)
+    1000: (0.700, 0.310),     # Hàng 1 - Cột 3 ($1K / 1.000)
+    2000: (0.290, 0.480),     # Hàng 2 - Cột 1 ($2K / 2.000)
+    5000: (0.500, 0.480),     # Hàng 2 - Cột 2 ($5K / 5.000)
+    10000: (0.700, 0.480),    # Hàng 2 - Cột 3 ($10K / 10.000)
+    20000: (0.290, 0.650),    # Hàng 3 - Cột 1 ($20K / 20.000)
+    50000: (0.500, 0.650),    # Hàng 3 - Cột 2 ($50K / 50.000)
+    100000: (0.700, 0.650),   # Hàng 3 - Cột 3 ($100K / 100.000)
+    200000: (0.290, 0.820),   # Hàng 4 - Cột 1 ($200K)
+    500000: (0.500, 0.820),   # Hàng 4 - Cột 2 ($500K)
+    1000000: (0.700, 0.820),  # Hàng 4 - Cột 3 ($1M)
+}
 
 
 def _load_game_config() -> dict:
@@ -37,7 +53,23 @@ def _build_adapter(request, config):
         request.app.state.manager = bm
     page_pool = PagePool(bm)
     accounts = load_accounts()
-    lookup = {a["name"]: a for a in accounts if a.get("name")}
+    lookup = {}
+    for a in accounts:
+        if not a:
+            continue
+        name = a.get("name")
+        if name:
+            lookup[name] = a
+            lookup[name.replace(" ", "")] = a
+            lookup[name.lower()] = a
+            lookup[name.replace(" ", "").lower()] = a
+        uname = a.get("username")
+        if uname:
+            lookup[uname] = a
+            lookup[uname.lower()] = a
+        aid = a.get("id")
+        if aid:
+            lookup[aid] = a
     return HitClubAdapter(config, account_lookup=lookup, page_pool=page_pool)
 
 
@@ -265,64 +297,152 @@ async def _is_in_tldl_lobby_util(p):
         return False
     try:
         # Kiểm tra trạng thái sảnh qua biến bộ nhớ Extension V3 (0ms, không tốn CPU/CDP)
-        in_table = await p.evaluate("""() => {
+        in_tldl = await p.evaluate("""() => {
+            if (typeof window.__autotool_is_in_tldl_lobby === 'function') {
+                return window.__autotool_is_in_tldl_lobby();
+            }
             const r = window.__last_room_info;
             if (r && r.rid > 0 && r.rid !== 100) {
-                if (window.__game_in_progress) return true;
-                if (window.__room_players && window.__room_players.length > 0) return true;
+                if (window.__game_in_progress) return false;
+                if (window.__room_players && window.__room_players.length > 0) return false;
             }
-            return false;
+            const simms = typeof window.__ws_get_simms === 'function' ? window.__ws_get_simms() : null;
+            return !!(simms && simms.readyState === 1);
         }""")
-        return not in_table
+        return bool(in_tldl)
     except Exception:
         return False
+
+
+def _match_template_cv(screenshot_bytes, template_path, threshold=0.75):
+    try:
+        import cv2
+        import numpy as np
+        if not os.path.exists(template_path):
+            return None, 0.0
+        nparr = np.frombuffer(screenshot_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        tpl = cv2.imread(template_path, cv2.IMREAD_COLOR)
+        if img is None or tpl is None:
+            return None, 0.0
+
+        th, tw = tpl.shape[:2]
+        best_val = -1
+        best_loc = None
+        best_scale = 1.0
+
+        for scale in np.linspace(0.7, 1.3, 13):
+            nw, nh = int(tw * scale), int(th * scale)
+            if nw >= img.shape[1] or nh >= img.shape[0] or nw < 10 or nh < 10:
+                continue
+            resized = cv2.resize(tpl, (nw, nh), interpolation=cv2.INTER_AREA)
+            res = cv2.matchTemplate(img, resized, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            if max_val > best_val:
+                best_val = max_val
+                best_loc = max_loc
+                best_scale = scale
+
+        if best_val >= threshold and best_loc:
+            nw, nh = int(tw * best_scale), int(th * best_scale)
+            cx = best_loc[0] + nw // 2
+            cy = best_loc[1] + nh // 2
+            return (cx, cy), float(best_val)
+        return None, float(best_val)
+    except Exception as e:
+        log.warning("_match_template_cv error: %s", e)
+        return None, 0.0
 
 
 async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
     if not p:
         return False
     sw, sh = await _get_screen_size_util(p)
+
+    # 1. Nếu đã ở sẵn sảnh Tiến Lên Đếm Lá
     if await _is_in_tldl_lobby_util(p):
         try:
             tab_x = 0.500 if target_mu == 2 else 0.690
             await p.mouse.click(int(sw * tab_x), int(sh * 0.175))
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.3)
         except Exception:
             pass
         return True
 
-    log.info("%s chưa ở sảnh Tiến Lên Đếm Lá -> Bắt đầu đưa về đúng sảnh bàn Đếm Lá...", name)
+    log.info("%s chưa ở sảnh Tiến Lên Đếm Lá -> Kích hoạt điều hướng thông minh (OpenCV Template Matching)...", name)
+
+    tpl_dir = Path(__file__).resolve().parent.parent / "data" / "templates"
+    tpl_close = str(tpl_dir / "btn_close_popup.png")
+    tpl_gb = str(tpl_dir / "btn_game_bai.png")
+    tpl_tldl = str(tpl_dir / "btn_tldl_icon.png")
+
+    # 0. Kiểm tra nếu đang ở màn hình đăng nhập / bị đăng xuất
     try:
-        await p.mouse.click(50, 50)
-        await asyncio.sleep(0.3)
-        await p.mouse.click(364, 313)
-        await asyncio.sleep(0.3)
-        await p.mouse.click(int(sw * 0.854), int(sh * 0.233))
-        await asyncio.sleep(0.3)
+        is_on_login = await p.evaluate("""() => {
+            if (typeof window.__autotool_is_on_login_screen === 'function') {
+                return window.__autotool_is_on_login_screen();
+            }
+            return false;
+        }""")
+        if is_on_login:
+            log.warning("%s đang ở màn hình đăng nhập (bị đăng xuất)! Không thể vào sảnh bài.", name)
+            return False
     except Exception:
         pass
 
     try:
-        # Bấm tab GAME BÀI (tọa độ canvas 784x505: x=335, y=128 -> tỉ lệ 0.427, 0.253)
-        await p.mouse.click(int(sw * 0.427), int(sh * 0.253))
-        await asyncio.sleep(1.0)
-        # Bấm icon TIẾN LÊN ĐẾM LÁ (tọa độ canvas 784x505: x=235, y=239 -> tỉ lệ 0.300, 0.473)
-        await p.mouse.click(int(sw * 0.300), int(sh * 0.473))
-        await asyncio.sleep(2.0)
-    except Exception as e:
-        log.warning("Lỗi click vào Tiến Lên Đếm Lá: %s", e)
+        # Bước 1: Quét đóng popup nếu có (Chỉ đóng khi thực sự phát hiện nút X, tuyệt đối không click mù)
+        shot1 = await p.screenshot(type="png")
+        loc_close, score_close = _match_template_cv(shot1, tpl_close, threshold=0.75)
+        if loc_close:
+            log.info("%s phát hiện nút [X] đóng popup tại %s (độ khớp %.2f) -> click đóng!", name, loc_close, score_close)
+            await p.mouse.click(loc_close[0], loc_close[1])
+            await asyncio.sleep(0.4)
 
-    try:
+        # Bước 2: Tìm và click tab [ GAME BÀI ] (Tuyệt đối không để rơi vào ALL GAMES gây nhầm Tài Xỉu)
+        shot2 = await p.screenshot(type="png")
+        loc_gb, score_gb = _match_template_cv(shot2, tpl_gb, threshold=0.75)
+        if loc_gb:
+            log.info("%s phát hiện tab [GAME BÀI] tại %s (độ khớp %.2f) -> click chọn Game Bài!", name, loc_gb, score_gb)
+            await p.mouse.click(loc_gb[0], loc_gb[1])
+            await asyncio.sleep(0.8)
+        else:
+            log.info("%s không match được template GAME BÀI -> fallback click tọa độ chuẩn (335, 126)", name)
+            await p.mouse.click(int(sw * 0.427), int(sh * 0.250))
+            await asyncio.sleep(0.8)
+
+        # Bước 3: Đóng popup phát sinh (nếu có)
+        shot3 = await p.screenshot(type="png")
+        loc_close2, _ = _match_template_cv(shot3, tpl_close, threshold=0.75)
+        if loc_close2:
+            await p.mouse.click(loc_close2[0], loc_close2[1])
+            await asyncio.sleep(0.3)
+
+        # Bước 4: Tìm và click icon [ TIẾN LÊN ĐẾM LÁ ] (Chống nhầm lẫn 100% với Liêng / Poker)
+        shot4 = await p.screenshot(type="png")
+        loc_tldl, score_tldl = _match_template_cv(shot4, tpl_tldl, threshold=0.75)
+        if loc_tldl:
+            log.info("%s phát hiện icon [TIẾN LÊN ĐẾM LÁ] tại %s (độ khớp %.2f) -> click vào sảnh Đếm Lá!", name, loc_tldl, score_tldl)
+            await p.mouse.click(loc_tldl[0], loc_tldl[1])
+            await asyncio.sleep(2.0)
+        else:
+            log.info("%s không match được template TLDL -> fallback click tọa độ icon TLDL Hàng 1 Cột 1 (250, 202)", name)
+            await p.mouse.click(int(sw * 0.320), int(sh * 0.400))
+            await asyncio.sleep(2.0)
+
+        # Bước 5: Bấm tab Solo (hoặc 4 người)
         tab_x = 0.500 if target_mu == 2 else 0.690
         await p.mouse.click(int(sw * tab_x), int(sh * 0.175))
         await asyncio.sleep(0.5)
-    except Exception:
-        pass
+
+    except Exception as e:
+        log.warning("%s lỗi trong quy trình OpenCV điều hướng sảnh: %s", name, e)
 
     for _ in range(5):
         if await _is_in_tldl_lobby_util(p):
+            log.info("✅ %s đã vào sảnh Tiến Lên Đếm Lá thành công!", name)
             return True
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.5)
 
     return await _is_in_tldl_lobby_util(p)
 
@@ -359,13 +479,15 @@ async def _do_leave_room(p, name="Profile", target_mu=2):
         log.info("_do_leave_room: %s đã về sảnh bàn Đếm Lá an toàn sau lệnh WS.", name)
         return
 
-    # 2. Nếu vẫn còn kẹt trong bàn chơi (chưa về sảnh Đếm Lá), mới dùng phương án click menu [>] góc trên bên trái bàn chơi
+    # 2. Gửi lại lệnh rời bàn qua Extension V3 và Simms WebSocket
     try:
-        await p.mouse.click(int(0.069 * sw), int(0.253 * sh))
-        await asyncio.sleep(0.35)
-        # 3. Click nút biểu tượng cửa [🚪] rời bàn (tọa độ chuẩn 0.069*sw, 0.360*sh)
-        await p.mouse.click(int(0.069 * sw), int(0.360 * sh))
-        await asyncio.sleep(0.5)
+        await p.evaluate("""(() => {
+            try {
+                if (typeof window.__autotool_exec_leave === 'function') window.__autotool_exec_leave();
+                if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[4,"Simms",-1]');
+                if (typeof window.__ws_send === 'function') window.__ws_send('[4,"Simms",-1]');
+            } catch(e) {}
+        })()""")
     except Exception:
         pass
 
@@ -409,7 +531,37 @@ async def autoplay_stop(request: Request):
             log.warning("autoplay_stop: Lỗi cancel active_match_task: %s", e)
     request.app.state.active_match_task = None
 
-    # 2. Dừng flow cũ nếu có
+    # 2. Dập tắt NGAY LẬP TỨC toàn bộ trạng thái auto-hunt & timers trên tất cả các trang Chrome qua Playwright evaluate
+    manager = getattr(request.app.state, "manager", None)
+    if manager and manager.sessions:
+        for sid, s in list(manager.sessions.items()):
+            if s.page:
+                try:
+                    await s.page.evaluate("""() => {
+                        window.__AUTOTOOL_AUTO_HUNT = false;
+                        window.__AUTOTOOL_ARMED = false;
+                        window.__is_matched_locked = false;
+                        window.__game_in_progress = false;
+                        window.__last_room_info = null;
+                        window.__active_room_invite = null;
+                        if (window.__hunt_retry_timer) { clearTimeout(window.__hunt_retry_timer); window.__hunt_retry_timer = null; }
+                        if (window.__hunt_wait_timer) { clearTimeout(window.__hunt_wait_timer); window.__hunt_wait_timer = null; }
+                        if (window.__start_retry_timer) { clearInterval(window.__start_retry_timer); window.__start_retry_timer = null; }
+                        if (window.__auto_turn_timer) { clearTimeout(window.__auto_turn_timer); window.__auto_turn_timer = null; }
+                        window.postMessage({ type: 'AUTOTOOL_SET_HUNT', auto_hunt: false }, '*');
+                        window.postMessage({ type: 'AUTOTOOL_EXEC_COMMAND', action: 'STOP_HUNT', data: { reset: true } }, '*');
+                        const hBtn = document.getElementById('autotool-hunt-btn');
+                        if (hBtn) {
+                            hBtn.innerHTML = '⚪ Săn Bàn: TẮT';
+                            hBtn.style.background = 'rgba(30,41,59,0.9)';
+                            hBtn.style.color = '#94a3b8';
+                            hBtn.style.borderColor = 'rgba(255,255,255,0.2)';
+                        }
+                    }""")
+                except Exception:
+                    pass
+
+    # 3. Dừng flow cũ nếu có
     cur = getattr(request.app.state, "auto_flow", None)
     if cur:
         try:
@@ -419,8 +571,16 @@ async def autoplay_stop(request: Request):
             pass
         request.app.state.auto_flow = None
 
-    # 3. Duyệt qua toàn bộ session đang mở và ép thoát phòng về sảnh bàn Đếm Lá
-    manager = getattr(request.app.state, "manager", None)
+    # 4. Gửi lệnh STOP_HUNT xuống Extension Hub để làm sạch trạng thái tất cả các tab
+    ext_hub = getattr(request.app.state, "ext_hub", None)
+    if ext_hub:
+        try:
+            await ext_hub.broadcast_command("STOP_HUNT", {"reset": True})
+            log.info("autoplay_stop: Đã broadcast STOP_HUNT tới tất cả các extensions!")
+        except Exception as e:
+            log.warning("autoplay_stop broadcast error: %s", e)
+
+    # 5. Duyệt qua toàn bộ session đang mở và ép thoát phòng về sảnh bàn Đếm Lá
     left_profiles = []
     if manager and manager.sessions:
         for sid, s in list(manager.sessions.items()):
@@ -1242,13 +1402,45 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     import random as _rand
     import json as _json
 
+    bm = getattr(request.app.state, "manager", None)
+    open_acc_names = []
+    if bm and hasattr(bm, "sessions"):
+        for s in bm.sessions.values():
+            if s.account and s.account.get("name"):
+                open_acc_names.append(s.account.get("name"))
+
     profiles_input = body.get("profiles") or []
     if not profiles_input:
         p_a = (body.get("profile_a") or "").strip()
         p_b = (body.get("profile_b") or "").strip()
         profiles_input = [p for p in [p_a, p_b] if p]
+    if len(profiles_input) < 2 and len(open_acc_names) >= 2:
+        profiles_input = open_acc_names[:5]
     if not profiles_input:
-        profiles_input = ["Account01", "Account02"]
+        profiles_input = ["Account 01", "Account 02"]
+
+    # Chuẩn hoá danh sách tên profile để khớp chính xác với account["name"]
+    accounts = load_accounts()
+    resolved_profiles = []
+    for p in profiles_input:
+        matched_name = None
+        for a in accounts:
+            if not a:
+                continue
+            candidates = [
+                a.get("name") or "",
+                (a.get("name") or "").replace(" ", ""),
+                (a.get("name") or "").lower(),
+                (a.get("name") or "").replace(" ", "").lower(),
+                a.get("username") or "",
+                (a.get("username") or "").lower(),
+                a.get("id") or "",
+            ]
+            if p in candidates or p.lower() in candidates or p.replace(" ", "").lower() in candidates:
+                matched_name = a.get("name")
+                break
+        resolved_profiles.append(matched_name or p)
+    profiles_input = resolved_profiles
 
     profile_a = profiles_input[0]
     profile_b = profiles_input[1] if len(profiles_input) > 1 else ""
@@ -1312,6 +1504,18 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
     # Chuẩn bị Playwright Page cho tất cả tài khoản tham gia (2 đến 5 tài khoản)
     pages = {}
+    content_main_code = ""
+    try:
+        from models.bundled_model import get_extension_dir
+        ext_dir = get_extension_dir()
+        cm_file = Path(ext_dir or "") / "content_main.js"
+        if not cm_file.exists():
+            cm_file = Path(__file__).resolve().parent.parent / "extension" / "content_main.js"
+        if cm_file.exists():
+            content_main_code = cm_file.read_text(encoding="utf-8")
+    except Exception:
+        pass
+
     for p_name in profiles_input:
         try:
             p = await adapter._page(p_name)
@@ -1322,6 +1526,11 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     await adapter.sniffer.inject(p)
                 except Exception:
                     pass
+                if content_main_code:
+                    try:
+                        await p.evaluate(content_main_code)
+                    except Exception as e:
+                        log.warning("Inject content_main to %s: %s", p_name, e)
         except Exception as e:
             log.warning("find-and-match: Không mở được trang cho %s: %s", p_name, e)
 
@@ -1336,9 +1545,23 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         for p_name, p in pages.items():
             await _ensure_in_tldl_lobby(p, p_name)
 
-        first_name = list(pages.keys())[0]
+        # Ưu tiên tài khoản chính (Account 1 / Anchor) đứng đầu danh sách
+        acc1_candidates = [k for k in pages.keys() if "1" in k.lower() or "main" in k.lower() or "anchor" in k.lower()]
+        if acc1_candidates:
+            first_name = acc1_candidates[0]
+        else:
+            first_name = list(pages.keys())[0]
         first_page = pages[first_name]
         other_profiles = [name for name in pages.keys() if name != first_name]
+
+        # Làm sạch toàn bộ biến khóa cũ trên các Extension của toàn bộ tài khoản
+        ext_hub = getattr(request.app.state, "ext_hub", None)
+        if ext_hub:
+            try:
+                await ext_hub.broadcast_command("RESET_STATE", {})
+                log.info("find-and-match: Đã broadcast RESET_STATE làm sạch bộ nhớ cũ trên các extensions!")
+            except Exception as e:
+                log.warning("find-and-match broadcast RESET_STATE error: %s", e)
 
         log.info("find-and-match: Khởi động tìm kiếm bàn: Account 1 (%s) tìm bàn, %d nick phụ (%s) đợi ở sảnh (Cược $%s)", 
                  first_name, len(other_profiles), other_profiles, bet_val)
@@ -1381,17 +1604,23 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
             # Reset dữ liệu phòng cũ trên browser context để không đọc nhầm dữ liệu ván trước
             try:
-                await first_page.evaluate("() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; }")
+                await first_page.evaluate("() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; window.__game_in_progress = false; window.__is_matched_locked = false; window.__my_cards = []; }")
                 for other_p in [p for k, p in pages.items() if k != first_name]:
-                    await other_p.evaluate("() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; }")
+                    await other_p.evaluate("() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; window.__game_in_progress = false; window.__is_matched_locked = false; window.__my_cards = []; }")
             except Exception:
                 pass
 
-            # BƯỚC 1: DUY NHẤT ACCOUNT 1 TÌM BÀN CÔNG CỘNG MỚI TRỐNG (KHÔNG TẠO BÀN CÓ PASS)
+            # BƯỚC 1: DUY NHẤT ACCOUNT 1 TÌM BÀN CÔNG CỘNG MỚI TRỐNG (THEO MỨC CƯỢC CHÍNH XÁC)
             found_anchor = False
             anchor_rid = None
 
-            # Account 1 click trực tiếp vào ô bàn cược trong sảnh TLDL để tìm bàn công cộng của hệ thống
+            # 1. Gửi lệnh join trực tiếp qua Simms WebSocket để vào chính xác mức cược mong muốn
+            try:
+                await first_page.evaluate(f"() => {{ if (typeof window.__autotool_exec_join === 'function') window.__autotool_exec_join(null, {bet_val}, {target_mu}); }}")
+            except Exception:
+                pass
+
+            # 2. Click dự phòng trên canvas tại tọa độ ô cược
             w_p, h_p = await _get_screen_size(first_page)
             cx_p = int(w_p * rx)
             cy_p = int(h_p * ry)
@@ -1536,13 +1765,18 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 if ext_hub and ext_hub.is_connected(sub_name):
                     log.info("find-and-match: >>> V3 Extension Hub: Gửi lệnh JOIN bàn #%s tới %s (0ms)...", selected_rid, sub_name)
                     await ext_hub.send_command(sub_name, "JOIN_ROOM", {
-                        "rid": int(selected_rid), "bet": bet_val, "mu": target_mu
+                        "rid": int(selected_rid), 
+                        "bet": bet_val, 
+                        "mu": target_mu,
+                        "source_profile": anchor_name,
+                        "anchor_dn": anchor_dn,
+                        "anchor_u": anchor_u,
+                        "anchor_uid": anchor_uid,
                     })
-                else:
-                    try:
-                        await sub_p.evaluate(f"() => typeof window.__autotool_exec_join === 'function' && window.__autotool_exec_join({selected_rid}, {bet_val}, {target_mu})")
-                    except Exception:
-                        pass
+                try:
+                    await sub_p.evaluate(f"() => {{ if (typeof window.__autotool_exec_join === 'function') window.__autotool_exec_join({selected_rid}, {bet_val}, {target_mu}); }}")
+                except Exception:
+                    pass
 
                 # Chờ sub_p vào bàn (tối đa 4.5s)
                 sub_matched = False
@@ -1669,31 +1903,196 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             }
 
         # BƯỚC 6: TIẾN HÀNH SẴN SÀNG -> BẮT ĐẦU -> XẢ BÀI (HỢP NHẤT 1 LUỒNG EXTENSION V3 DUY NHẤT)
-        # 1. Các tài khoản phụ gửi [ SẴN SÀNG ]
-        for sub_name in other_profiles:
-            sub_p = pages[sub_name]
-            ext_hub = getattr(request.app.state, "ext_hub", None)
-            if ext_hub and ext_hub.is_connected(sub_name):
-                log.info("find-and-match: >>> V3 Extension Hub: Bắn lệnh SẴN SÀNG cho %s (0ms)...", sub_name)
-                await ext_hub.send_command(sub_name, "READY")
-            else:
-                try:
-                    await sub_p.evaluate("() => typeof window.__autotool_exec_ready === 'function' && window.__autotool_exec_ready()")
-                except Exception:
-                    pass
-            await asyncio.sleep(0.3)
+        async def _check_and_click_ready_or_start(p, is_anchor=False, name="Profile"):
+            """Kiểm tra và bấm nút [ SẴN SÀNG ] (cho nick phụ) hoặc [ BẮT ĐẦU ] (cho Anchor).
+            Hỗ trợ 4 cơ chế:
+            1. Cocos Scene & DOM Inspector trong JS: tìm btn_begin / Label SẴN SÀNG/BẮT ĐẦU và lấy tọa độ thực.
+            2. OpenCV Multi-Scale Template Matching nếu có nút trên màn hình.
+            3. Physical Mouse Click Playwright tại tọa độ phát hiện (hoặc center fallback).
+            4. Bắn song song WebSocket packet tương ứng.
+            """
+            btn_type = "BẮT ĐẦU" if is_anchor else "SẴN SÀNG"
+            sw, sh = await _get_screen_size(p)
+            default_x = int(sw * 0.500)
+            default_y = int(sh * 0.525)
 
-        # 2. Anchor (Chủ bàn) gửi lệnh [ BẮT ĐẦU ]
-        ext_hub = getattr(request.app.state, "ext_hub", None)
-        if ext_hub and ext_hub.is_connected(anchor_name):
-            log.info("find-and-match: >>> V3 Extension Hub: Bắn lệnh BẮT ĐẦU cho Anchor %s (0ms)...", anchor_name)
-            await ext_hub.send_command(anchor_name, "START")
-        else:
+            # 1. Quét qua JS Cocos Scene
+            js_res = {}
             try:
-                await anchor_page.evaluate("() => typeof window.__autotool_exec_start === 'function' && window.__autotool_exec_start()")
+                js_res = await p.evaluate("""() => {
+                    try {
+                        const canvas = document.querySelector("canvas");
+                        const rect = canvas ? canvas.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+                        let targetX = rect.left + rect.width * 0.500;
+                        let targetY = rect.top + rect.height * 0.525;
+                        let found = false;
+                        let btnName = "";
+                        let btnText = "";
+
+                        if (typeof cc !== "undefined" && cc.director) {
+                            const scene = cc.director.getScene();
+                            if (scene) {
+                                function searchNode(node, depth) {
+                                    if (!node || depth > 40 || found) return;
+                                    const comps = (typeof node.getComponents === "function") ? node.getComponents(cc.Component) : (node._components || []);
+                                    for (let i = 0; i < comps.length; i++) {
+                                        const c = comps[i];
+                                        if (!c) continue;
+
+                                        if (c.btn_begin && c.btn_begin.node && c.btn_begin.node.active) {
+                                            found = true;
+                                            btnName = "btn_begin";
+                                            if (typeof c.sendReady === "function") {
+                                                try { c.sendReady(); } catch (_) {}
+                                            }
+                                            if (typeof cc.Component !== "undefined" && cc.Component.EventHandler && c.btn_begin.clickEvents) {
+                                                try { cc.Component.EventHandler.emitEvents(c.btn_begin.clickEvents, c.btn_begin); } catch (_) {}
+                                            }
+                                            try { c.btn_begin.node.emit(cc.Node.EventType.TOUCH_END); } catch (_) {}
+
+                                            try {
+                                                if (typeof c.btn_begin.node.getBoundingBoxToWorld === "function" && cc.view) {
+                                                    const b = c.btn_begin.node.getBoundingBoxToWorld();
+                                                    const vs = cc.view.getVisibleSize();
+                                                    if (b && vs && vs.width > 0 && vs.height > 0) {
+                                                        targetX = rect.left + (b.x + b.width / 2) * (rect.width / vs.width);
+                                                        targetY = rect.top + (vs.height - (b.y + b.height / 2)) * (rect.height / vs.height);
+                                                    }
+                                                }
+                                            } catch (_) {}
+                                            return;
+                                        }
+
+                                        const labelStr = (c.string || c._string || (c.label && c.label.string) || "").toUpperCase();
+                                        if (labelStr.includes("SẴN SÀNG") || labelStr.includes("BẮT ĐẦU") || labelStr.includes("SAN SANG") || labelStr.includes("BAT DAU")) {
+                                            if (node.active) {
+                                                found = true;
+                                                btnText = labelStr;
+                                                btnName = node.name || "label_btn";
+                                                let parent = node;
+                                                while (parent && !parent.getComponent(cc.Button) && parent.parent) parent = parent.parent;
+                                                const btnComp = parent ? (parent.getComponent(cc.Button) || parent.getComponent("cc.Button")) : null;
+                                                if (btnComp && btnComp.clickEvents) {
+                                                    try { cc.Component.EventHandler.emitEvents(btnComp.clickEvents, btnComp); } catch (_) {}
+                                                }
+                                                try { (parent || node).emit(cc.Node.EventType.TOUCH_END); } catch (_) {}
+                                                return;
+                                            }
+                                        }
+                                    }
+                                    const children = node.children || [];
+                                    for (let j = 0; j < children.length; j++) {
+                                        searchNode(children[j], depth + 1);
+                                        if (found) return;
+                                    }
+                                }
+                                searchNode(scene, 0);
+                            }
+                        }
+
+                        // Tự động gọi helper chuyên dụng
+                        if (typeof window.__autotool_exec_ready === "function") {
+                            try { window.__autotool_exec_ready(); } catch (_) {}
+                        }
+                        if (typeof window.__autotool_exec_start === "function") {
+                            try { window.__autotool_exec_start(); } catch (_) {}
+                        }
+
+                        return {
+                            found: found,
+                            name: btnName,
+                            text: btnText,
+                            x: Math.round(targetX),
+                            y: Math.round(targetY)
+                        };
+                    } catch (e) {
+                        return { error: String(e) };
+                    }
+                }""")
             except Exception:
                 pass
-        await asyncio.sleep(1.5)  # Chờ chia bài
+
+            click_x = (js_res or {}).get("x") or default_x
+            click_y = (js_res or {}).get("y") or default_y
+            has_found = bool((js_res or {}).get("found"))
+
+            # 2. Template Matching qua OpenCV nếu chưa tìm thấy qua Cocos
+            if not has_found:
+                try:
+                    import cv2
+                    import numpy as np
+                    tmpl_file = os.path.join(ROOT, "data", "templates", "btn_ready.png")
+                    if os.path.exists(tmpl_file):
+                        tmpl_img = cv2.imread(tmpl_file)
+                        if tmpl_img is not None:
+                            shot_bytes = await p.screenshot()
+                            arr = np.frombuffer(shot_bytes, np.uint8)
+                            frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                            if frame is not None:
+                                h_t, w_t = tmpl_img.shape[:2]
+                                best_val = -1
+                                best_pt = None
+                                for sc in [0.5, 0.7, 0.85, 1.0, 1.15]:
+                                    rw, rh = int(w_t * sc), int(h_t * sc)
+                                    if rh < frame.shape[0] and rw < frame.shape[1]:
+                                        r_tmpl = cv2.resize(tmpl_img, (rw, rh))
+                                        res = cv2.matchTemplate(frame, r_tmpl, cv2.TM_CCOEFF_NORMED)
+                                        _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                                        if max_val > best_val:
+                                            best_val = max_val
+                                            best_pt = (max_loc[0] + rw // 2, max_loc[1] + rh // 2)
+                                if best_val >= 0.65 and best_pt:
+                                    click_x, click_y = best_pt
+                                    has_found = True
+                                    log.info("find-and-match: [%s] OpenCV phát hiện nút '%s' (độ tin cậy: %.2f) tại (%d, %d)", 
+                                             name, btn_type, best_val, click_x, click_y)
+                except Exception:
+                    pass
+
+            # 3. Click chuột vật lý Playwright
+            try:
+                await p.mouse.click(click_x, click_y)
+                log.info("find-and-match: [%s] >>> Đã CLICK chuột vật lý vào nút '%s' tại (%d, %d) <<<", 
+                         name, btn_type, click_x, click_y)
+            except Exception:
+                pass
+
+            return has_found
+
+        # Vòng lặp tuần tự kiểm tra & click Sẵn Sàng (Account 2) -> Bắt Đầu (Account 1)
+        # Chạy mỗi 400ms, tối đa 16 lần (~7-8s) cho đến khi chia bài
+        match_started = False
+        for tick in range(1, 17):
+            if _GOM_BAN_STOP:
+                break
+
+            # 1. Nick phụ: Kiểm tra và bấm SẴN SÀNG
+            for sub_name in other_profiles:
+                sub_p = pages[sub_name]
+                ext_hub = getattr(request.app.state, "ext_hub", None)
+                if ext_hub and ext_hub.is_connected(sub_name):
+                    await ext_hub.send_command(sub_name, "READY")
+                await _check_and_click_ready_or_start(sub_p, is_anchor=False, name=sub_name)
+
+            await asyncio.sleep(0.25)
+
+            # 2. Nick chính (Anchor): Kiểm tra và bấm BẮT ĐẦU
+            ext_hub = getattr(request.app.state, "ext_hub", None)
+            if ext_hub and ext_hub.is_connected(anchor_name):
+                await ext_hub.send_command(anchor_name, "START")
+            await _check_and_click_ready_or_start(anchor_page, is_anchor=True, name=anchor_name)
+
+            # 3. Kiểm tra xem ván bài đã chia bài chưa
+            try:
+                in_game = await anchor_page.evaluate("() => Boolean(window.__game_in_progress || (window.__my_cards && window.__my_cards.length > 0))")
+                if in_game:
+                    match_started = True
+                    log.info("find-and-match: >>> ĐÃ NHẬN TÍN HIỆU CHIA BÀI & BẮT ĐẦU VÁN THÀNH CÔNG (sau %d lượt kiểm tra)! <<<", tick)
+                    break
+            except Exception:
+                pass
+
+            await asyncio.sleep(0.35)
 
         # 3. HỢP NHẤT 1 LUỒNG DUY NHẤT: EXTENSION V3 TỰ ĐỘNG XẢ BÀI QUA WEBSOCKET (cmd 253 / cmd 254)
         # Không chạy song song CooperativeDiscardEngine click chuột mù quáng gây desync và kick khỏi server!

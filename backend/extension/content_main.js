@@ -234,6 +234,727 @@
     }
   }
 
+  // ===== #1 ADAPTIVE BACKOFF (TRÁNH RATE LIMIT THÔNG MINH) =====
+  class AdaptiveBackoff {
+    constructor(baseMs = 2200, maxMs = 8000) {
+      this.baseMs = baseMs;
+      this.maxMs = maxMs;
+      this.factor = 1.5;
+      this.current = this.baseMs;
+      this.successCount = 0;
+    }
+    onSuccess() {
+      this.successCount++;
+      if (this.successCount >= 3) {
+        this.current = Math.max(this.baseMs, Math.round(this.current * 0.8));
+        this.successCount = 0;
+      }
+    }
+    onFailure(isRateLimit = false) {
+      this.current = Math.min(this.maxMs, Math.round(this.current * (isRateLimit ? 2.5 : this.factor)));
+      this.successCount = 0;
+    }
+    next() {
+      return Math.round(this.current + Math.random() * 500);
+    }
+  }
+  G.__backoff = G.__backoff || new AdaptiveBackoff();
+
+  // ===== #7 GAUSSIAN TIMING (MÔ PHỎNG THAO TÁC NGƯỜI THẬT) =====
+  function humanDelay(minMs = 450, maxMs = 950) {
+    const u1 = Math.random() || 1e-10;
+    const u2 = Math.random();
+    const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    const mean = (minMs + maxMs) / 2;
+    const std = (maxMs - minMs) / 6; // 99.7% rơi vào khoảng [minMs, maxMs]
+    return Math.max(minMs, Math.min(maxMs, Math.round(mean + z * std)));
+  }
+
+
+  // ===== CÁC HÀM TIỆN ÍCH ĐỊNH DANH & BẮT BÀN ĐỒNG BỘ TOÀN CỤC (TOP-LEVEL SCOPE) =====
+  function cleanUid(s) {
+    return String(s || "").replace(/\D/g, "");
+  }
+
+  function collapseRepeats(s) {
+    if (!s) return "";
+    let r = "";
+    for (let i = 0; i < s.length; i++) {
+      if (i === 0 || s[i] !== s[i - 1]) r += s[i];
+    }
+    return r;
+  }
+
+  function isMe(x) {
+    if (!x) return false;
+    if (x.C === false || x.C === "false") return false;
+    if (x.C === true || x.C === "true") return true;
+
+    const targetUid = cleanUid(x.uid);
+    const myUid = cleanUid(G.__my_uid);
+    if (myUid && targetUid && targetUid === myUid) return true;
+
+    if (G.__my_dn) {
+      const d1 = String(x.dn || "").trim().toLowerCase();
+      const d2 = String(G.__my_dn).trim().toLowerCase();
+      if (d1 && d1 === d2) return true;
+    }
+    if (G.__my_u) {
+      const u1 = String(x.u || "").trim().toLowerCase();
+      const u2 = String(G.__my_u).trim().toLowerCase();
+      if (u1 && u1 === u2) return true;
+    }
+    return false;
+  }
+
+  function isPartner(x) {
+    if (!x || isMe(x)) return false;
+    const targetUid = x.uid !== undefined ? String(x.uid).trim() : "";
+    const cTargetUid = cleanUid(targetUid);
+    const targetDn = String(x.dn || "").trim().toLowerCase();
+    const targetU = String(x.u || "").trim().toLowerCase();
+    const targetClean = (targetDn || targetU).replace(/[^a-z0-9]/g, "");
+    const targetComp = collapseRepeats(targetClean);
+    const targetNum = (targetComp.match(/\d+$/) || [""])[0];
+    const targetBase = targetComp.replace(/\d+$/, "");
+
+    // TẦNG 0: KHỚP CẶP TÀI KHOẢN SONG HÀNH (1 <-> 2)
+    const meName = (G.__my_dn || G.__my_u || getProfileName() || "").toLowerCase();
+    const meClean = meName.replace(/[^a-z0-9]/g, "");
+    const meComp = collapseRepeats(meClean);
+    const meNum = (meComp.match(/\d+$/) || [""])[0];
+    const meBase = meComp.replace(/\d+$/, "");
+
+    if (meBase && targetBase && (meBase === targetBase || meBase.includes(targetBase) || targetBase.includes(meBase))) {
+      if (meNum && targetNum && meNum !== targetNum) {
+        console.log(`[AutoTool V3] isPartner -> KHỚP TÊN NHÂN VẬT IN-GAME (${meName} [${meNum}] <-> ${targetDn || targetU} [${targetNum}])!`);
+        return true;
+      }
+    }
+
+    // TẦNG 1: EXPECTED ANCHOR
+    if (G.__expected_anchor_uid && cTargetUid && cTargetUid === cleanUid(G.__expected_anchor_uid)) return true;
+    if (G.__expected_anchor_dn) {
+      const expDn = String(G.__expected_anchor_dn).trim().toLowerCase();
+      if (targetDn === expDn || targetU === expDn) return true;
+      const compExp = collapseRepeats(expDn.replace(/[^a-z0-9]/g, ""));
+      if (targetComp && compExp && (targetComp === compExp || targetComp.includes(compExp) || compExp.includes(targetComp))) return true;
+    }
+    if (G.__expected_anchor_u) {
+      const expU = String(G.__expected_anchor_u).trim().toLowerCase();
+      if (targetDn === expU || targetU === expU) return true;
+    }
+    if (G.__expected_anchor_profile) {
+      const expProf = String(G.__expected_anchor_profile).trim().toLowerCase();
+      if (targetDn === expProf || targetU === expProf) return true;
+      const compProf = collapseRepeats(expProf.replace(/[^a-z0-9]/g, ""));
+      if (targetComp && compProf && (targetComp === compProf || targetComp.includes(compProf) || compProf.includes(targetComp))) return true;
+    }
+
+    // TẦNG 2: ACTIVE ROOM INVITE CONTEXT
+    if (G.__active_room_invite && (Date.now() - G.__active_room_invite.ts) < 20000) {
+      const inv = G.__active_room_invite;
+      if (inv.source_profile) {
+        const compSrc = collapseRepeats(inv.source_profile.replace(/[^a-z0-9]/g, ""));
+        if (targetComp && compSrc && (targetComp === compSrc || targetComp.includes(compSrc) || compSrc.includes(targetComp))) return true;
+      }
+      if (inv.anchor_uid && cTargetUid && cTargetUid === cleanUid(inv.anchor_uid)) return true;
+    }
+
+    // TẦNG 3: PARTNERS LIST TỪ HUB & LOCAL
+    const partnerList = G.__autotool_partners || [];
+    for (const pt of partnerList) {
+      if (!pt) continue;
+      if (typeof pt === "object") {
+        if (pt.uid && cTargetUid && cleanUid(pt.uid) === cTargetUid) return true;
+        if (pt.dn && targetDn && String(pt.dn).trim().toLowerCase() === targetDn) return true;
+        if (pt.u && targetU && String(pt.u).trim().toLowerCase() === targetU) return true;
+        if (pt.profile_name) {
+          const pStr = String(pt.profile_name).trim().toLowerCase();
+          if (targetDn === pStr || targetU === pStr) return true;
+          const compP = collapseRepeats(pStr.replace(/[^a-z0-9]/g, ""));
+          if (targetComp && compP && (targetComp === compP || targetComp.includes(compP) || compP.includes(targetComp))) return true;
+        }
+      } else if (typeof pt === "string") {
+        const ptStr = pt.trim().toLowerCase();
+        if (!ptStr) continue;
+        if (targetDn === ptStr || targetU === ptStr) return true;
+        if (cTargetUid && cleanUid(ptStr) && cTargetUid === cleanUid(ptStr)) return true;
+        const cPt = ptStr.replace(/[^a-z0-9]/g, "");
+        if (targetClean && cPt && targetClean === cPt) return true;
+        const compPt = collapseRepeats(cPt);
+        if (targetComp && compPt && (targetComp === compPt || targetComp.includes(compPt) || compPt.includes(targetComp))) return true;
+        const numPt = (compPt.match(/\d+$/) || [""])[0];
+        if (targetNum && numPt && targetNum === numPt) {
+          const basePt = compPt.replace(/\d+$/, "");
+          if (targetBase && basePt && (targetBase.includes(basePt) || basePt.includes(targetBase))) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Helper quét và kích hoạt Sẵn Sàng / Bắt Đầu: Cocos Native + Event + Canvas Pointer Click
+  function execCocosReadyOrStart() {
+    let executed = false;
+    // 1. Quét scene Cocos Creator
+    try {
+      if (typeof cc !== "undefined" && cc.director) {
+        const scene = cc.director.getScene();
+        if (scene) {
+          function walk(node, depth) {
+            if (!node || depth > 50 || executed) return;
+            const comps = (typeof node.getComponents === "function") ? node.getComponents(cc.Component) : (node._components || []);
+            for (let i = 0; i < comps.length; i++) {
+              const c = comps[i];
+              if (!c) continue;
+              if (typeof c.sendReady === "function") {
+                try {
+                  console.log("[AutoTool V3] >>> Cocos: Gọi native component.sendReady()! <<<");
+                  c.sendReady();
+                  executed = true;
+                  if (c.btn_begin && c.btn_begin.node) {
+                    c.btn_begin.node.active = false;
+                  }
+                  return;
+                } catch (err) {
+                  console.warn("[AutoTool V3] Lỗi c.sendReady():", err);
+                }
+              }
+              if (c.btn_begin && c.btn_begin.node && c.btn_begin.node.active) {
+                try {
+                  console.log("[AutoTool V3] >>> Cocos: Kích hoạt clickEvents trên btn_begin! <<<");
+                  if (typeof cc.Component !== "undefined" && cc.Component.EventHandler && c.btn_begin.clickEvents) {
+                    cc.Component.EventHandler.emitEvents(c.btn_begin.clickEvents, c.btn_begin);
+                    executed = true;
+                    return;
+                  }
+                } catch (_) {}
+                try {
+                  if (typeof cc.Node !== "undefined" && cc.Node.EventType) {
+                    c.btn_begin.node.emit(cc.Node.EventType.TOUCH_END);
+                    executed = true;
+                    return;
+                  }
+                } catch (_) {}
+              }
+
+              // 3. Quét nhãn text SẴN SÀNG hoặc BẮT ĐẦU trên mọi node / button đang active
+              const labelStr = (c.string || c._string || (c.label && c.label.string) || "").toUpperCase();
+              if (labelStr.includes("SẴN SÀNG") || labelStr.includes("BẮT ĐẦU") || labelStr.includes("SAN SANG") || labelStr.includes("BAT DAU")) {
+                if (node.active) {
+                  console.log(`[AutoTool V3] >>> Cocos: Phát hiện nhãn '${labelStr}' trên node '${node.name}' -> Kích hoạt click! <<<`);
+                  let parent = node;
+                  while (parent && !(parent.getComponent && parent.getComponent("cc.Button")) && parent.parent) parent = parent.parent;
+                  const btnComp = parent && parent.getComponent ? (parent.getComponent("cc.Button") || (typeof cc.Button !== "undefined" && parent.getComponent(cc.Button))) : null;
+                  if (btnComp && btnComp.clickEvents && typeof cc.Component !== "undefined" && cc.Component.EventHandler) {
+                    try { cc.Component.EventHandler.emitEvents(btnComp.clickEvents, btnComp); } catch (_) {}
+                  }
+                  try { if (typeof cc.Node !== "undefined" && cc.Node.EventType) (parent || node).emit(cc.Node.EventType.TOUCH_END); } catch (_) {}
+                  executed = true;
+                  return;
+                }
+              }
+            }
+            const children = node.children || [];
+            for (let j = 0; j < children.length; j++) {
+              walk(children[j], depth + 1);
+              if (executed) return;
+            }
+          }
+          walk(scene, 0);
+        }
+      }
+    } catch (e) {
+      console.warn("[AutoTool V3] Lỗi Cocos walk:", e);
+    }
+
+    // 2. Click vật lý DOM / Pointer / Mouse trực tiếp lên <canvas> tại tọa độ nút [ SẴN SÀNG ] / [ BẮT ĐẦU ] (50% X, 52.5% Y)
+    try {
+      const canvas = document.querySelector("canvas");
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const clickX = rect.left + rect.width * 0.500;
+        const clickY = rect.top + rect.height * 0.525;
+        const opts = {
+          bubbles: true,
+          cancelable: true,
+          clientX: clickX,
+          clientY: clickY,
+          view: window
+        };
+        canvas.dispatchEvent(new PointerEvent("pointerdown", opts));
+        canvas.dispatchEvent(new MouseEvent("mousedown", opts));
+        canvas.dispatchEvent(new PointerEvent("pointerup", opts));
+        canvas.dispatchEvent(new MouseEvent("mouseup", opts));
+        canvas.dispatchEvent(new MouseEvent("click", opts));
+        console.log(`[AutoTool V3] >>> Đã dispatch Canvas Click vào [ SẴN SÀNG ] tại (${Math.round(clickX)}, ${Math.round(clickY)})! <<<`);
+      }
+    } catch (err) {
+      console.warn("[AutoTool V3] Lỗi Canvas click:", err);
+    }
+
+    return executed;
+  }
+
+  // ===== CÁC HÀM TIỆN ÍCH ĐIỀU HƯỚNG SẢNH COCOS NATIVE (0MS, TRỰC TIẾP ENGINE) =====
+  function getCocosNodeText(node) {
+    if (!node) return "";
+    try {
+      const comps = (typeof node.getComponents === "function") ? node.getComponents(cc.Component) : (node._components || []);
+      for (let i = 0; i < comps.length; i++) {
+        const c = comps[i];
+        if (!c) continue;
+        const str = c.string || c._string || (c.label && c.label.string) || (c.richText && c.richText.string);
+        if (typeof str === "string" && str.trim()) return str.trim();
+      }
+    } catch (_) {}
+    return "";
+  }
+
+  function clickCocosNode(node) {
+    if (!node) return false;
+    let clicked = false;
+    try {
+      let parent = node;
+      while (parent && !(parent.getComponent && (parent.getComponent("cc.Button") || (typeof cc.Button !== "undefined" && parent.getComponent(cc.Button)))) && parent.parent) {
+        parent = parent.parent;
+      }
+      const btnNode = parent || node;
+      const btnComp = btnNode.getComponent ? (btnNode.getComponent("cc.Button") || (typeof cc.Button !== "undefined" && btnNode.getComponent(cc.Button))) : null;
+      if (btnComp && btnComp.clickEvents && typeof cc.Component !== "undefined" && cc.Component.EventHandler) {
+        cc.Component.EventHandler.emitEvents(btnComp.clickEvents, btnComp);
+        clicked = true;
+      }
+      if (typeof cc.Node !== "undefined" && cc.Node.EventType) {
+        btnNode.emit(cc.Node.EventType.TOUCH_END);
+        clicked = true;
+      }
+    } catch (_) {}
+    return clicked;
+  }
+
+  function dispatchCanvasClick(normX, normY) {
+    try {
+      const canvas = document.querySelector("canvas");
+      if (!canvas) return false;
+      const rect = canvas.getBoundingClientRect();
+      const clickX = rect.left + rect.width * normX;
+      const clickY = rect.top + rect.height * normY;
+      const opts = {
+        bubbles: true,
+        cancelable: true,
+        clientX: clickX,
+        clientY: clickY,
+        view: window
+      };
+      canvas.dispatchEvent(new PointerEvent("pointerdown", opts));
+      canvas.dispatchEvent(new MouseEvent("mousedown", opts));
+      canvas.dispatchEvent(new PointerEvent("pointerup", opts));
+      canvas.dispatchEvent(new MouseEvent("mouseup", opts));
+      canvas.dispatchEvent(new MouseEvent("click", opts));
+      console.log(`[AutoTool V3] dispatchCanvasClick tại (${Math.round(clickX)}, ${Math.round(clickY)}) [${normX.toFixed(3)}, ${normY.toFixed(3)}]`);
+      return true;
+    } catch (err) {
+      console.warn("[AutoTool V3] Lỗi dispatchCanvasClick:", err);
+      return false;
+    }
+  }
+
+  // Phát hiện màn hình đăng nhập của Hitclub Cocos (chính xác theo scene native, không quét text bừa bãi)
+  function isOnLoginScreen() {
+    try {
+      if (typeof cc !== "undefined" && cc.director) {
+        const scene = cc.director.getScene();
+        if (scene && scene.name) {
+          const sName = String(scene.name).toLowerCase();
+          // Nếu đang ở Lobby hoặc Game thì chắc chắn 100% không phải màn hình login
+          if (sName.includes("lobby") || sName.includes("game") || sName.includes("tlmn") || sName.includes("tldl")) {
+            return false;
+          }
+          if (sName === "login" || sName.startsWith("login")) {
+            return true;
+          }
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function dismissPopupsAndBanners() {
+    let closedCount = 0;
+    try {
+      // Quét Cocos scene tìm và đóng popup/quảng cáo thực sự (có nút Close/X rõ ràng)
+      if (typeof cc !== "undefined" && cc.director) {
+        const scene = cc.director.getScene();
+        if (scene) {
+          function scanPopups(node, depth) {
+            if (!node || depth > 30) return;
+            const name = (node.name || "").toLowerCase();
+            const text = getCocosNodeText(node).toUpperCase();
+
+            // Nhận diện nút đóng popup / quảng cáo / x
+            // QUAN TRỌNG: Loại trừ btn_back (nút thoát game) tránh click nhầm!
+            const isCloseBtn = /^(btn_close|btnclose|btn_dong|btndong|btn_x|btnx|closebtn|button_close|btn_exit|btnexit|btn_cancel)$/i.test(name) ||
+                               name.includes("close") || name.includes("dong") || name === "x" ||
+                               text === "ĐÓNG" || text === "BỎ QUA" || text === "CLOSE" || text === "X";
+
+            if (isCloseBtn && node.active && (node.opacity === undefined || node.opacity > 0)) {
+              // Chặn tuyệt đối: không được click nút THOÁT hoặc BACK vì sẽ thoát game
+              if (!name.includes("back") && !name.includes("leave") && !name.includes("thoat") &&
+                  text !== "THOÁT" && text !== "THOÁT HẾT") {
+                if (clickCocosNode(node)) {
+                  closedCount++;
+                  console.log(`[AutoTool V3] Đã đóng popup Cocos: name='${node.name}', text='${text}'`);
+                }
+              }
+            }
+
+            const children = node.children || [];
+            for (let i = 0; i < children.length; i++) {
+              scanPopups(children[i], depth + 1);
+            }
+          }
+          scanPopups(scene, 0);
+        }
+      }
+
+      // Chỉ đóng khi thực sự phát hiện node nút đóng của popup trong Cocos
+      // TUYỆT ĐỐI KHÔNG click mù tọa độ (0.867, 0.218) nếu không có popup (tránh click nhầm vào Banner / Game Tài Xỉu)
+
+      const domCloseBtns = document.querySelectorAll(".btn-close, .close, [aria-label='Close'], .popup-close, .modal-close");
+      domCloseBtns.forEach((btn) => {
+        try {
+          btn.click();
+          closedCount++;
+        } catch (_) {}
+      });
+    } catch (e) {
+      console.warn("[AutoTool V3] Lỗi dismissPopupsAndBanners:", e);
+    }
+    return closedCount;
+  }
+
+  function clickCocosTabGameBai() {
+    let clicked = false;
+    try {
+      if (typeof cc !== "undefined" && cc.director) {
+        const scene = cc.director.getScene();
+        if (scene) {
+          function scan(node, depth) {
+            if (!node || depth > 30 || clicked) return;
+            const name = (node.name || "").toLowerCase();
+            const text = getCocosNodeText(node).toUpperCase();
+
+            if ((text === "GAME BÀI" || name === "gamebai" || name === "game_bai" || name === "cardgame" || name === "tab_gamebai") && node.active) {
+              clicked = clickCocosNode(node);
+              if (clicked) {
+                console.log(`[AutoTool V3] Đã click Cocos tab GAME BÀI: node='${node.name}', text='${text}'`);
+                return;
+              }
+            }
+
+            const children = node.children || [];
+            for (let i = 0; i < children.length; i++) {
+              scan(children[i], depth + 1);
+              if (clicked) return;
+            }
+          }
+          scan(scene, 0);
+        }
+      }
+    } catch (e) {
+      console.warn("[AutoTool V3] Lỗi clickCocosTabGameBai:", e);
+    }
+    return clicked;
+  }
+
+  function clickCocosGameTLDL() {
+    let clicked = false;
+    try {
+      if (typeof cc !== "undefined" && cc.director) {
+        const scene = cc.director.getScene();
+        if (scene) {
+          function scan(node, depth) {
+            if (!node || depth > 30 || clicked) return;
+            const name = (node.name || "").toLowerCase();
+            const text = getCocosNodeText(node).toUpperCase();
+
+            const isTLDL = text.includes("ĐẾM LÁ") || text.includes("TIẾN LÊN") ||
+                           name.includes("demla") || name.includes("dem_la") ||
+                           name.includes("simms") || name.includes("tldl");
+
+            if (isTLDL && !text.includes("MIỀN NAM") && node.active) {
+              clicked = clickCocosNode(node);
+              if (clicked) {
+                console.log(`[AutoTool V3] Đã click Cocos game TIẾN LÊN ĐẾM LÁ: node='${node.name}', text='${text}'`);
+                return;
+              }
+            }
+
+            const children = node.children || [];
+            for (let i = 0; i < children.length; i++) {
+              scan(children[i], depth + 1);
+              if (clicked) return;
+            }
+          }
+          scan(scene, 0);
+        }
+      }
+    } catch (e) {
+      console.warn("[AutoTool V3] Lỗi clickCocosGameTLDL:", e);
+    }
+    return clicked;
+  }
+
+  function clickCocosSoloTab(targetMu = 2) {
+    let clicked = false;
+    try {
+      if (typeof cc !== "undefined" && cc.director) {
+        const scene = cc.director.getScene();
+        if (scene) {
+          function scan(node, depth) {
+            if (!node || depth > 30 || clicked) return;
+            const name = (node.name || "").toLowerCase();
+            const text = getCocosNodeText(node).toUpperCase();
+
+            if (targetMu === 2) {
+              if ((text === "SOLO" || text === "2 NGƯỜI" || name.includes("solo") || name.includes("mu2")) && node.active) {
+                clicked = clickCocosNode(node);
+                if (clicked) {
+                  console.log(`[AutoTool V3] Đã click tab SOLO (2 người): node='${node.name}'`);
+                  return;
+                }
+              }
+            } else {
+              if ((text === "4 NGƯỜI" || name.includes("4nguoi") || name.includes("mu4")) && node.active) {
+                clicked = clickCocosNode(node);
+                if (clicked) {
+                  console.log(`[AutoTool V3] Đã click tab 4 NGƯỜI: node='${node.name}'`);
+                  return;
+                }
+              }
+            }
+
+            const children = node.children || [];
+            for (let i = 0; i < children.length; i++) {
+              scan(children[i], depth + 1);
+              if (clicked) return;
+            }
+          }
+          scan(scene, 0);
+        }
+      }
+    } catch (e) {
+      console.warn("[AutoTool V3] Lỗi clickCocosSoloTab:", e);
+    }
+    if (!clicked) {
+      const tabX = targetMu === 2 ? 0.500 : 0.690;
+      dispatchCanvasClick(tabX, 0.175);
+    }
+    return clicked;
+  }
+
+  function isAlreadyInTLDLLobby() {
+    try {
+      const inTable = (G.__last_room_info && G.__last_room_info.rid > 0 && G.__last_room_info.rid !== 100) &&
+                      ((G.__room_players && G.__room_players.length > 0) || G.__game_in_progress);
+      if (inTable) return false;
+
+      const simms = typeof G.__ws_get_simms === "function" ? G.__ws_get_simms() : null;
+      const hasSimmsWs = !!(simms && simms.readyState === 1);
+
+      let hasTLDLScene = false;
+      let hasMainLobbyButtons = false;
+
+      if (typeof cc !== "undefined" && cc.director) {
+        const scene = cc.director.getScene();
+        if (scene) {
+          function scanLobby(node, depth) {
+            if (!node || depth > 25 || (hasTLDLScene && hasMainLobbyButtons)) return;
+            const name = (node.name || "").toLowerCase();
+            const text = getCocosNodeText(node).toUpperCase();
+
+            if (text === "GAME BÀI" || text === "SLOTS" || text === "MINI GAME" || text === "QUAY SỐ") {
+              hasMainLobbyButtons = true;
+            }
+
+            if (name.includes("demla") || name.includes("simms") || name.includes("tldl") ||
+                name.includes("roomselect") || name.includes("room_select") ||
+                text === "SOLO" || text === "4 NGƯỜI" || text.includes("ĐẾM LÁ BÀN") ||
+                name === "btn_solo" || name === "btn_4nguoi") {
+              hasTLDLScene = true;
+            }
+
+            const children = node.children || [];
+            for (let i = 0; i < children.length; i++) {
+              scanLobby(children[i], depth + 1);
+            }
+          }
+          scanLobby(scene, 0);
+        }
+      }
+
+      if (hasTLDLScene && !hasMainLobbyButtons) return true;
+      if (hasSimmsWs && hasTLDLScene) return true;
+      if (hasSimmsWs && !hasMainLobbyButtons) return true;
+
+      return false;
+    } catch (e) {
+      console.warn("[AutoTool V3] Lỗi isAlreadyInTLDLLobby:", e);
+      return false;
+    }
+  }
+
+  async function autoEnterTLDLLobby(targetMu = 2) {
+    console.log("[AutoTool V3] >>> BẮT ĐẦU QUY TRÌNH AUTO ENTER TLDL LOBBY <<<");
+    if (isAlreadyInTLDLLobby()) {
+      console.log("[AutoTool V3] Đã ở sẵn sảnh Tiến Lên Đếm Lá!");
+      return { ok: true, already: true };
+    }
+
+    // 0. Kiểm tra nếu đang ở màn hình đăng nhập / đăng xuất
+    if (typeof isOnLoginScreen === "function" && isOnLoginScreen()) {
+      console.warn("[AutoTool V3] ⚠️ Đang ở màn hình đăng nhập! Không thể vào sảnh TLDL.");
+      return { ok: false, error: "Tài khoản chưa đăng nhập / bị đăng xuất" };
+    }
+
+    // 1. Đóng Popup / Banner / Ads nếu có
+    dismissPopupsAndBanners();
+    await new Promise((r) => setTimeout(r, humanDelay(350, 550)));
+
+    // 2. Click tab GAME BÀI (Ưu tiên Cocos Native an toàn 100%, chống nhầm sang Tài Xỉu)
+    let clickedGb = clickCocosTabGameBai();
+    if (!clickedGb) {
+      // Chỉ click fallback nếu Cocos không tìm thấy node
+      dispatchCanvasClick(0.427, 0.250);
+      await new Promise((r) => setTimeout(r, 200));
+      clickCocosTabGameBai();
+    }
+    await new Promise((r) => setTimeout(r, humanDelay(600, 900)));
+
+    // 3. Đóng popup phát sinh (nếu có)
+    dismissPopupsAndBanners();
+    await new Promise((r) => setTimeout(r, humanDelay(250, 400)));
+
+    // 4. Click game TIẾN LÊN ĐẾM LÁ (Ưu tiên Cocos Native)
+    let clickedTldl = clickCocosGameTLDL();
+    if (!clickedTldl) {
+      dispatchCanvasClick(0.320, 0.400);
+      await new Promise((r) => setTimeout(r, 200));
+      clickCocosGameTLDL();
+    }
+    await new Promise((r) => setTimeout(r, humanDelay(1500, 2000)));
+
+    // 5. Đóng popup nếu có
+    dismissPopupsAndBanners();
+
+    // 6. Click Solo Tab
+    clickCocosSoloTab(targetMu);
+    await new Promise((r) => setTimeout(r, humanDelay(300, 500)));
+
+    const inLobby = isAlreadyInTLDLLobby();
+    console.log(`[AutoTool V3] Hoàn thành quy trình autoEnterTLDLLobby -> Kết quả inLobby: ${inLobby}`);
+    return { ok: inLobby, step: "done" };
+  }
+
+  G.__autotool_is_in_tldl_lobby = isAlreadyInTLDLLobby;
+  G.__autotool_auto_enter_tldl = autoEnterTLDLLobby;
+  G.__autotool_dismiss_popups = dismissPopupsAndBanners;
+  G.__autotool_is_on_login_screen = isOnLoginScreen;
+  G.__autotool_check_logged_out = checkAndHandleLoggedOut;
+
+  // Hàm điều phối xác minh sẵn sàng & bắt đầu ván (Two-way Handshake & Retry Start Pulse)
+  function triggerVerifiedMatchReadyAndStart(partnerName, sourceReason) {
+    const seatedPlayers = G.__room_players || [];
+    if (seatedPlayers.length < 2) {
+      console.warn(`[AutoTool V3] ⚠️ TỪ CHỐI SẴN SÀNG: Bàn chỉ có ${seatedPlayers.length} người, không thể khớp khi ngồi một mình! [${sourceReason || ''}]`);
+      return;
+    }
+    const partnerSeated = seatedPlayers.find(isPartner);
+    if (!partnerSeated) {
+      console.warn(`[AutoTool V3] ⚠️ TỪ CHỐI SẴN SÀNG: triggerVerifiedMatchReadyAndStart được gọi [${sourceReason || ''}] nhưng KHÔNG THẤY đồng đội ngồi trong bàn!`);
+      return;
+    }
+
+    // Làm sạch tên đồng đội: tuyệt đối không dùng giá trị "None", "null", "undefined"
+    let cleanPartner = "";
+    if (partnerName && !["none", "null", "undefined", ""].includes(String(partnerName).trim().toLowerCase())) {
+      cleanPartner = String(partnerName).trim();
+    } else if (partnerSeated && (partnerSeated.dn || partnerSeated.u)) {
+      cleanPartner = String(partnerSeated.dn || partnerSeated.u).trim();
+    } else if (G.__last_room_info && G.__last_room_info.partner_name) {
+      cleanPartner = String(G.__last_room_info.partner_name).trim();
+    } else {
+      cleanPartner = "Đồng đội";
+    }
+
+    console.log(`[AutoTool V3] 🟢 >>> XÁC MINH KHỚP BÀN THÀNH CÔNG: ${cleanPartner} [${sourceReason || 'OK'}]! <<<`);
+    if (G.__backoff) G.__backoff.onSuccess();
+
+    G.__is_matched_locked = true;
+    G.__AUTOTOOL_AUTO_HUNT = false;
+    if (G.__hunt_wait_timer) {
+      clearTimeout(G.__hunt_wait_timer);
+      G.__hunt_wait_timer = null;
+    }
+    if (G.__hunt_retry_timer) {
+      clearTimeout(G.__hunt_retry_timer);
+      G.__hunt_retry_timer = null;
+    }
+    if (G.__last_room_info) {
+      G.__last_room_info.partner_found = true;
+      G.__last_room_info.partner_name = cleanPartner;
+    }
+
+    window.postMessage({
+      type: "AUTOTOOL_MATCH_SUCCESS",
+      profile_name: getProfileName(),
+      partner_name: cleanPartner,
+      verified: true,
+      rid: (G.__last_room_info && G.__last_room_info.rid) || 2,
+    }, "*");
+
+    setTimeout(() => {
+      console.log("[AutoTool V3] Tự động gửi lệnh SẴN SÀNG / BẮT ĐẦU (cmd 5)...");
+      G.__autotool_exec_ready();
+    }, 150);
+
+    setTimeout(() => {
+      if (!G.__game_in_progress && (!G.__my_cards || G.__my_cards.length === 0)) {
+        console.log("[AutoTool V3] Tự động gửi nhắc SẴN SÀNG lần 2 (cmd 5)...");
+        G.__autotool_exec_ready();
+      }
+    }, 450);
+
+    if (G.__start_retry_timer) {
+      clearInterval(G.__start_retry_timer);
+      G.__start_retry_timer = null;
+    }
+    let attempts = 0;
+    G.__start_retry_timer = setInterval(() => {
+      if (G.__game_in_progress || (G.__my_cards && G.__my_cards.length > 0) || !G.__is_matched_locked) {
+        clearInterval(G.__start_retry_timer);
+        G.__start_retry_timer = null;
+        return;
+      }
+      attempts++;
+      if (attempts > 6) {
+        clearInterval(G.__start_retry_timer);
+        G.__start_retry_timer = null;
+        return;
+      }
+      console.log(`[AutoTool V3] [Retry Start #${attempts}] Gửi lại SẴN SÀNG / BẮT ĐẦU (cmd 5)...`);
+      G.__autotool_exec_ready();
+    }, 600);
+  }
+
+  G.__clean_uid = cleanUid;
+  G.__is_me = isMe;
+  G.__is_partner = isPartner;
+  G.__exec_cocos_ready_or_start = execCocosReadyOrStart;
+  G.__trigger_verified_match_ready_and_start = triggerVerifiedMatchReadyAndStart;
+
   function handleAutoTurn() {
     if (G.__auto_turn_timer) {
       clearTimeout(G.__auto_turn_timer);
@@ -242,8 +963,8 @@
     if (!G.__AUTOTOOL_AUTO_DISCARD) return;
     if (!G.__my_cards || !G.__my_cards.length) return;
 
-    // Giãn cách an toàn 500ms - 850ms để mô phỏng tự nhiên và chống phát hiện bot
-    const delay = 500 + Math.floor(Math.random() * 350);
+    // GAUSSIAN TIMING (#7): Phân phối chuẩn Gaussian 450ms - 950ms mô phỏng người thật
+    const delay = humanDelay(450, 950);
     G.__auto_turn_timer = setTimeout(() => {
       if (!G.__my_cards || !G.__my_cards.length) return;
       const role = getMyRole();
@@ -289,6 +1010,14 @@
     }
   }, 100);
 
+  // Thông báo nhận diện Profile lên isolated context
+  setTimeout(() => {
+    const pName = getProfileName();
+    if (pName) {
+      window.postMessage({ type: "AUTOTOOL_INIT_PROFILE", profile_name: pName }, "*");
+    }
+  }, 100);
+
   const push = (dir, data) => {
     try {
       let text = "";
@@ -300,6 +1029,12 @@
 
       G.__ws_capture.push({ ts: Date.now(), dir, text: String(text).slice(0, 4000) });
       if (G.__ws_capture.length > 2000) G.__ws_capture.splice(0, 1000);
+
+      // ADAPTIVE BACKOFF (#1): Phát hiện cảnh báo Rate-Limit từ game ("quá nhanh", "thao tác")
+      if (dir === "recv" && typeof text === "string" && (text.includes("quá nhanh") || text.includes("thao tác"))) {
+        console.warn("[AutoTool V3] [Adaptive Backoff #1] Phát hiện server cảnh báo Rate-Limit -> Tăng mạnh delay backoff!");
+        if (G.__backoff) G.__backoff.onFailure(true);
+      }
 
       // Bắt lệnh gửi từ client (send) để lưu trước rid người chơi chủ động bấm vào
       if (dir === "send") {
@@ -337,23 +1072,36 @@
                 window.__my_uid = G.__my_uid;
               }
               if (p.dn || p.u) {
-                const realUser = p.dn || p.u;
-                G.__my_dn = realUser;
-                G.__my_u = p.u || realUser;
+                const realDn = p.dn || "";
+                const realU  = p.u  || "";
+                G.__my_dn = realDn;
+                G.__my_u  = realU;
                 window.__my_dn = G.__my_dn;
-                window.__my_u = G.__my_u;
+                window.__my_u  = G.__my_u;
                 window.__user_info = { uid: G.__my_uid, dn: G.__my_dn, u: G.__my_u };
-                if (!G.__AUTOTOOL_PROFILE_NAME || G.__AUTOTOOL_PROFILE_NAME.includes("HitClub")) {
-                  G.__AUTOTOOL_PROFILE_NAME = realUser;
-                }
+                // TUYỆT ĐỐI KHÔNG ghi đè localStorage KEY_USER_NAME vì đây là key tên đăng nhập của game HitClub!
+                // Ghi đè sai sẽ làm session token bị lệch và game tự động kick/đăng xuất!
+                try {
+                  localStorage.setItem("AUTOTOOL_IN_GAME_DN", realDn);
+                  if (realU) localStorage.setItem("AUTOTOOL_IN_GAME_U", realU);
+                } catch (_) {}
                 // LUÔN LUÔN thông báo thông tin định danh in-game (dn, u, uid) lên Extension Hub để đồng bộ đối tác
                 window.postMessage({
                   type: "AUTOTOOL_INIT_PROFILE",
                   profile_name: getProfileName(),
-                  dn: realUser,
-                  u: G.__my_u,
+                  dn: realDn,
+                  u: realU,
                   uid: G.__my_uid,
                   user_info: window.__user_info,
+                }, "*");
+                // ĐỒNG BỘ TÊN IN-GAME THỰC TẾ VỀ APP (Tránh lệch ký tự do người dùng nhập sai)
+                // Ưu tiên: dn (display name) > u (username) — đây là tên chính xác 100% từ server game
+                window.postMessage({
+                  type: "AUTOTOOL_USERNAME_SYNC",
+                  profile_name: getProfileName(),
+                  real_dn: realUser,        // Tên hiển thị in-game (nicktestxxabai1)
+                  real_u: G.__my_u,         // Username in-game (có thể khác display name)
+                  real_uid: G.__my_uid,     // UID số (định danh tuyệt đối)
                 }, "*");
               }
               const gold = (p.As && p.As.gold !== undefined) ? p.As.gold : (p.gold !== undefined ? p.gold : (p.m !== undefined ? p.m : (p.g !== undefined ? p.g : null)));
@@ -376,148 +1124,7 @@
               }
             }
 
-            // Hàm kiểm tra người chơi là chính mình
-            function isMe(x) {
-              if (!x) return false;
-              if (x.C === true || x.C === "true" || x.cs !== undefined) return true; // C: cờ native của Cocos cho tab local
-              if (G.__my_uid && x.uid && String(x.uid) === String(G.__my_uid)) return true;
-              if (G.__my_dn) {
-                const d1 = String(x.dn || "").trim().toLowerCase();
-                const d2 = String(G.__my_dn).trim().toLowerCase();
-                if (d1 && d1 === d2) return true;
-              }
-              if (G.__my_u) {
-                const u1 = String(x.u || "").trim().toLowerCase();
-                const u2 = String(G.__my_u).trim().toLowerCase();
-                if (u1 && u1 === u2) return true;
-              }
-              const pName = (getProfileName() || "").trim().toLowerCase();
-              if (pName) {
-                const dn = String(x.dn || "").trim().toLowerCase();
-                const u = String(x.u || "").trim().toLowerCase();
-                if (dn === pName || u === pName) return true;
-              }
-              return false;
-            }
-
-            // Hàm kiểm tra người chơi là đồng đội (so khớp chính xác 100%, loại bỏ hoàn toàn nhận diện nhầm theo đuôi 1, 2)
-            function isPartner(x) {
-              if (!x || isMe(x)) return false;
-              const targetUid = x.uid !== undefined ? String(x.uid).trim() : "";
-              const targetDn = String(x.dn || "").trim().toLowerCase();
-              const targetU = String(x.u || "").trim().toLowerCase();
-
-              const partnerList = G.__autotool_partners || [];
-              for (const pt of partnerList) {
-                if (!pt) continue;
-                if (typeof pt === "object") {
-                  if (pt.uid && targetUid && String(pt.uid).trim() === targetUid) return true;
-                  if (pt.dn && targetDn && String(pt.dn).trim().toLowerCase() === targetDn) return true;
-                  if (pt.u && targetU && String(pt.u).trim().toLowerCase() === targetU) return true;
-                  if (pt.profile_name) {
-                    const pStr = String(pt.profile_name).trim().toLowerCase();
-                    if (targetDn === pStr || targetU === pStr) return true;
-                  }
-                } else if (typeof pt === "string") {
-                  const ptStr = pt.trim().toLowerCase();
-                  if (!ptStr) continue;
-                  if (targetDn === ptStr || targetU === ptStr) return true;
-                  const cTarget = targetDn.replace(/[^a-z0-9]/g, "");
-                  const cPt = ptStr.replace(/[^a-z0-9]/g, "");
-                  if (cTarget && cPt && cTarget === cPt) return true;
-
-                  // 1. So khớp sau khi nén ký tự lặp (ví dụ nicktestxxabai2 vs nicktestxabai2)
-                  const compTarget = cTarget.replace(/(.)\1+/g, "$1");
-                  const compPt = cPt.replace(/(.)\1+/g, "$1");
-                  if (compTarget && compPt && compTarget === compPt) return true;
-
-                  // 2. So khớp theo số đuôi và tiền tố tương đồng (cùng nhóm tài khoản)
-                  const numTarget = (targetDn.match(/\d+$/) || targetU.match(/\d+$/) || [""])[0];
-                  const numPt = (ptStr.match(/\d+$/) || [""])[0];
-                  if (numTarget && numPt && numTarget === numPt) {
-                    const baseTarget = compTarget.replace(/\d+$/, "");
-                    const basePt = compPt.replace(/\d+$/, "");
-                    if (baseTarget && basePt && (baseTarget.includes(basePt) || basePt.includes(baseTarget))) {
-                      return true;
-                    }
-                  }
-                }
-              }
-              return false;
-            }
-
-            // HÀM ĐIỀU PHỐI XÁC MINH SẴN SÀNG & BẮT ĐẦU VÁN (TWO-WAY HANDSHAKE & RETRY START PULSE)
-            function triggerVerifiedMatchReadyAndStart(partnerName, sourceReason) {
-              // BẢO VỆ CHẶNG ĐẦU: Kiểm tra cứng xem đồng đội có thực sự đang ngồi trong phòng hay không
-              const partnerSeated = (G.__room_players || []).find(isPartner);
-              if (!partnerSeated) {
-                console.warn(`[AutoTool V3] ⚠️ TỪ CHỐI SẴN SÀNG: triggerVerifiedMatchReadyAndStart được gọi [${sourceReason || ''}] nhưng KHÔNG THẤY đồng đội ngồi trong bàn!`);
-                return;
-              }
-
-              console.log(`[AutoTool V3] 🟢 >>> XÁC MINH KHỚP BÀN THÀNH CÔNG: ${partnerName || (partnerSeated && (partnerSeated.dn || partnerSeated.u)) || "Đồng đội"} [${sourceReason || 'OK'}]! <<<`);
-
-              // 1. DỪNG / KILL TOÀN BỘ QUY TRÌNH JOIN BÀN VÀ TIMEOUT OUT BÀN
-              G.__is_matched_locked = true;
-              G.__AUTOTOOL_AUTO_HUNT = false; // KILL hunt loop ngay lập tức khi đã khớp!
-              if (G.__hunt_wait_timer) {
-                clearTimeout(G.__hunt_wait_timer);
-                G.__hunt_wait_timer = null;
-              }
-              if (G.__hunt_retry_timer) {
-                clearTimeout(G.__hunt_retry_timer);
-                G.__hunt_retry_timer = null;
-              }
-              if (G.__last_room_info) {
-                G.__last_room_info.partner_found = true;
-                if (partnerName) G.__last_room_info.partner_name = partnerName;
-              }
-
-              // Bắn sự kiện lên Isolated content.js để hiện Banner / Toast, báo Extension Hub & lưu log
-              window.postMessage({
-                type: "AUTOTOOL_MATCH_SUCCESS",
-                profile_name: getProfileName(),
-                partner_name: partnerName || (G.__last_room_info && G.__last_room_info.partner_name) || "Đồng đội",
-                verified: true,
-                rid: (G.__last_room_info && G.__last_room_info.rid) || 2,
-              }, "*");
-
-              // 2. CẢ 2 NICK ĐỀU GỬI LỆNH SẴN SÀNG & BẮT ĐẦU CHUẨN CỦA HITCLUB (cmd 5 + cmd 363)
-              setTimeout(() => {
-                console.log("[AutoTool V3] Tự động gửi lệnh SẴN SÀNG / BẮT ĐẦU (cmd 5)...");
-                G.__autotool_exec_ready();
-              }, 150);
-
-              setTimeout(() => {
-                if (!G.__game_in_progress && (!G.__my_cards || G.__my_cards.length === 0)) {
-                  console.log("[AutoTool V3] Tự động gửi nhắc SẴN SÀNG lần 2 (cmd 5)...");
-                  G.__autotool_exec_ready();
-                }
-              }, 450);
-
-              // 3. VÒNG LẶP RETRY START PULSE (Mỗi 600ms, tối đa 6 lần) cho đến khi nhận cmd 250 (chia bài)
-              if (G.__start_retry_timer) {
-                clearInterval(G.__start_retry_timer);
-                G.__start_retry_timer = null;
-              }
-              let attempts = 0;
-              G.__start_retry_timer = setInterval(() => {
-                if (G.__game_in_progress || (G.__my_cards && G.__my_cards.length > 0) || !G.__is_matched_locked) {
-                  clearInterval(G.__start_retry_timer);
-                  G.__start_retry_timer = null;
-                  return;
-                }
-                attempts++;
-                if (attempts > 6) {
-                  clearInterval(G.__start_retry_timer);
-                  G.__start_retry_timer = null;
-                  return;
-                }
-                console.log(`[AutoTool V3] [Retry Start #${attempts}] Gửi lại SẴN SÀNG / BẮT ĐẦU (cmd 5)...`);
-                G.__autotool_exec_ready();
-              }, 600);
-            }
-
+            // (cleanUid, collapseRepeats, isMe, isPartner, triggerVerifiedMatchReadyAndStart đã được khai báo ở top-level scope)
             // cmd 200: Người chơi mới bước vào bàn (t: 1) hoặc rời bàn (t: 2)
             if (p.cmd === 200 && p.p) {
               const player = p.p;
@@ -544,6 +1151,7 @@
                     // KHÁCH LẠ VÀO BÀN -> HỦY LỆNH CHO ĐỒNG ĐỘI & TỰ ĐỘNG OUT BÀN NGAY
                     const strangerName = player.dn || player.u || "Khách";
                     console.warn(`[AutoTool V3] [cmd 200] PHÁT HIỆN KHÁCH LẠ ${strangerName} VÀO BÀN -> Hủy lệnh cho đồng đội & Out bàn ngay!`);
+                    if (G.__backoff) G.__backoff.onFailure(false);
                     if (G.__hunt_wait_timer) {
                       clearTimeout(G.__hunt_wait_timer);
                       G.__hunt_wait_timer = null;
@@ -587,14 +1195,20 @@
               G.__room_players = p.ps || [];
               G.__room_state = p.gS;
 
-              // Trích xuất chính xác 100% "Chính mình" từ cờ native C hoặc cs (chỉ tab local mới có C=true / cs)
-              const me = (p.ps || []).find((x) => x && (x.C === true || x.C === "true" || x.cs !== undefined)) || (p.ps || []).find(isMe) || (p.ps && p.ps[0]);
+              // Trích xuất chính xác 100% "Chính mình" từ cờ native C của Cocos (chỉ tab local mới có C=true)
+              const me = (p.ps || []).find((x) => x && (x.C === true || x.C === "true")) || (p.ps || []).find(isMe) || (p.ps && p.ps.find((x) => x && x.C !== false)) || (p.ps && p.ps[0]);
               if (me) {
                 G.__my_uid = me.uid;
                 G.__my_dn = me.dn || me.u;
                 G.__my_sit = me.sit;
-                if (!G.__AUTOTOOL_PROFILE_NAME || G.__AUTOTOOL_PROFILE_NAME.includes("HitClub")) {
-                  G.__AUTOTOOL_PROFILE_NAME = me.dn || me.u;
+                if (me.dn || me.u) {
+                  const realUser = me.dn || me.u;
+                  G.__AUTOTOOL_PROFILE_NAME = realUser;
+                  try {
+                    // TUYỆT ĐỐI KHÔNG ghi đè localStorage KEY_USER_NAME vì đây là key tên đăng nhập của game HitClub!
+                    localStorage.setItem("AUTOTOOL_IN_GAME_DN", realUser);
+                    localStorage.setItem("AUTOTOOL_PROFILE_NAME", realUser);
+                  } catch (_) {}
                 }
               }
 
@@ -669,14 +1283,15 @@
               const isSubProfile = pName.includes("2") || pName.includes("sub") || pName.includes("phu") || pName.includes("xabai2") || pName.includes("dump") || (typeof getMyRole === "function" && getMyRole() === "dump");
 
               // --- LOGIC TỰ ĐỘNG SĂN BÀN & ĐIỀU PHỐI VÀO BÀN TRỐNG CHUẨN XÁC ---
-              if (G.__AUTOTOOL_AUTO_HUNT) {
-                if (partner) {
-                  // 1. ĐÃ KHỚP ĐỒNG ĐỘI THÀNH CÔNG TRONG BÀN!
-                  triggerVerifiedMatchReadyAndStart(partner.dn || partner.u, "cmd:202 RoomPlayers");
-                } else if (hasStrangerOrFull) {
+              if (partner) {
+                // 1. ĐÃ KHỚP ĐỒNG ĐỘI THÀNH CÔNG TRONG BÀN!
+                triggerVerifiedMatchReadyAndStart(partner.dn || partner.u, "cmd:202 RoomPlayers");
+              } else if (G.__AUTOTOOL_AUTO_HUNT || isSubProfile || G.__active_room_invite) {
+                if (hasStrangerOrFull) {
                   // 2. BÀN CÓ KHÁCH LẠ HOẶC BÀN FULL -> HỦY LỆNH CHO ĐỒNG ĐỘI & OUT VỀ SẢNH NGAY!
                   const guestNames = strangers.map((g) => g.dn || g.u || "Khách").join(", ") || "Bàn đầy người";
                   console.warn(`[AutoTool V3] Phát hiện bàn có người lạ / Full: ${guestNames} -> HỦY LỆNH & Out bàn ngay!`);
+                  if (G.__backoff) G.__backoff.onFailure(false);
 
                   if (G.__hunt_wait_timer) {
                     clearTimeout(G.__hunt_wait_timer);
@@ -764,6 +1379,14 @@
               G.__ws_last_room_id = null;
               G.__ws_pending_rid = null;
               G.__is_matched_locked = false;
+              // Dọn sạch Expected Anchor nếu không có lời mời bàn gần đây (< 5s)
+              if (!G.__active_room_invite || (Date.now() - G.__active_room_invite.ts) > 5000) {
+                G.__expected_anchor_dn  = null;
+                G.__expected_anchor_u   = null;
+                G.__expected_anchor_uid = null;
+                G.__expected_anchor_profile = null;
+                G.__active_room_invite = null;
+              }
               if (G.__start_retry_timer) {
                 clearInterval(G.__start_retry_timer);
                 G.__start_retry_timer = null;
@@ -777,15 +1400,15 @@
                 profile_name: getProfileName(),
               }, "*");
 
-              // Nếu đang bật Auto Hunt và là Account 1 (Anchor): Tự động tìm lại lượt mới với ANTI-FLOOD JITTER
+              // Nếu đang bật Auto Hunt và là Account 1 (Anchor): Tự động tìm lại lượt mới với ADAPTIVE BACKOFF (#1)
               if (G.__AUTOTOOL_AUTO_HUNT) {
                 const pName = (getProfileName() || "").toLowerCase();
                 if (pName.includes("1") || G.__is_hunt_initiator) {
                   if (G.__hunt_retry_timer) clearTimeout(G.__hunt_retry_timer);
 
-                  // ANTI-FLOOD JITTER: Giãn cách an toàn 3200ms - 4200ms (Tránh triệt để Rate-Limit "Bạn thao tác quá nhanh")
-                  const jitterDelay = 3200 + Math.floor(Math.random() * 1000);
-                  console.log(`[AutoTool V3] [Anti-Flood Jitter] Tự động thử lại lượt ghép mới sau ${jitterDelay}ms (Chống lỗi 'Bạn thao tác quá nhanh')...`);
+                  // ADAPTIVE BACKOFF (#1): Tự động co giãn thời gian chờ thông minh (2.2s - 8s) chống Rate-Limit "Bạn thao tác quá nhanh"
+                  const jitterDelay = G.__backoff ? G.__backoff.next() : (3200 + Math.floor(Math.random() * 1000));
+                  console.log(`[AutoTool V3] [Adaptive Backoff #1] Tự động thử lại lượt ghép mới sau ${jitterDelay}ms (Base: ${G.__backoff ? G.__backoff.current : 2200}ms)...`);
 
                   G.__hunt_retry_timer = setTimeout(() => {
                     window.postMessage({
@@ -1113,21 +1736,49 @@
       G.__autotool_exec_leave();
       return false;
     }
-    console.log("[AutoTool V3] Thực thi lệnh SẴN SÀNG & BẮT ĐẦU (cmd 5 + cmd 363)...");
+    console.log("[AutoTool V3] Thực thi lệnh SẴN SÀNG & BẮT ĐẦU (Cocos Native + WebSocket cmd 5 + cmd 363)...");
+
+    // 1. Kích hoạt trực tiếp trên Engine Cocos Creator
+    execCocosReadyOrStart();
+
+    // 2. Bắn song song các gói tin chuẩn xác 100% của HitClub
     const p1 = '[6,"Simms","channelPlugin",{"cmd":363,"aRd":"true"}]';
     const p2 = '[5,"Simms",-1,{"cmd":5}]';
     const simms = G.__ws_get_simms();
     if (simms && simms.readyState === 1) {
       try { simms.send(p1); push("inject", p1); } catch (_) {}
       try { simms.send(p2); push("inject", p2); } catch (_) {}
-      return true;
+      setTimeout(() => {
+        try {
+          if (simms.readyState === 1) {
+            simms.send(p2);
+            push("inject", p2);
+          }
+        } catch (_) {}
+      }, 150);
     }
-    return false;
+
+    // Nhắc lại Cocos sau 250ms nếu lần đầu chưa kịp nhận
+    setTimeout(() => {
+      execCocosReadyOrStart();
+    }, 250);
+
+    return true;
   };
 
   G.__autotool_exec_start = function () {
-    console.log("[AutoTool V3] Thực thi lệnh BẮT ĐẦU VÁN (cmd 5)...");
-    return G.__autotool_exec_ready();
+    console.log("[AutoTool V3] Thực thi lệnh BẮT ĐẦU VÁN (Cocos + cmd 5)...");
+    execCocosReadyOrStart();
+    const p = '[5,"Simms",-1,{"cmd":5}]';
+    const simms = G.__ws_get_simms();
+    if (simms && simms.readyState === 1) {
+      try { simms.send(p); push("inject", p); } catch (_) {}
+      setTimeout(() => {
+        try { if (simms.readyState === 1) simms.send(p); } catch (_) {}
+      }, 200);
+      return true;
+    }
+    return false;
   };
 
   G.__autotool_exec_play = function (cardIds) {
@@ -1213,14 +1864,56 @@
         cards: data.cards,
       }, "*");
     } else if (action === "JOIN_ROOM" && data && data.rid) {
-      // NẾU ĐÃ TRONG VÁN BÀI HOẶC ĐÃ KHÓA BÀN: BỎ QUA LỆNH JOIN_ROOM (KILL JOIN)
-      if (G.__game_in_progress || (G.__is_matched_locked && G.__last_room_info && G.__last_room_info.partner_found)) {
-        console.log(`[AutoTool V3] Đã khớp bàn và đang trong ván (${(G.__last_room_info && G.__last_room_info.rid) || 2}) -> BỎ QUA lệnh JOIN_ROOM mới!`);
+      // KIỂM TRA ĐIỀU KIỆN CHẶN: Chỉ bỏ qua nếu THỰC SỰ đang ngồi trong ván (>= 2 người và đang chơi)
+      const currentPlayersCount = (G.__room_players || []).length;
+      if (currentPlayersCount < 2) {
+        // Đang ở sảnh hoặc ngồi 1 mình -> Reset ngay lập tức toàn bộ cờ khóa cũ để vào phòng mới!
+        G.__is_matched_locked = false;
+        G.__game_in_progress = false;
+        G.__last_room_info = null;
+      } else if (G.__game_in_progress) {
+        console.log(`[AutoTool V3] Đang trong ván bài thực sự (${(G.__last_room_info && G.__last_room_info.rid) || 2}) -> BỎ QUA lệnh JOIN_ROOM mới!`);
         return;
       }
+
+      // ===== CRITICAL FIX: PRE-LOAD ANCHOR IDENTITY TRƯỚC KHI VÀO PHÒNG =====
+      const anchorDn   = (data.anchor_dn  || "").trim().toLowerCase();
+      const anchorU    = (data.anchor_u   || "").trim().toLowerCase();
+      const anchorUid  = (data.anchor_uid || "").trim();
+      const srcProfile = (data.source_profile || "").trim().toLowerCase();
+
+      // Lưu NGAY thông tin lời mời vào bàn
+      G.__active_room_invite = {
+        rid: Number(data.rid),
+        source_profile: srcProfile,
+        anchor_dn: anchorDn,
+        anchor_u: anchorU,
+        anchor_uid: anchorUid,
+        ts: Date.now(),
+      };
+
+      G.__expected_anchor_profile = srcProfile;
+      if (anchorDn)  G.__expected_anchor_dn  = anchorDn;
+      if (anchorU)   G.__expected_anchor_u   = anchorU;
+      if (anchorUid) G.__expected_anchor_uid = anchorUid;
+
+      // Luôn inject srcProfile, anchorDn, anchorU, anchorUid vào partners list
+      const currentPartners = G.__autotool_partners || [];
+      const toAdd = [srcProfile, anchorDn, anchorU, anchorUid].filter(Boolean);
+      for (const id of toAdd) {
+        if (id && !currentPartners.some((p) => (typeof p === "string" ? p.toLowerCase() : "") === id.toLowerCase())) {
+          currentPartners.push(id);
+        }
+      }
+      G.__autotool_partners = currentPartners;
+      console.log(`[AutoTool V3] [JOIN_ROOM] Pre-load anchor: src='${srcProfile}', dn='${anchorDn}', uid='${anchorUid}' -> Partners: ${currentPartners.length} entries`);
+      // ===== END CRITICAL FIX =====
+
       G.__autotool_exec_join(data.rid, data.bet || 100, data.mu || 2);
     } else if (action === "LEAVE_ROOM") {
       G.__is_matched_locked = false;
+      G.__game_in_progress = false;
+      G.__last_room_info = null;
       if (G.__start_retry_timer) {
         clearInterval(G.__start_retry_timer);
         G.__start_retry_timer = null;
@@ -1234,16 +1927,46 @@
       G.__autotool_exec_discard(data.cards);
     } else if (action === "SYNC_PARTNERS" && data && Array.isArray(data.partners)) {
       G.__autotool_partners = data.partners;
+    } else if (action === "ENTER_TLDL_LOBBY") {
+      const mu = (data && data.mu) || 2;
+      autoEnterTLDLLobby(mu);
+    } else if (action === "DISMISS_POPUPS") {
+      dismissPopupsAndBanners();
     } else if (action === "START_HUNT") {
+      const bet = (data && data.bet) || 100;
+      const mu = (data && data.mu) || 2;
       G.__AUTOTOOL_AUTO_HUNT = true;
       G.__is_hunt_initiator = true;
-      G.__autotool_exec_join(2, 100, 2);
-    } else if (action === "STOP_HUNT") {
-      G.__AUTOTOOL_AUTO_HUNT = false;
       G.__is_matched_locked = false;
+      G.__game_in_progress = false;
+      G.__last_room_info = null;
+      console.log(`[AutoTool V3] Bắt đầu SĂN BÀN: Cược ${bet}, Slot ${mu}...`);
+      G.__autotool_exec_join(null, bet, mu);
+    } else if (action === "STOP_HUNT" || action === "RESET_STATE") {
+      console.log(`[AutoTool V3] Nhận lệnh ${action} -> DỪNG TRIỆT ĐỂ toàn bộ trạng thái, auto-hunt & timers!`);
+      G.__AUTOTOOL_AUTO_HUNT = false;
+      G.__AUTOTOOL_ARMED = false;
+      G.__is_hunt_initiator = false;
+      G.__is_matched_locked = false;
+      G.__game_in_progress = false;
+      G.__last_room_info = null;
+      G.__room_players = [];
+      G.__active_room_invite = null;
       if (G.__start_retry_timer) {
         clearInterval(G.__start_retry_timer);
         G.__start_retry_timer = null;
+      }
+      if (G.__hunt_wait_timer) {
+        clearTimeout(G.__hunt_wait_timer);
+        G.__hunt_wait_timer = null;
+      }
+      if (G.__hunt_retry_timer) {
+        clearTimeout(G.__hunt_retry_timer);
+        G.__hunt_retry_timer = null;
+      }
+      if (G.__auto_turn_timer) {
+        clearTimeout(G.__auto_turn_timer);
+        G.__auto_turn_timer = null;
       }
       G.__autotool_exec_leave();
     }

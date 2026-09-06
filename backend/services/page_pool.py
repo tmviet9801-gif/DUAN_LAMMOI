@@ -15,15 +15,27 @@ class PagePool:
     def __init__(self, browser_manager: BrowserManager):
         self.manager = browser_manager
 
-    def _find_session(self, account_id: str) -> Optional[str]:
+    def _find_session(self, account: dict | str) -> Optional[str]:
+        if isinstance(account, str):
+            acc_id = account
+            acc_name = account.strip().lower().replace(" ", "")
+        else:
+            acc_id = account.get("id") if isinstance(account, dict) else None
+            acc_name = (account.get("name") or "").strip().lower().replace(" ", "") if isinstance(account, dict) else ""
+
         for sid, s in self.manager.sessions.items():
-            if s.account and s.account.get("id") == account_id:
+            if not s.account:
+                continue
+            if acc_id and s.account.get("id") == acc_id:
+                return sid
+            s_name = (s.account.get("name") or "").strip().lower().replace(" ", "")
+            if acc_name and s_name == acc_name:
                 return sid
         return None
 
     async def get_or_open(self, account: dict) -> Optional[object]:
         """Trả về Playwright Page cho account. Mở session mới nếu chưa có."""
-        sid = self._find_session(account.get("id"))
+        sid = self._find_session(account)
         if sid:
             return self.manager.sessions[sid].page
         ids = await self.manager.open_sessions(accounts=[account])

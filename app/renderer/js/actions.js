@@ -362,9 +362,11 @@
     if (!a) return;
     editingAccount = a;
     const idx = a.index !== undefined ? a.index : "";
-    if ($("epName")) $("epName").textContent = idx ? `#${idx} ${a.name}` : (a.name || "");
+    const titleName = a.character_name || a.username || a.name || "";
+    if ($("epName")) $("epName").textContent = idx ? `#${idx} ${titleName}` : titleName;
     if ($("epProfileName")) $("epProfileName").value = a.name || "";
     if ($("epUsername")) $("epUsername").value = a.username || "";
+    if ($("epCharName")) $("epCharName").value = a.character_name || a.game_username || a.name || "";
     if ($("epPassword")) $("epPassword").value = a.password || "";
     if ($("epUrl")) $("epUrl").value = a.url || "";
     if ($("epProxy")) $("epProxy").value = a.proxy || "";
@@ -374,7 +376,7 @@
       $("epProxyResult").className = "hint";
     }
     epModal.classList.remove("hidden");
-    if ($("epProfileName")) $("epProfileName").focus();
+    if ($("epUsername")) $("epUsername").focus();
   }
   App.openEditProfile = openEditProfile;
 
@@ -404,6 +406,7 @@
         const payload = {
           name: $("epProfileName") ? $("epProfileName").value.trim() : editingAccount.name,
           username: $("epUsername") ? $("epUsername").value.trim() : "",
+          character_name: $("epCharName") ? $("epCharName").value.trim() : "",
           password: $("epPassword") ? $("epPassword").value.trim() : "",
           url: $("epUrl") ? ($("epUrl").value.trim() || defaultUrl()) : defaultUrl(),
           proxy: $("epProxy") ? $("epProxy").value.trim() : "",
@@ -413,7 +416,7 @@
           method: "PATCH",
           body: JSON.stringify(payload),
         });
-        App.toast(`Đã cập nhật thông tin tài khoản "${r.name}"!`, "success");
+        App.toast(`Đã cập nhật tài khoản "${r.character_name || r.username || r.name}"!`, "success");
         closeEditProfile();
         App.refresh();
       } catch (err) {
@@ -506,7 +509,7 @@
       const bet = $("gcBetSelect") ? $("gcBetSelect").value : "100";
       const slot = $("gcSlotCount") ? $("gcSlotCount").value : "2";
 
-      const selected = Array.from(document.querySelectorAll("#accTbody tr.selected"));
+      const selected = Array.from(document.querySelectorAll("#profileTbody tr.row-selected, #profileTbody tr.selected"));
       const mainProfile = $("gcProfileMain") ? $("gcProfileMain").value : "";
       const profile_name = (selected.length > 0 ? selected[0].dataset.name : "") || mainProfile || (App.profiles && App.profiles[0] ? App.profiles[0].name : "Account 1");
 
@@ -527,7 +530,7 @@
         App.toast(`✅ Vào bàn công cộng thành công: Phòng #${room_id} (Cược ${bet})!`, "success");
 
         // Cập nhật tức thì dòng tài khoản trên bảng
-        const row = document.querySelector(`#accTbody tr[data-name="${profile_name}"]`);
+        const row = document.querySelector(`#profileTbody tr[data-name="${profile_name}"]`);
         if (row) {
           const tdRoom = row.querySelector(".td-room");
           if (tdRoom) tdRoom.textContent = room_id;
@@ -567,7 +570,7 @@
       try {
         const res = await App.api("/api/autoplay/leave-all", { method: "POST", body: "{}" });
         // Cập nhật giao diện tức thì trên bảng danh sách tài khoản
-        document.querySelectorAll("#accTbody tr").forEach(row => {
+        document.querySelectorAll("#profileTbody tr").forEach(row => {
           const tdRoom = row.querySelector(".td-room");
           if (tdRoom) tdRoom.textContent = "-";
           const tdLog = row.querySelector(".td-log");
@@ -600,7 +603,7 @@
       const game = $("gcGameSelect") ? $("gcGameSelect").value : "TLDL";
       const bet = $("gcBetSelect") ? $("gcBetSelect").value : "100";
       const slot = $("gcSlotCount") ? $("gcSlotCount").value : "2";
-      const selected = Array.from(document.querySelectorAll("#accTbody tr.selected"));
+      const selected = Array.from(document.querySelectorAll("#profileTbody tr.row-selected, #profileTbody tr.selected"));
       const mainProfile = $("gcProfileMain") ? $("gcProfileMain").value : "";
       const profile_name = (selected.length > 0 ? selected[0].dataset.name : "") || mainProfile || (App.profiles && App.profiles[0] ? App.profiles[0].name : "Account 1");
 

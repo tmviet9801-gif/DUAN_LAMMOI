@@ -12,20 +12,19 @@ let pingInterval = null;
 
 // Khởi tạo đọc profile_name đã lưu từ trước
 chrome.storage.local.get(["profile_name"], (res) => {
-  if (res && res.profile_name) {
-    currentProfileName = res.profile_name;
-    connectToHub(currentProfileName);
-  }
+  currentProfileName = (res && res.profile_name) ? res.profile_name : "";
+  connectToHub(currentProfileName || "Account");
 });
 
 // Kết nối WebSocket tới Extension Hub
 function connectToHub(profileName) {
-  if (!profileName) return;
+  const pName = profileName || currentProfileName || "Account";
   if (hubSocket && (hubSocket.readyState === WebSocket.OPEN || hubSocket.readyState === WebSocket.CONNECTING)) {
     return;
   }
 
-  const url = `${BACKEND_WS}?profile=${encodeURIComponent(profileName)}`;
+  currentProfileName = pName;
+  const url = `${BACKEND_WS}?profile=${encodeURIComponent(pName)}`;
   try {
     hubSocket = new WebSocket(url);
   } catch (_) {
@@ -34,15 +33,15 @@ function connectToHub(profileName) {
   }
 
   hubSocket.onopen = () => {
-    console.log(`[AutoTool V3] Đã kết nối Hub (Port ${BACKEND_PORT}) - Profile: ${profileName}`);
+    console.log(`[AutoTool V3] Đã kết nối Hub (Port ${BACKEND_PORT}) - Profile: ${pName}`);
     if (reconnectTimer) clearTimeout(reconnectTimer);
 
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = setInterval(() => {
       if (hubSocket && hubSocket.readyState === WebSocket.OPEN) {
-        hubSocket.send(JSON.stringify({ action: "PING", profile_name: profileName, ts: Date.now() }));
+        hubSocket.send(JSON.stringify({ action: "PING", profile_name: pName, ts: Date.now() }));
       }
-    }, 15000);
+    }, 10000);
   };
 
   hubSocket.onmessage = (event) => {
@@ -74,16 +73,16 @@ function connectToHub(profileName) {
 function scheduleReconnect() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = setTimeout(() => {
-    if (currentProfileName) connectToHub(currentProfileName);
-  }, 3000);
+    connectToHub(currentProfileName || "Account");
+  }, 2000);
 }
 
 // Giữ Service Worker luôn thức
-chrome.alarms.create("keepAliveAlarm", { periodInMinutes: 0.5 });
+chrome.alarms.create("keepAliveAlarm", { periodInMinutes: 0.1 });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "keepAliveAlarm" && currentProfileName) {
+  if (alarm.name === "keepAliveAlarm") {
     if (!hubSocket || hubSocket.readyState !== WebSocket.OPEN) {
-      connectToHub(currentProfileName);
+      connectToHub(currentProfileName || "Account");
     }
   }
 });
@@ -123,7 +122,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.type === "CANCEL_ROOM_INVITE" ||
       message.type === "AUTOTOOL_CANCEL_ROOM_INVITE" ||
       message.type === "ANCHOR_ROOM_VERIFIED_EMPTY" ||
-      message.type === "AUTOTOOL_ANCHOR_ROOM_VERIFIED_EMPTY") {
+      message.type === "AUTOTOOL_ANCHOR_ROOM_VERIFIED_EMPTY" ||
+      message.type === "AUTOTOOL_USERNAME_SYNC") {
     if (hubSocket && hubSocket.readyState === WebSocket.OPEN) {
       hubSocket.send(JSON.stringify({
         type: message.type,
@@ -132,6 +132,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         log: message.log,
         rid: message.rid,
         reason: message.reason,
+        real_dn: message.real_dn,
+        real_u: message.real_u,
+        real_uid: message.real_uid,
         data: message.data || message.room_info || message,
         timestamp: Date.now(),
       }));
@@ -142,9 +145,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // 4. Kiểm tra sức khỏe kết nối
   if (message.type === "CHECK_HEALTH") {
+    if (message.profile_name && !currentProfileName) {
+      currentProfileName = message.profile_name;
+      chrome.storage.local.set({ profile_name: currentProfileName });
+    }
+    const isConnected = hubSocket && hubSocket.readyState === WebSocket.OPEN;
+    if (!isConnected) {
+      // Chủ động kích hoạt kết nối lại ngay lập tức
+      connectToHub(currentProfileName || message.profile_name || "Account");
+    }
     sendResponse({
       ok: true,
-      hub_connected: hubSocket ? hubSocket.readyState === WebSocket.OPEN : false,
+      hub_connected: isConnected,
       profile_name: currentProfileName,
       port: BACKEND_PORT,
     });
@@ -158,8 +170,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.storage.local.set({ profile_name: currentProfileName });
     }
     try { if (hubSocket) hubSocket.close(); } catch (_) {}
-    connectToHub(currentProfileName);
-    sendResponse({ ok: true });
+    hubSocket = null;
+    connectToHub(currentProfileName || "Account");
+    sendResponse({ ok: true, profile_name: currentProfileName });
     return true;
   }
 

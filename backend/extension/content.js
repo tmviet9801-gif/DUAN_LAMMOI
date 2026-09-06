@@ -36,77 +36,172 @@
     const style = document.createElement("style");
     style.id = "autotool-overlay-styles";
     style.textContent = `
-      /* 1. TOP VIEW BANNER: HIỂN THỊ RÕ BÀN VÀ TRẠNG THÁI TRÊN MÀN HÌNH GAME */
-      #autotool-view-banner {
+      /* 1. SWEETALERT2 FLOATING TOAST CONTAINER & CARDS */
+      #autotool-sweet-container {
         position: fixed !important;
-        top: 14px !important;
+        top: 20px !important;
         left: 50% !important;
         transform: translateX(-50%) !important;
         z-index: 2147483647 !important;
-        display: inline-flex !important;
+        display: flex !important;
+        flex-direction: column !important;
         align-items: center !important;
-        gap: 10px !important;
-        padding: 8px 22px !important;
-        border-radius: 9999px !important;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-        font-size: 13px !important;
-        font-weight: 700 !important;
-        letter-spacing: 0.3px !important;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.75) !important;
+        gap: 8px !important;
         pointer-events: none !important;
         user-select: none !important;
-        backdrop-filter: blur(8px) !important;
+      }
+      .sw-toast {
+        display: flex !important;
+        flex-direction: column !important;
+        min-width: 260px !important;
+        max-width: 480px !important;
+        border-radius: 12px !important;
+        background: rgba(15, 23, 42, 0.94) !important;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.75), 0 0 1px rgba(255, 255, 255, 0.2) !important;
+        backdrop-filter: blur(10px) !important;
+        border: 1.5px solid rgba(255, 255, 255, 0.15) !important;
+        overflow: hidden !important;
+        pointer-events: auto !important;
+        cursor: move !important;
+        opacity: 0 !important;
+        transform: translateY(-20px) scale(0.95) !important;
         transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
-        opacity: 0.95 !important;
       }
-      #autotool-view-banner.active {
-        background: rgba(11, 44, 25, 0.92) !important;
-        border: 1.5px solid #22c55e !important;
-        color: #86efac !important;
-        text-shadow: 0 1px 4px rgba(0,0,0,0.8) !important;
+      .sw-toast.sw-show {
+        opacity: 1 !important;
+        transform: translateY(0) scale(1) !important;
       }
-      #autotool-view-banner.joining {
-        background: rgba(69, 26, 3, 0.92) !important;
-        border: 1.5px solid #f59e0b !important;
-        color: #fde68a !important;
-        animation: autotool-pulse 1.2s infinite ease-in-out !important;
+      .sw-toast.sw-hide {
+        opacity: 0 !important;
+        transform: translateY(-15px) scale(0.95) !important;
+        transition: all 0.2s ease !important;
       }
-      #autotool-view-banner.lobby {
-        background: rgba(15, 23, 42, 0.9) !important;
-        border: 1.5px solid #64748b !important;
+      .sw-toast-content {
+        display: flex !important;
+        align-items: center !important;
+        gap: 12px !important;
+        padding: 10px 18px !important;
+      }
+      .sw-icon {
+        width: 26px !important;
+        height: 26px !important;
+        flex-shrink: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border-radius: 50% !important;
+      }
+      .sw-icon svg {
+        width: 18px !important;
+        height: 18px !important;
+      }
+      .sw-toast-text {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 2px !important;
+        color: #f8fafc !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+      }
+      .sw-toast-title {
+        font-size: 13px !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.2px !important;
+        line-height: 1.3 !important;
+      }
+      .sw-toast-body {
+        font-size: 11px !important;
         color: #cbd5e1 !important;
+        font-weight: 500 !important;
+        line-height: 1.2 !important;
       }
-      @keyframes autotool-pulse {
-        0%, 100% { transform: translateX(-50%) scale(1); }
-        50% { transform: translateX(-50%) scale(1.03); box-shadow: 0 0 20px rgba(245, 158, 11, 0.6) !important; }
+      .sw-toast-progress {
+        height: 3px !important;
+        width: 100% !important;
+        background: rgba(255, 255, 255, 0.3) !important;
+        transform-origin: left !important;
+        animation: sw-progress-shrink linear forwards !important;
+      }
+      @keyframes sw-progress-shrink {
+        from { transform: scaleX(1); }
+        to { transform: scaleX(0); }
       }
 
-      /* 2. NÚT NỔI TỐI GIẢN GÓC TRÁI DƯỚI (#autotool-connect-btn) */
+      /* Biến thể màu SweetAlert2 */
+      .sw-type-success {
+        border-color: #22c55e !important;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.75), 0 0 15px rgba(34, 197, 94, 0.35) !important;
+      }
+      .sw-type-success .sw-icon {
+        background: rgba(34, 197, 94, 0.2) !important;
+        color: #4ade80 !important;
+      }
+      .sw-type-success .sw-toast-progress {
+        background: #22c55e !important;
+      }
+
+      .sw-type-warn, .sw-type-joining {
+        border-color: #f59e0b !important;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.75), 0 0 15px rgba(245, 158, 11, 0.35) !important;
+      }
+      .sw-type-warn .sw-icon, .sw-type-joining .sw-icon {
+        background: rgba(245, 158, 11, 0.2) !important;
+        color: #fbbf24 !important;
+      }
+      .sw-type-warn .sw-toast-progress, .sw-type-joining .sw-toast-progress {
+        background: #f59e0b !important;
+      }
+
+      .sw-type-info, .sw-type-lobby, .sw-type-active {
+        border-color: #38bdf8 !important;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.75), 0 0 15px rgba(56, 189, 248, 0.35) !important;
+      }
+      .sw-type-info .sw-icon, .sw-type-lobby .sw-icon, .sw-type-active .sw-icon {
+        background: rgba(56, 189, 248, 0.2) !important;
+        color: #38bdf8 !important;
+      }
+      .sw-type-info .sw-toast-progress, .sw-type-lobby .sw-toast-progress, .sw-type-active .sw-toast-progress {
+        background: #38bdf8 !important;
+      }
+
+      .sw-type-error {
+        border-color: #ef4444 !important;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.75), 0 0 15px rgba(239, 68, 68, 0.35) !important;
+      }
+      .sw-type-error .sw-icon {
+        background: rgba(239, 68, 68, 0.2) !important;
+        color: #f87171 !important;
+      }
+      .sw-type-error .sw-toast-progress {
+        background: #ef4444 !important;
+      }
+
+      /* 2. NÚT NỔI TỐI GIẢN GÓC PHẢI DƯỚI (DRAGGABLE - KHÔNG CHE AVATAR / GOLD GÓC TRÁI) */
       #autotool-connect-btn {
         position: fixed !important;
-        left: 10px !important;
-        bottom: 10px !important;
+        right: 145px !important;
+        bottom: 12px !important;
         z-index: 2147483647 !important;
         display: inline-flex !important;
         align-items: center !important;
         gap: 6px !important;
         padding: 5px 12px !important;
         border-radius: 9999px !important;
-        border: 1px solid rgba(255, 255, 255, 0.15) !important;
-        background: rgba(15, 23, 42, 0.85) !important;
+        border: 1px solid rgba(255, 255, 255, 0.18) !important;
+        background: rgba(15, 23, 42, 0.9) !important;
         color: #94a3b8 !important;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
         font-size: 11px !important;
         font-weight: 600 !important;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
-        cursor: pointer !important;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6) !important;
+        cursor: move !important;
         user-select: none !important;
-        backdrop-filter: blur(4px) !important;
-        transition: all 0.2s ease !important;
+        backdrop-filter: blur(6px) !important;
+        transition: background 0.2s ease, border-color 0.2s ease !important;
       }
       #autotool-connect-btn:hover {
-        background: rgba(30, 41, 59, 0.95) !important;
+        background: rgba(30, 41, 59, 0.98) !important;
         color: #f1f5f9 !important;
+        border-color: rgba(255, 255, 255, 0.3) !important;
       }
       #autotool-connect-btn .at-dot {
         width: 7px !important;
@@ -121,43 +216,6 @@
       }
       #autotool-connect-btn.err .at-dot {
         background: #ef4444 !important;
-      }
-
-      /* 3. TOAST THÔNG BÁO TẠM THỜI */
-      #autotool-toast {
-        position: fixed !important;
-        top: -60px !important;
-        left: 50% !important;
-        transform: translateX(-50%) !important;
-        z-index: 2147483647 !important;
-        padding: 9px 20px !important;
-        border-radius: 8px !important;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-        font-size: 13px !important;
-        font-weight: 700 !important;
-        box-shadow: 0 6px 22px rgba(0, 0, 0, 0.75) !important;
-        pointer-events: none !important;
-        opacity: 0 !important;
-        transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
-      }
-      #autotool-toast.autotool-toast-visible {
-        top: 60px !important;
-        opacity: 1 !important;
-      }
-      #autotool-toast.warn {
-        background: #451a03 !important;
-        border: 1.5px solid #f59e0b !important;
-        color: #fde68a !important;
-      }
-      #autotool-toast.success {
-        background: #14532d !important;
-        border: 1.5px solid #22c55e !important;
-        color: #86efac !important;
-      }
-      #autotool-toast.info {
-        background: #0b1220 !important;
-        border: 1.5px solid #38bdf8 !important;
-        color: #bae6fd !important;
       }
 
       /* 4. IN-GAME VISUAL CARDS BAR */
@@ -326,36 +384,164 @@
     panel.innerHTML = `<span style="font-size:11px;font-weight:700;color:#c084fc;margin-right:4px;">👥 ${partnerName} (${cards.length}):</span>` + chips;
   }
 
-  function updateViewBanner(htmlText, type = "lobby") {
+  // Helper biến bất kỳ phần tử nào thành có thể kéo thả (Draggable) và lưu vị trí vào localStorage
+  function makeDraggable(el, storageKey) {
+    if (!el) return;
+
+    // Phục hồi vị trí đã lưu từ lần trước
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        const pos = JSON.parse(saved);
+        if (typeof pos.x === "number" && typeof pos.y === "number") {
+          const maxX = Math.max(10, window.innerWidth - (el.offsetWidth || 120));
+          const maxY = Math.max(10, window.innerHeight - (el.offsetHeight || 30));
+          const clX = Math.min(Math.max(0, pos.x), maxX);
+          const clY = Math.min(Math.max(0, pos.y), maxY);
+          el.style.left = clX + "px";
+          el.style.top = clY + "px";
+          el.style.right = "auto";
+          el.style.bottom = "auto";
+          el.style.transform = "none";
+        }
+      } catch (_) {}
+    }
+
+    let isDragging = false;
+    let hasMoved = false;
+    let startX = 0, startY = 0;
+    let initialLeft = 0, initialTop = 0;
+
+    el.style.cursor = "move";
+
+    el.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return; // Chỉ kéo khi click chuột trái
+      isDragging = true;
+      hasMoved = false;
+      startX = e.clientX;
+      startY = e.clientY;
+
+      const rect = el.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+
+      function onMouseMove(moveEv) {
+        if (!isDragging) return;
+        const dx = moveEv.clientX - startX;
+        const dy = moveEv.clientY - startY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+          hasMoved = true;
+        }
+        const newX = Math.max(0, Math.min(window.innerWidth - (el.offsetWidth || 100), initialLeft + dx));
+        const newY = Math.max(0, Math.min(window.innerHeight - (el.offsetHeight || 30), initialTop + dy));
+
+        el.style.left = newX + "px";
+        el.style.top = newY + "px";
+        el.style.right = "auto";
+        el.style.bottom = "auto";
+        el.style.transform = "none";
+      }
+
+      function onMouseUp() {
+        if (!isDragging) return;
+        isDragging = false;
+        window.removeEventListener("mousemove", onMouseMove);
+        window.removeEventListener("mouseup", onMouseUp);
+
+        if (hasMoved) {
+          const finalRect = el.getBoundingClientRect();
+          try {
+            localStorage.setItem(storageKey, JSON.stringify({ x: finalRect.left, y: finalRect.top }));
+          } catch (_) {}
+        }
+      }
+
+      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("mouseup", onMouseUp);
+    });
+
+    el.addEventListener("click", (e) => {
+      if (hasMoved) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
+  }
+
+  // THÔNG BÁO NỔI DẠNG SWEETALERT2 (TỰ TẮT SAU 1.5 - 2 GIÂY, DRAGGABLE)
+  function showSweetToast(title, bodyText = "", type = "info", duration = 1800) {
     if (window !== window.top) return;
     ensureStyles();
-    let b = document.getElementById("autotool-view-banner");
-    if (!b) {
-      b = document.createElement("div");
-      b.id = "autotool-view-banner";
-      (document.body || document.documentElement).appendChild(b);
+
+    let container = document.getElementById("autotool-sweet-container");
+    if (!container) {
+      container = document.createElement("div");
+      container.id = "autotool-sweet-container";
+      (document.body || document.documentElement).appendChild(container);
+      makeDraggable(container, "AUTOTOOL_POS_SWEET_TOAST");
     }
-    b.className = type;
-    b.innerHTML = htmlText;
+
+    const icons = {
+      success: `<div class="sw-icon"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>`,
+      warn: `<div class="sw-icon"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg></div>`,
+      joining: `<div class="sw-icon"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M13 2.05v2.02c3.95.49 7 3.85 7 7.93 0 3.21-1.92 6-4.72 7.28L14.47 21A9.99 9.99 0 0 0 22 12c0-5.18-3.95-9.45-9-9.95z"/></svg></div>`,
+      info: `<div class="sw-icon"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg></div>`,
+      active: `<div class="sw-icon"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>`,
+    };
+
+    const iconHtml = icons[type] || icons.info;
+    const toast = document.createElement("div");
+    toast.className = `sw-toast sw-type-${type}`;
+    toast.innerHTML = `
+      <div class="sw-toast-content">
+        ${iconHtml}
+        <div class="sw-toast-text">
+          <div class="sw-toast-title">${title}</div>
+          ${bodyText ? `<div class="sw-toast-body">${bodyText}</div>` : ""}
+        </div>
+      </div>
+      <div class="sw-toast-progress" style="animation-duration: ${duration}ms"></div>
+    `;
+
+    container.appendChild(toast);
+    requestAnimationFrame(() => {
+      toast.classList.add("sw-show");
+    });
+
+    setTimeout(() => {
+      toast.classList.remove("sw-show");
+      toast.classList.add("sw-hide");
+      setTimeout(() => {
+        try { toast.remove(); } catch (_) {}
+      }, 250);
+    }, duration);
+  }
+
+  function updateViewBanner(htmlText, type = "lobby") {
+    if (window !== window.top) return;
+    // Bóc tách title và body từ htmlText nếu có thẻ <b>
+    let title = htmlText;
+    let body = "";
+    if (htmlText.includes("<b>") && htmlText.includes("</b>")) {
+      const parts = htmlText.split("</b>");
+      title = parts[0].replace("<b>", "").trim();
+      body = parts.slice(1).join("</b>").replace(/<[^>]+>/g, "").replace(/^[\s:|-]+/, "").trim();
+    } else {
+      title = htmlText.replace(/<[^>]+>/g, "").trim();
+    }
+    showSweetToast(title, body, type, 1800);
   }
 
   function showToast(text, type = "info") {
     if (window !== window.top) return;
-    ensureStyles();
-    let toast = document.getElementById("autotool-toast");
-    if (!toast) {
-      toast = document.createElement("div");
-      toast.id = "autotool-toast";
-      (document.body || document.documentElement).appendChild(toast);
+    let title = "AutoTool V3";
+    let body = text;
+    if (text.includes("<b>") && text.includes("</b>")) {
+      const parts = text.split("</b>");
+      title = parts[0].replace(/<[^>]+>/g, "").trim();
+      body = parts.slice(1).join("</b>").replace(/<[^>]+>/g, "").replace(/^[\s:|-]+/, "").trim();
     }
-
-    toast.className = `autotool-toast-visible ${type}`;
-    toast.innerHTML = text;
-
-    if (toast.__timer) clearTimeout(toast.__timer);
-    toast.__timer = setTimeout(() => {
-      if (toast) toast.className = "";
-    }, 4000);
+    showSweetToast(title, body, type, 1800);
   }
 
   function isExtensionValid() {
@@ -383,7 +569,7 @@
     if (document.getElementById("autotool-connect-btn") || window !== window.top) return;
     ensureStyles();
 
-    // Nút trạng thái tối giản
+    // Nút trạng thái tối giản (Mặc định ở GÓC PHẢI DƯỚI, DRAGGABLE - KHÔNG CHE AVATAR/GOLD)
     const btn = document.createElement("button");
     btn.id = "autotool-connect-btn";
     btn.innerHTML = `<span class="at-dot"></span><span id="autotool-btn-text">V3: Đang kết nối...</span>`;
@@ -394,27 +580,29 @@
       });
     });
     (document.body || document.documentElement).appendChild(btn);
+    makeDraggable(btn, "AUTOTOOL_POS_CONNECT_BTN");
 
-    // Nút Bật/Tắt Săn Bàn & Tự động Out khi gặp khách lạ
+    // Nút Bật/Tắt Săn Bàn & Tự động Out khi gặp khách lạ (Mặc định ở GÓC PHẢI DƯỚI, DRAGGABLE)
     const huntBtn = document.createElement("button");
     huntBtn.id = "autotool-hunt-btn";
-    huntBtn.style.cssText = "position:fixed!important;left:150px!important;bottom:10px!important;z-index:2147483647!important;display:inline-flex!important;align-items:center!important;gap:5px!important;padding:5px 12px!important;border-radius:9999px!important;border:1px solid rgba(245,158,11,0.5)!important;background:rgba(69,26,3,0.88)!important;color:#fde68a!important;font-family:sans-serif!important;font-size:11px!important;font-weight:700!important;cursor:pointer!important;backdrop-filter:blur(4px)!important;box-shadow:0 4px 12px rgba(0,0,0,0.5)!important;";
+    huntBtn.style.cssText = "position:fixed!important;right:12px!important;bottom:12px!important;z-index:2147483647!important;display:inline-flex!important;align-items:center!important;gap:5px!important;padding:5px 12px!important;border-radius:9999px!important;border:1px solid rgba(245,158,11,0.5)!important;background:rgba(69,26,3,0.9)!important;color:#fde68a!important;font-family:sans-serif!important;font-size:11px!important;font-weight:700!important;cursor:move!important;user-select:none!important;backdrop-filter:blur(6px)!important;box-shadow:0 4px 14px rgba(0,0,0,0.6)!important;";
     huntBtn.innerHTML = "🎯 Săn Bàn: BẬT";
     let isHuntOn = true;
     huntBtn.addEventListener("click", () => {
       isHuntOn = !isHuntOn;
       huntBtn.innerHTML = isHuntOn ? "🎯 Săn Bàn: BẬT" : "⚪ Săn Bàn: TẮT";
-      huntBtn.style.background = isHuntOn ? "rgba(69,26,3,0.88)" : "rgba(30,41,59,0.85)";
+      huntBtn.style.background = isHuntOn ? "rgba(69,26,3,0.9)" : "rgba(30,41,59,0.9)";
       huntBtn.style.color = isHuntOn ? "#fde68a" : "#94a3b8";
       huntBtn.style.borderColor = isHuntOn ? "rgba(245,158,11,0.5)" : "rgba(255,255,255,0.2)";
       window.postMessage({ type: "AUTOTOOL_SET_HUNT", auto_hunt: isHuntOn }, "*");
-      showToast(`🎯 Chế độ Săn Bàn & Auto Out: <b>${isHuntOn ? 'BẬT' : 'TẮT'}</b>`, isHuntOn ? "warn" : "info");
+      showSweetToast("Chế độ Săn Bàn", `Đã ${isHuntOn ? 'BẬT' : 'TẮT'} tự động tìm & out bàn`, isHuntOn ? "warn" : "info", 1800);
     });
     (document.body || document.documentElement).appendChild(huntBtn);
+    makeDraggable(huntBtn, "AUTOTOOL_POS_HUNT_BTN");
 
-    // Banner mặc định khi mở tab
+    // Thông báo mở đầu dạng SweetAlert2 (tự tắt sau 1.8s)
     const pLabel = activeProfileName || "Tool V3";
-    updateViewBanner(`🏠 <b>${pLabel}</b>: Đang ở sảnh (Chờ tìm bàn)`, "lobby");
+    showSweetToast(`AutoTool V3 (${pLabel})`, "Đang ở sảnh Tiến Lên Đếm Lá", "info", 1800);
 
     updatePill();
   }
@@ -430,29 +618,18 @@
       return;
     }
 
-    safeSendMessage({ type: "CHECK_HEALTH" }, (res) => {
-      if (!res || !res.ok) {
-        isHubConnected = false;
-        btn.className = "err";
-        txt.textContent = "🔴 Mất kết nối Hub";
-        return;
-      }
+    const pName = activeProfileName || localStorage.getItem("AUTOTOOL_PROFILE_NAME") || localStorage.getItem("KEY_USER_NAME") || document.title || "";
+    const pLabel = (pName || "Tool V3").replace(/^#\d+\s*/, "");
 
-      isHubConnected = res.hub_connected;
-      if (res.profile_name) activeProfileName = res.profile_name;
-      const pLabel = activeProfileName || "Tool V3";
+    btn.className = "on";
+    if (lastRoomInfo && lastRoomInfo.rid) {
+      txt.textContent = `🟢 ${lastRoomInfo.rn || 'Bàn ' + lastRoomInfo.rid} (${pLabel})`;
+    } else {
+      txt.textContent = `🟢 Online (${pLabel})`;
+    }
 
-      if (!isHubConnected) {
-        btn.className = "";
-        txt.textContent = `⏳ Đang kết nối (${pLabel})`;
-      } else {
-        btn.className = "on";
-        if (lastRoomInfo && lastRoomInfo.rid) {
-          txt.textContent = `🟢 ${lastRoomInfo.rn || 'Bàn ' + lastRoomInfo.rid} (${pLabel})`;
-        } else {
-          txt.textContent = `🟢 Online (${pLabel})`;
-        }
-      }
+    safeSendMessage({ type: "CHECK_HEALTH", profile_name: pLabel }, (res) => {
+      if (res && res.profile_name) activeProfileName = res.profile_name;
     });
   }
 
@@ -529,6 +706,18 @@
           partner: partner,
         }, "*");
       } else {
+        if (action === "STOP_HUNT" || action === "RESET_STATE") {
+          const hBtn = document.getElementById("autotool-hunt-btn");
+          if (hBtn) {
+            hBtn.innerHTML = "⚪ Săn Bàn: TẮT";
+            hBtn.style.background = "rgba(30,41,59,0.9)";
+            hBtn.style.color = "#94a3b8";
+            hBtn.style.borderColor = "rgba(255,255,255,0.2)";
+          }
+          window.postMessage({ type: "AUTOTOOL_SET_HUNT", auto_hunt: false }, "*");
+          updateViewBanner(`⏹️ <b>${activeProfileName || 'Tool V3'}</b>: Đã DỪNG săn bàn`, "lobby");
+          showSweetToast("AutoTool", "Đã DỪNG săn bàn theo lệnh", "info", 1800);
+        }
         window.postMessage({
           type: "AUTOTOOL_EXEC_COMMAND",
           action: action,
@@ -554,6 +743,18 @@
         type: "REGISTER_PROFILE",
         profile_name: ev.data.profile_name,
       });
+      // FIX CRITICAL: Nếu có dn/uid (từ cmd 100), forward NGAY lên Hub để Hub biết
+      // tên in-game thực tế của profile. Thiếu bước này → anchor_dn luôn rỗng
+      // → B không nhận ra A khi cmd 202 đến (race condition).
+      if (ev.data.dn || ev.data.uid) {
+        safeSendMessage({
+          type: "AUTOTOOL_USERNAME_SYNC",
+          profile_name: ev.data.profile_name,
+          real_dn:  ev.data.dn  || "",
+          real_u:   ev.data.u   || "",
+          real_uid: String(ev.data.uid || ""),
+        });
+      }
       // Xóa sạch bài rác lưu cũ nếu đang ở sảnh
       requestControl("/api/accounts/update-cards", {
         profile_name: activeProfileName,
@@ -567,6 +768,7 @@
       updateViewBanner(`🏠 <b>${activeProfileName}</b>: Đang ở sảnh (Chờ tìm bàn)`, "lobby");
     }
 
+
     // ĐỒNG BỘ SỐ DƯ (BALANCE) REALTIME VỀ APP
     else if (ev.data.type === "AUTOTOOL_BALANCE_UPDATE") {
       const bal = ev.data.balance;
@@ -579,6 +781,36 @@
         requestControl("/api/accounts/update-balance", {
           profile_name: activeProfileName || ev.data.profile_name,
           balance: bal,
+        }, "POST").catch(() => {});
+      }
+    }
+
+    // ĐỒNG BỘ TÊN IN-GAME THỰC TẾ (TRÁNH LỆCH KÝ TỰ) — chạy 1 lần khi game trả về cmd 100
+    else if (ev.data.type === "AUTOTOOL_USERNAME_SYNC") {
+      const realDn  = ev.data.real_dn;
+      const realU   = ev.data.real_u;
+      const realUid = ev.data.real_uid;
+      const pName   = activeProfileName || ev.data.profile_name;
+      if (realDn && pName) {
+        // Cập nhật banner để người dùng thấy tên thực đang dùng
+        const btn = document.getElementById("autotool-btn-text");
+        if (btn) btn.textContent = `🟢 Online (${realDn})`;
+
+        // Gửi lên Hub qua WebSocket (để broadcast_partners dùng đúng tên)
+        safeSendMessage({
+          type: "AUTOTOOL_USERNAME_SYNC",
+          profile_name: pName,
+          real_dn: realDn,
+          real_u: realU,
+          real_uid: realUid,
+        });
+
+        // Gọi REST API để cập nhật username vào accounts.json ngay lập tức
+        requestControl("/api/accounts/update-username", {
+          profile_name: pName,
+          real_dn: realDn,
+          real_u: realU,
+          real_uid: realUid,
         }, "POST").catch(() => {});
       }
     }
@@ -713,11 +945,13 @@
       showToast(`🟢 <b>KHỚP BÀN THÀNH CÔNG!</b><br>${pLabel} & ${partner}<br>⚡ Đã khóa bàn & tự động Sẵn Sàng!`, "success");
 
       // Báo ngay lên Extension Hub để cứu hẹn giờ của đồng đội và dừng mọi lệnh Join
-      safeSendMessage({
-        type: "PARTNER_MATCHED",
-        profile_name: activeProfileName,
-        partner_name: partner,
-      });
+      if (partner && !["none", "null", "undefined", ""].includes(String(partner).trim().toLowerCase())) {
+        safeSendMessage({
+          type: "PARTNER_MATCHED",
+          profile_name: activeProfileName,
+          partner_name: partner,
+        });
+      }
 
       requestControl("/api/accounts/update-log", {
         profile_name: activeProfileName,
@@ -847,6 +1081,19 @@
       requestControl("/api/accounts/update-cards", {
         profile_name: activeProfileName,
         cards: [],
+      }, "POST").catch(() => {});
+    }
+
+    // TÀI KHOẢN BỊ ĐĂNG XUẤT / HẾT PHIÊN
+    else if (ev.data.type === "AUTOTOOL_ACCOUNT_LOGGED_OUT") {
+      const pLabel = activeProfileName || "Tool V3";
+      const reason = ev.data.reason || "Hết phiên / bị kick";
+      updateViewBanner(`⚠️ <b>${pLabel}: TÀI KHOẢN BỊ ĐĂNG XUẤT!</b> ${reason}`, "error");
+      showToast(`⚠️ <b>TÀI KHOẢN BỊ ĐĂNG XUẤT!</b><br>${pLabel}<br>${reason}`, "warn");
+
+      requestControl("/api/accounts/update-log", {
+        profile_name: activeProfileName,
+        log: `⚠️ Tài khoản bị đăng xuất: ${reason}`,
       }, "POST").catch(() => {});
     }
   });

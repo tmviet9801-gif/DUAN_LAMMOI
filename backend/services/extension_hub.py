@@ -92,31 +92,98 @@ class ExtensionHubManager:
             "timestamp": time.time(),
         })
 
+    def _resolve_ws(self, profile_name: str) -> tuple[Optional[str], Optional[WebSocket]]:
+        """Phân giải WebSocket của profile theo tên, username, character_name, uid hoặc alias."""
+        if not profile_name:
+            return None, None
+        # 1. Trực tiếp
+        if profile_name in self.active_sockets:
+            return profile_name, self.active_sockets[profile_name]
+
+        # 2. Không phân biệt hoa thường
+        p_low = str(profile_name).strip().lower()
+        for k, ws in self.active_sockets.items():
+            if str(k).strip().lower() == p_low:
+                return k, ws
+
+        # 3. Phân giải qua accounts.json
+        accounts = self._get_accounts_data()
+        matched_account = None
+        for a in accounts:
+            a_name = str(a.get("name") or "").strip().lower()
+            a_user = str(a.get("username") or "").strip().lower()
+            a_char = str(a.get("character_name") or "").strip().lower()
+            a_id = str(a.get("id") or "").strip().lower()
+            a_uid = str(a.get("uid") or "").strip()
+            ws_local = (a.get("web_storage") or {}).get("local") or {}
+            k_user = str(ws_local.get("KEY_USER_NAME") or "").strip().lower()
+            p_user = str(ws_local.get("AUTOTOOL_PROFILE_NAME") or "").strip().lower()
+
+            if (p_low in (a_name, a_user, a_char, a_id, k_user, p_user) or 
+                (a_uid and p_low == a_uid) or
+                (a_name.replace(" ", "") == p_low.replace(" ", "")) or
+                (a_name.replace("0", "") == p_low.replace("0", ""))):
+                matched_account = a
+                break
+
+        if matched_account:
+            candidate_names = [
+                str(matched_account.get("name") or ""),
+                str(matched_account.get("username") or ""),
+                str(matched_account.get("character_name") or ""),
+                str(matched_account.get("uid") or ""),
+                str(((matched_account.get("web_storage") or {}).get("local") or {}).get("KEY_USER_NAME") or ""),
+                str(((matched_account.get("web_storage") or {}).get("local") or {}).get("AUTOTOOL_PROFILE_NAME") or ""),
+            ]
+            for cand in candidate_names:
+                if not cand:
+                    continue
+                c_low = cand.strip().lower()
+                for k, ws in self.active_sockets.items():
+                    if str(k).strip().lower() == c_low:
+                        return k, ws
+
+        # 4. Phân giải qua profile_states (dn, u, uid)
+        for k, st in self.profile_states.items():
+            if not st.get("connected"):
+                continue
+            st_dn = str(st.get("dn") or "").strip().lower()
+            st_u = str(st.get("u") or "").strip().lower()
+            st_uid = str(st.get("uid") or "").strip()
+            if p_low in (st_dn, st_u) or (st_uid and p_low == st_uid):
+                if k in self.active_sockets:
+                    return k, self.active_sockets[k]
+
+        return None, None
+
     def is_connected(self, profile_name: str) -> bool:
-        """Kiểm tra xem profile có đang kết nối Extension không."""
-        return profile_name in self.active_sockets
+        """Kiểm tra xem profile có đang kết nối Extension không (hỗ trợ alias)."""
+        k, ws = self._resolve_ws(profile_name)
+        return bool(ws)
 
     async def send_command(self, profile_name: str, action: str, data: Optional[dict] = None) -> bool:
-        """Bắn lệnh tức thời xuống tab của profile qua Extension Bridge (Độ trễ <2ms)."""
-        ws = self.active_sockets.get(profile_name)
-        if not ws:
-            log.warning("send_command: Profile '%s' chưa kết nối Extension!", profile_name)
+        """Bắn lệnh tức thời xuống tab của profile qua Extension Bridge (Độ trễ <2ms, hỗ trợ alias)."""
+        resolved_name, ws = self._resolve_ws(profile_name)
+        if not ws or not resolved_name:
+            log.warning("send_command: Profile '%s' chưa kết nối Extension! (Active: %s)", 
+                        profile_name, list(self.active_sockets.keys()))
             return False
 
         payload = {
             "action": action,
-            "profile_name": profile_name,
+            "profile_name": resolved_name,
             "data": data or {},
             "timestamp": time.time(),
         }
 
         try:
             await ws.send_text(json.dumps(payload))
-            log.info("ExtensionHub V3 -> [%s] Lệnh '%s' gửi thành công: %s", profile_name, action, data)
+            log.info("ExtensionHub V3 -> [%s (alias: %s)] Lệnh '%s' gửi thành công: %s", 
+                     resolved_name, profile_name, action, data)
             return True
         except Exception as e:
-            log.warning("ExtensionHub V3 -> [%s] Lỗi gửi lệnh '%s': %s", profile_name, action, e)
-            await self.unregister(profile_name, ws)
+            log.warning("ExtensionHub V3 -> [%s] Lỗi gửi lệnh '%s': %s", resolved_name, action, e)
+            await self.unregister(resolved_name, ws)
             return False
 
     async def broadcast_command(self, action: str, data: Optional[dict] = None) -> int:
@@ -128,46 +195,48 @@ class ExtensionHubManager:
                 sent_count += 1
         return sent_count
 
-    def _get_account_aliases(self) -> dict:
+    def _get_accounts_data(self) -> list[dict]:
         """Đọc toàn bộ accounts.json để trích xuất name, username, và các alias trong web_storage."""
-        alias_map = {}
         try:
             from models.config_model import load_accounts
-            accounts = load_accounts()
-            for a in accounts:
-                key = str(a.get("name") or a.get("username") or a.get("id") or "").strip().lower()
-                if not key:
-                    continue
-                names = set()
-                for key_field in ("name", "username", "id"):
-                    val = a.get(key_field)
-                    if val:
-                        names.add(str(val).strip().lower())
-                ws_local = (a.get("web_storage") or {}).get("local") or {}
-                if ws_local.get("KEY_USER_NAME"):
-                    names.add(str(ws_local["KEY_USER_NAME"]).strip().lower())
-                for k in ws_local.keys():
-                    if "KEY_SETTING" in k:
-                        prefix = k.split("KEY_SETTING")[0].strip().lower()
-                        if prefix: names.add(prefix)
-                    elif "EAuthenticatorKey_" in k:
-                        prefix = k.replace("EAuthenticatorKey_", "").strip().lower()
-                        if prefix: names.add(prefix)
-                alias_map[key] = list(names)
+            return load_accounts()
         except Exception as e:
             log.warning("ExtensionHub V3: Lỗi đọc accounts.json: %s", e)
-        return alias_map
+            return []
 
     async def broadcast_partners(self):
         """Đồng bộ danh sách tất cả đồng đội (in-game DN, U, UID và aliases) cho mọi extension đang online."""
-        alias_map = self._get_account_aliases()
+        accounts = self._get_accounts_data()
         active_names = list(self.active_sockets.keys())
+
+        # Xây dựng danh sách aliases riêng biệt cho từng tài khoản (dựa trên account ID)
+        account_groups = []
+        for a in accounts:
+            names = set()
+            for key_field in ("name", "username", "character_name", "id", "uid", "game_username"):
+                val = a.get(key_field)
+                if val:
+                    names.add(str(val).strip().lower())
+            ws_local = (a.get("web_storage") or {}).get("local") or {}
+            if ws_local.get("KEY_USER_NAME"):
+                names.add(str(ws_local["KEY_USER_NAME"]).strip().lower())
+            for k in ws_local.keys():
+                if "KEY_SETTING" in k:
+                    prefix = k.split("KEY_SETTING")[0].strip().lower()
+                    if prefix: names.add(prefix)
+                elif "EAuthenticatorKey_" in k:
+                    prefix = k.replace("EAuthenticatorKey_", "").strip().lower()
+                    if prefix: names.add(prefix)
+            account_groups.append({
+                "id": str(a.get("id") or a.get("index")),
+                "names": names,
+            })
 
         for name in active_names:
             name_low = str(name).strip().lower()
             partners = []
 
-            # 1. Thêm từ các tab browser đang kết nối
+            # 1. Thêm từ các tab browser khác đang kết nối
             for p in active_names:
                 p_low = str(p).strip().lower()
                 if p_low != name_low:
@@ -177,10 +246,16 @@ class ExtensionHubManager:
                     if st.get("u"): partners.append(str(st["u"]).strip().lower())
                     if st.get("uid"): partners.append(str(st["uid"]).strip())
 
-            # 2. Bổ sung các aliases từ accounts.json của các tài khoản khác
-            for acc_key, aliases in alias_map.items():
-                if acc_key != name_low and not name_low.startswith(acc_key) and not acc_key.startswith(name_low):
-                    for alias in aliases:
+            # 2. Bổ sung các aliases từ accounts.json của các tài khoản KHÁC (tránh đụng hàng chính mình)
+            my_acc_id = None
+            for grp in account_groups:
+                if name_low in grp["names"]:
+                    my_acc_id = grp["id"]
+                    break
+
+            for grp in account_groups:
+                if grp["id"] != my_acc_id:
+                    for alias in grp["names"]:
                         if alias and alias not in partners and alias != name_low:
                             partners.append(alias)
 
@@ -236,6 +311,73 @@ class ExtensionHubManager:
             if u: state["u"] = u
             if uid: state["uid"] = uid
             asyncio.create_task(self.broadcast_partners())
+
+        # 0b. ĐỒNG BỘ TÊN IN-GAME THỰC TẾ VÀO accounts.json (Tránh lệch ký tự do người dùng nhập sai)
+        # Khi game gửi cmd 100 -> Extension bắt được dn/u/uid chính xác -> cập nhật thẳng vào DB
+        if msg_type == "AUTOTOOL_USERNAME_SYNC":
+            real_dn = msg.get("real_dn") or ""
+            real_u  = msg.get("real_u") or ""
+            real_uid = msg.get("real_uid") or ""
+            if real_dn:
+                # Cập nhật state in-memory ngay lập tức
+                state["dn"] = real_dn
+                if real_u:  state["u"]   = real_u
+                if real_uid: state["uid"] = str(real_uid)
+
+                log.info("ExtensionHub V3: >>> AUTO-SYNC tên in-game '%s' -> '%s' (uid=%s) cho profile '%s' <<<",
+                         profile_name, real_dn, real_uid, profile_name)
+
+                # Cập nhật accounts.json: ghi đúng real_dn vào trường username
+                try:
+                    from models.config_model import load_accounts, save_accounts
+                    accounts = load_accounts()
+                    updated = False
+                    for a in accounts:
+                        p_low = str(profile_name).strip().lower()
+                        a_name = str(a.get("name") or "").strip().lower()
+                        a_user = str(a.get("username") or "").strip().lower()
+                        a_id = str(a.get("id") or "").strip().lower()
+                        a_uid = str(a.get("uid") or "").strip()
+                        ws_local = (a.get("web_storage") or {}).get("local") or {}
+                        k_user = str(ws_local.get("KEY_USER_NAME") or "").strip().lower()
+
+                        name_match = (
+                            p_low == a_name or
+                            p_low == a_user or
+                            p_low == a_id or
+                            p_low == k_user or
+                            (real_uid and a_uid == str(real_uid))
+                        )
+                        if name_match:
+                            old_char = a.get("character_name", "")
+                            # Ghi đúng tên nhân vật in-game vào character_name (dùng để tìm bàn và so khớp)
+                            a["character_name"] = real_dn
+                            a["game_username"] = real_dn
+
+                            if real_uid:
+                                a["uid"] = str(real_uid)     # ghi UID chính xác
+                            if real_u and real_u != real_dn:
+                                a["game_username"] = real_u  # lưu thêm game u để tham chiếu
+                            updated = True
+                            if old_char != real_dn:
+                                log.info("ExtensionHub V3: Đã cập nhật character_name '%s' -> '%s' cho profile '%s'",
+                                         old_char, real_dn, profile_name)
+                            break
+                    if updated:
+                        save_accounts(accounts)
+                except Exception as e:
+                    log.warning("ExtensionHub V3: Lỗi cập nhật character_name vào accounts.json: %s", e)
+
+                # Re-broadcast partners để tất cả tab dùng đúng tên mới
+                asyncio.create_task(self.broadcast_partners())
+
+                # Thông báo App UI cập nhật tên ngay lập tức
+                self._emit({
+                    "type": "accounts_updated",
+                    "profile_name": profile_name,
+                    "character_name": real_dn,
+                    "uid": str(real_uid) if real_uid else None,
+                })
 
         # 1. Cập nhật Số Dư (Balance) Realtime từ Extension
         if msg_type in ("BALANCE_UPDATE", "AUTOTOOL_BALANCE_UPDATE"):
@@ -376,15 +518,26 @@ class ExtensionHubManager:
                             }))
 
                         # 2. Bắn lệnh JOIN_ROOM ngay lập tức (<2ms) tới tất cả các profile khác đang online!
+                        # CRITICAL FIX: Gửi kèm định danh in-game thực tế của Anchor (A) để B có thể
+                        # nhận diện đúng A trong cmd 202, tránh race condition khi SYNC_PARTNERS chưa cập nhật.
+                        anchor_state = self.profile_states.get(profile_name) or {}
+                        anchor_dn  = anchor_state.get("dn") or ""   # tên in-game thực (nicktestxxabai1)
+                        anchor_u   = anchor_state.get("u") or ""
+                        anchor_uid = str(anchor_state.get("uid") or "")
+
                         for other_profile in list(self.active_sockets.keys()):
                             if other_profile != profile_name:
-                                log.info("ExtensionHub V3: >>> BÀN TRỐNG ĐÃ XÁC THỰC! TỰ ĐỘNG CHUYỂN TIẾP BÀN '%s' TỪ '%s' SANG '%s' TỨC THỜI (<2ms)! <<<",
-                                         rid, profile_name, other_profile)
+                                log.info("ExtensionHub V3: >>> BÀN TRỐNG ĐÃ XÁC THỰC! TỰ ĐỘNG CHUYỂN TIẾP BÀN '%s' TỪ '%s' SANG '%s' TỨC THỜI (<2ms)! [anchor_dn=%s, uid=%s] <<<",
+                                         rid, profile_name, other_profile, anchor_dn, anchor_uid)
                                 asyncio.create_task(self.send_command(other_profile, "JOIN_ROOM", {
                                     "rid": rid,
                                     "bet": ri.get("b", 100),
                                     "mu": ri.get("Mu", 2),
                                     "source_profile": profile_name,
+                                    # Định danh thực tế của Anchor để B inject vào partners list ngay lập tức
+                                    "anchor_dn":  anchor_dn,
+                                    "anchor_u":   anchor_u,
+                                    "anchor_uid": anchor_uid,
                                 }))
 
         # 3b. HỦY LỆNH MỜI VÀO BÀN KHI ANCHOR PHÁT HIỆN NGƯỜI LẠ / BÀN FULL
@@ -406,14 +559,19 @@ class ExtensionHubManager:
         # 4. Xác nhận khớp bàn thành công giữa các đối tác (Cứu hẹn giờ out)
         elif msg_type in ("PARTNER_MATCHED", "AUTOTOOL_MATCH_SUCCESS"):
             partner_name = msg.get("partner_name")
-            log.info("ExtensionHub V3: >>> PROFILE '%s' XÁC NHẬN KHỚP BÀN VỚI '%s' -> PHÁT LỆNH CONFIRM_MATCH TỨC THÌ! <<<",
-                     profile_name, partner_name)
-            for other_profile in list(self.active_sockets.keys()):
-                if other_profile != profile_name:
-                    asyncio.create_task(self.send_command(other_profile, "CONFIRM_MATCH", {
-                        "source": profile_name,
-                        "partner": partner_name,
-                    }))
+            # CHẶN: Không gửi CONFIRM_MATCH nếu partner_name là None/rỗng (tránh vòng lặp vô hạn)
+            if not partner_name or str(partner_name).strip().lower() in ("none", ""):
+                log.warning("ExtensionHub V3: BỎ QUA CONFIRM_MATCH từ '%s' vì partner_name=%r (chưa xác định đồng đội)!",
+                            profile_name, partner_name)
+            else:
+                log.info("ExtensionHub V3: >>> PROFILE '%s' XÁC NHẬN KHỚP BÀN VỚI '%s' -> PHÁT LỆNH CONFIRM_MATCH TỨC THÌ! <<<",
+                         profile_name, partner_name)
+                for other_profile in list(self.active_sockets.keys()):
+                    if other_profile != profile_name:
+                        asyncio.create_task(self.send_command(other_profile, "CONFIRM_MATCH", {
+                            "source": profile_name,
+                            "partner": partner_name,
+                        }))
 
         # 5. Cập nhật danh sách người chơi
         elif msg_type in ("PLAYER_LIST", "PLAYERS"):

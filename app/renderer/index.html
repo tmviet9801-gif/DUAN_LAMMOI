@@ -119,11 +119,6 @@
               <label>Game</label>
               <select id="gcGameSelect">
                 <option value="TLDL" selected>TLDL</option>
-                <option value="PHOM">PHOM</option>
-                <option value="MAUBINH">MAUBINH</option>
-                <option value="SAM">SAM</option>
-                <option value="LIENG">LIENG</option>
-                <option value="POKER">POKER</option>
               </select>
             </div>
             <div class="gc-field">
@@ -163,23 +158,19 @@
             </div>
           </div>
 
-          <!-- Row 2: Action Buttons (Tạo phòng, Tìm ID, Thoát hết, Dừng) -->
+          <!-- Row 2: Action Buttons (Thoát hết, Dừng) -->
           <div class="gc-row row-2">
-            <button id="btnGcCreateRoom" class="btn-gc green-bold">TẠO PHÒNG</button>
-            <button id="btnGcFindId" class="btn-gc lime">TÌM ID</button>
             <button id="btnGcLeaveAll" class="btn-gc red">THOÁT HẾT</button>
             <button id="btnGcStop" class="btn-gc red-dark">DỪNG</button>
           </div>
 
           <!-- Row 3: Auto options & Random Join -->
           <div class="gc-row row-3">
-            <label class="gc-check-lbl"><input id="gcAutoRejoin" type="checkbox" checked /> Auto Vào Lại</label>
             <label class="gc-check-lbl"><input id="gcSSWhenEnter" type="checkbox" checked /> SS Khi Vào</label>
             <label class="gc-check-lbl"><input id="gcAutoLeave" type="checkbox" checked /> Tự Out</label>
-            <input id="gcTargetRoomId" class="gc-input-rid" type="text" placeholder="1295398" value="1295398" />
             <div class="gc-field inline">
               <label>Slot</label>
-              <input id="gcSlotNum" type="number" value="3" style="width:40px" />
+              <input id="gcSlotNum" type="number" value="2" style="width:40px" />
             </div>
             <button id="btnGcRandomJoin" class="btn-gc blue">RANDOM VÀO PHÒNG</button>
             <button id="btnGcStopLeave" class="btn-gc red">DỪNG/THOÁT</button>
@@ -236,9 +227,6 @@
           <span id="pickerBtn" class="tb-selected-count">Đã chọn 0/0</span>
           <button id="btnCloseChrome" class="btn-tb red">Đóng Chrome</button>
           <button id="btnOpenChrome" class="btn-tb green">Mở Chrome</button>
-          <button id="btnReconnect" class="btn-tb lime">Reconnec</button>
-          <button id="btnModePhom" class="btn-tb blue">Phom</button>
-          <button id="btnModeMauBinh" class="btn-tb blue">MauBinh</button>
           <button id="btnLayout" class="btn-tb purple">Sắp Xếp</button>
         </div>
         <div class="tb-right">
@@ -257,8 +245,8 @@
           <thead>
             <tr>
               <th style="width:36px; text-align:center;"><input type="checkbox" id="thCheckAll" /></th>
-              <th style="width:130px">Username</th>
-              <th style="width:110px">Name</th>
+              <th style="width:130px" title="Tên tài khoản đăng nhập (Account)">Tài khoản</th>
+              <th style="width:130px" title="Tên nhân vật hiển thị trong game (Character In-game)">Tên nhân vật</th>
               <th style="width:130px">Proxy</th>
               <th style="width:90px">Balance</th>
               <th style="width:60px">Room</th>
@@ -549,13 +537,17 @@
       <h3>Sửa thông tin tài khoản — <span id="epName" class="normal"></span></h3>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
         <div class="field">
-          <label for="epProfileName">Tên Profile</label>
-          <input id="epProfileName" placeholder="Account01" />
+          <label for="epUsername">Tài khoản (Tên đăng nhập)</label>
+          <input id="epUsername" placeholder="Ví dụ: nicktestxabai1" />
         </div>
         <div class="field">
-          <label for="epUsername">Username (Tên đăng nhập)</label>
-          <input id="epUsername" placeholder="nicktest..." />
+          <label for="epCharName">Tên nhân vật (In-game)</label>
+          <input id="epCharName" placeholder="Ví dụ: nicktestxxabai1" />
         </div>
+      </div>
+      <div class="field">
+        <label for="epProfileName">Tên Profile (Nhãn gợi nhớ)</label>
+        <input id="epProfileName" placeholder="Account 01" />
       </div>
       <div class="field">
         <label for="epPassword">Mật khẩu (Password)</label>

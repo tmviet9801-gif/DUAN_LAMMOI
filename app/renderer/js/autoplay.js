@@ -76,25 +76,83 @@
   }
 
   async function start(isFromDashboard = false) {
-    // 1. Thu thập danh sách tài khoản được chọn (hỗ trợ tick 2-5 tài khoản trên bảng danh sách)
-    const selectedRows = Array.from(document.querySelectorAll("#accTbody tr.selected"));
-    let selectedProfiles = selectedRows.map(r => r.dataset.name).filter(Boolean);
+    // 1. Thu thập danh sách tài khoản được chọn (đa tầng dự phòng đảm bảo luôn có tài khoản hoạt động)
+    let selectedProfiles = [];
 
-    const mainSelect = isFromDashboard ? $("gcProfileMain") : ($("afProfileMain") || $("gcProfileMain"));
-    const subSelect = isFromDashboard ? $("gcProfileSub") : ($("afProfileSub") || $("gcProfileSub"));
-
-    const mainName = mainSelect ? mainSelect.value : "";
-    const subName = subSelect ? subSelect.value : "";
-
-    // Nếu trên bảng chưa tick chọn đủ 2 tài khoản -> sử dụng tài khoản từ 2 ô Chọn Chính/Phụ
-    if (selectedProfiles.length < 2) {
+    // Ưu tiên 1 (khi bấm từ Dashboard): Lấy trực tiếp từ 2 dropdown Chính & Phụ trên thanh Gom Bàn
+    if (isFromDashboard) {
+      const mainSelect = $("gcProfileMain");
+      const subSelect = $("gcProfileSub");
+      const mainName = mainSelect ? mainSelect.value : "";
+      const subName = subSelect ? subSelect.value : "";
       if (mainName && subName && mainName !== subName) {
         selectedProfiles = [mainName, subName];
       }
     }
 
+    // Ưu tiên 2: Lấy từ App.selectedProfileIds (các profile được tích checkbox trên bảng)
+    if (selectedProfiles.length < 2 && window.App && App.selectedProfileIds && App.selectedProfileIds.size >= 2) {
+      const accs = App.state && App.state.accounts ? App.state.accounts : [];
+      selectedProfiles = accs
+        .filter((a) => App.selectedProfileIds.has(a.id) || App.selectedProfileIds.has(String(a.id)) || App.selectedProfileIds.has(Number(a.id)))
+        .map((a) => a.name || a.username)
+        .filter(Boolean);
+    }
+
+    // Ưu tiên 3: Lấy từ các dòng có class row-selected hoặc selected trên #profileTbody
     if (selectedProfiles.length < 2) {
-      App.toast("Vui lòng tick chọn từ 2 đến 5 tài khoản trên bảng danh sách (hoặc chọn 2 tài khoản Chính & Phụ)!", "warn");
+      const selectedRows = Array.from(document.querySelectorAll("#profileTbody tr.row-selected, #profileTbody tr.selected, #accTbody tr.selected"));
+      const fromRows = selectedRows.map((r) => r.dataset.name).filter(Boolean);
+      if (fromRows.length >= 2) {
+        selectedProfiles = fromRows;
+      }
+    }
+
+    // Ưu tiên 4: Lấy từ 2 dropdown bất kể isFromDashboard
+    if (selectedProfiles.length < 2) {
+      const mainSelect = $("gcProfileMain") || $("afProfileMain");
+      const subSelect = $("gcProfileSub") || $("afProfileSub");
+      const mainName = mainSelect ? mainSelect.value : "";
+      const subName = subSelect ? subSelect.value : "";
+      if (mainName && subName && mainName !== subName) {
+        selectedProfiles = [mainName, subName];
+      }
+    }
+
+    // Ưu tiên 5: Tự động lấy các profile ĐANG MỞ (có session Chrome đang chạy trong App.state.sessions)
+    if (selectedProfiles.length < 2 && window.App && App.state && App.state.sessions) {
+      const openSessions = (App.state.sessions || []).filter(
+        (s) => s.account && (s.state === "ready" || s.state === "busy" || s.page || s.pid)
+      );
+      const openNames = openSessions
+        .map((s) => s.account.name || s.account.username)
+        .filter(Boolean);
+      const uniqueOpen = Array.from(new Set(openNames));
+      if (uniqueOpen.length >= 2) {
+        selectedProfiles = uniqueOpen;
+      }
+    }
+
+    // Ưu tiên 6: Lấy trực tiếp từ các dòng hiển thị trên bảng DOM (#profileTbody tr)
+    if (selectedProfiles.length < 2) {
+      const allRows = Array.from(document.querySelectorAll("#profileTbody tr"));
+      const domNames = allRows.map((r) => r.dataset.name).filter(Boolean);
+      if (domNames.length >= 2) {
+        selectedProfiles = [domNames[0], domNames[1]];
+      }
+    }
+
+    // Ưu tiên 7: Fallback lấy 2 tài khoản đầu tiên trong danh sách accounts
+    if (selectedProfiles.length < 2 && window.App && App.state && App.state.accounts && App.state.accounts.length >= 2) {
+      selectedProfiles = [
+        App.state.accounts[0].name || App.state.accounts[0].username,
+        App.state.accounts[1].name || App.state.accounts[1].username,
+      ];
+    }
+
+    if (selectedProfiles.length < 2) {
+      setStatus("⚠️ Vui lòng mở ít nhất 2 profile hoặc chọn 2 tài khoản trên bảng danh sách!", "error");
+      App.toast("Vui lòng mở ít nhất 2 profile hoặc chọn 2 tài khoản trên bảng danh sách!", "warn");
       return;
     }
 
@@ -106,13 +164,16 @@
     const hostName = selectedProfiles[0];
     const clientProfiles = selectedProfiles.slice(1);
 
-    // Lấy cấu hình cược
+    // Lấy cấu hình cược chính xác (ưu tiên theo bảng điều khiển kích hoạt)
     let targetBet = 100;
-    if ($("gcBetSelect")) {
+    if (isFromDashboard && $("gcBetSelect") && $("gcBetSelect").value) {
       targetBet = parseInt($("gcBetSelect").value || 100, 10);
-    } else if ($("afTargetBet")) {
+    } else if ($("afTargetBet") && $("afTargetBet").value) {
       targetBet = parseInt($("afTargetBet").value || 100, 10);
+    } else if ($("gcBetSelect") && $("gcBetSelect").value) {
+      targetBet = parseInt($("gcBetSelect").value || 100, 10);
     }
+    if (isNaN(targetBet) || targetBet <= 0) targetBet = 100;
 
     const targetMu = $("gcSlotCount") ? parseInt($("gcSlotCount").value || 2) : ($("afTargetMu") ? parseInt($("afTargetMu").value || 2) : 2);
     const chongPha = $("afChongPha") ? $("afChongPha").checked : true;
@@ -209,6 +270,20 @@
     if (selMain && mainName) selMain.value = mainName;
     if (selSub && subName) selSub.value = subName;
   };
+
+  // Đồng bộ 2 chiều giữa gcBetSelect (thanh trên) và afTargetBet (bảng dưới)
+  setTimeout(() => {
+    const gcBet = $("gcBetSelect");
+    const afBet = $("afTargetBet");
+    if (gcBet && afBet) {
+      gcBet.addEventListener("change", () => {
+        if (afBet.value !== gcBet.value) afBet.value = gcBet.value;
+      });
+      afBet.addEventListener("change", () => {
+        if (gcBet.value !== afBet.value) gcBet.value = afBet.value;
+      });
+    }
+  }, 100);
 
   App.autoplayRenderProfiles = renderProfiles;
   renderProfiles();

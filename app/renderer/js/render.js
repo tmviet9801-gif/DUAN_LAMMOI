@@ -155,8 +155,10 @@
 
     rows.forEach((a, i) => {
       const tr = document.createElement("tr");
+      tr.dataset.id = a.id || "";
+      tr.dataset.name = a.name || "";
       const selected = App.selectedProfileIds.has(a.id);
-      if (selected) tr.classList.add("row-selected");
+      if (selected) tr.classList.add("row-selected", "selected");
       const proxy = a.proxy ? String(a.proxy) : "";
       const isOpen = (App.state.sessions || []).some(
         (s) => s.account && (s.account.id === a.id || s.account.name === a.name) && s.state === "ready"
@@ -171,12 +173,17 @@
       const statusText = isOpen ? "Live" : (a.status || "Idle");
       const statusBadge = `<span class="${statusText === 'Live' ? 'badge-live' : 'badge-idle'}">${statusText}</span>`;
 
+      const accountUser = a.username || a.name || "--";
+      const charName = a.character_name || a.game_username || a.name || accountUser;
+
       tr.innerHTML = `
         <td style="text-align:center;"><input type="checkbox" class="row-chk" ${selected ? "checked" : ""} /></td>
-        <td class="td-username cell-clickable" title="Click hoặc đúp chuột để sửa thông tin tài khoản">
-          ${App.esc(a.username || a.name)} <span class="ico-edit" title="Sửa thông tin">✏️</span>
+        <td class="td-username cell-clickable" title="Tài khoản đăng nhập (Account): ${App.esc(accountUser)}. Click để sửa">
+          ${App.esc(accountUser)} <span class="ico-edit" title="Sửa thông tin">✏️</span>
         </td>
-        <td class="td-name cell-clickable" title="Click hoặc đúp chuột để sửa thông tin">${App.esc(a.name || a.username)}</td>
+        <td class="td-name cell-clickable" title="Tên nhân vật in-game (Character): ${App.esc(charName)}. Click để sửa">
+          <span style="font-weight:600; color:var(--accent, #38bdf8);">${App.esc(charName)}</span>
+        </td>
         <td class="td-proxy" title="${App.esc(proxy || "IP máy")}">${proxy ? App.esc(proxy) : '<span class="ip-local">IP máy</span>'}</td>
         <td class="td-balance">${balanceStr}</td>
         <td class="td-room">${roomStr}</td>

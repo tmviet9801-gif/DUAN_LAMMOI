@@ -27,6 +27,7 @@ class EvalIn(BaseModel):
     profile_name: Optional[str] = None
     name: Optional[str] = None
     js: str
+    target: Optional[str] = None  # 'worker', 'main_page', or None/'all'
 
 
 class ClickIn(BaseModel):
@@ -150,20 +151,24 @@ async def browser_eval(body: EvalIn, request: Request):
         raise HTTPException(status_code=400, detail="Không tìm thấy session/page")
     try:
         frames_res = []
-        for i, frame in enumerate(session.page.frames):
-            try:
-                fr_res = await frame.evaluate(body.js)
-                frames_res.append({"frame_idx": i, "url": frame.url, "result": fr_res})
-            except Exception as e:
-                frames_res.append({"frame_idx": i, "url": frame.url, "error": str(e)})
+        if body.target != "worker":
+            target_frames = [session.page.main_frame] if body.target == "main_page" else session.page.frames
+            for i, frame in enumerate(target_frames):
+                try:
+                    fr_res = await frame.evaluate(body.js)
+                    frames_res.append({"frame_idx": i, "url": frame.url, "result": fr_res})
+                except Exception as e:
+                    frames_res.append({"frame_idx": i, "url": frame.url, "error": str(e)})
 
         workers_res = []
-        for j, w in enumerate(session.page.workers or []):
-            try:
-                w_res = await w.evaluate(body.js)
-                workers_res.append({"worker_idx": j, "url": w.url, "result": w_res})
-            except Exception as e:
-                workers_res.append({"worker_idx": j, "url": w.url, "error": str(e)})
+        if body.target != "main_page":
+            all_workers = list(session.page.workers or []) + list(getattr(session.browser_ctx, "service_workers", []) or [])
+            for j, w in enumerate(all_workers):
+                try:
+                    w_res = await w.evaluate(body.js)
+                    workers_res.append({"worker_idx": j, "url": getattr(w, "url", ""), "result": w_res})
+                except Exception as e:
+                    workers_res.append({"worker_idx": j, "url": getattr(w, "url", ""), "error": str(e)})
 
         return {"result": frames_res, "workers": workers_res}
     except Exception as e:

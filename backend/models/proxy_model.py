@@ -41,6 +41,6 @@ def parse_proxy(raw: str) -> dict | None:
         }
 
     if proxy:
-        proxy["bypass"] = "localhost,127.0.0.1,<-loopback>"
+        proxy["bypass"] = "localhost,127.0.0.1,<local>"
         return proxy
     return None

@@ -551,15 +551,6 @@ class BrowserManager:
                 "--no-first-run",
             ]
 
-            # Tự động nạp Chrome Extension V3 cho mọi profile Chrome độc lập
-            ext_dir = Path(__file__).resolve().parent.parent / "extension"
-            if ext_dir.exists():
-                ext_path = str(ext_dir)
-                args += [
-                    f"--disable-extensions-except={ext_path}",
-                    f"--load-extension={ext_path}",
-                ]
-
             launch_kwargs = {
                 "user_data_dir": user_data_dir,
                 "headless": False,
@@ -570,8 +561,9 @@ class BrowserManager:
             if locale and locale != "random":
                 launch_kwargs["locale"] = locale
             if proxy_dict:
+                proxy_dict["bypass"] = "localhost,127.0.0.1,<local>"
                 launch_kwargs["proxy"] = proxy_dict
-                args.append("--proxy-bypass-list=<-loopback>,127.0.0.1,localhost")
+                args.append("--proxy-bypass-list=127.0.0.1;localhost;<local>")
             try:
                 h_desk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
                 if h_desk:

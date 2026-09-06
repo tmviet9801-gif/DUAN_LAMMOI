@@ -179,6 +179,11 @@ class HitClubAdapter(GameAdapter):
         if account_name not in self._pages:
             acc = self.account_lookup.get(account_name)
             if not acc:
+                for k, v in self.account_lookup.items():
+                    if k and k.lower().replace(" ", "") == account_name.lower().replace(" ", ""):
+                        acc = v
+                        break
+            if not acc:
                 return None
             page = await self.page_pool.get_or_open(acc)
             if page:
@@ -597,15 +602,6 @@ class HitClubAdapter(GameAdapter):
             await self.sniffer.inject_playwright(page)
             await self.sniffer.inject(page)
             await self.sniffer.inject_workers(page)
-        except Exception:
-            pass
-        try:
-            await page.context.set_offline(True)
-        except Exception:
-            pass
-        await asyncio.sleep(2)
-        try:
-            await page.context.set_offline(False)
         except Exception:
             pass
         return await self._wait_for_socket(page, timeout=wait)

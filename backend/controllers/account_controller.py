@@ -59,6 +59,7 @@ class AccountUpdateIn(BaseModel):
     url: str | None = None
     user_agent: str | None = None
     username: str | None = None
+    character_name: str | None = None
     password: str | None = None
 
 
@@ -84,15 +85,25 @@ async def get_accounts(request: Request):
         a["site"] = a.get("site") or "HIT"
 
         # Tra cứu trạng thái từ ExtensionHub nếu profile đang kết nối extension
-        p_state = ext_hub.get_profile_state(a.get("name") or a.get("username") or "") if ext_hub else None
+        p_state = ext_hub.get_profile_state(a.get("name") or a.get("username") or a.get("character_name") or "") if ext_hub else None
         is_ext_connected = bool(p_state and p_state.get("connected"))
+
+        # Phân biệt rõ ràng:
+        # 1. Tài khoản đăng nhập (Account Username)
+        # 2. Tên nhân vật in-game (Character Name - dùng để tìm bàn & so khớp)
+        ws_local = a.get("web_storage", {}).get("local", {})
+        a["username"] = a.get("username") or ws_local.get("KEY_USER_NAME") or a.get("name")
+        a["character_name"] = (
+            (p_state and p_state.get("dn"))
+            or a.get("character_name")
+            or a.get("game_username")
+            or a.get("name")
+            or a["username"]
+        )
 
         if (s and s.page) or is_ext_connected:
             a["status"] = "Live"
             a["connected"] = True
-            ws_local = a.get("web_storage", {}).get("local", {})
-            user_dn = ws_local.get("KEY_USER_NAME") or a.get("username") or a.get("name")
-            a["username"] = user_dn
 
             # 1. Số dư: Ưu tiên ext_hub realtime -> a.get("balance")
             if p_state and p_state.get("balance") is not None:
@@ -278,6 +289,88 @@ async def update_account_log(body: UpdateLogIn, request: Request):
     return {"ok": True, "profile_name": matched_profile, "log": log_text}
 
 
+class UpdateUsernameIn(BaseModel):
+    profile_name: str
+    real_dn: str          # Tên hiển thị in-game chính xác (từ server game, cmd 100)
+    real_u: str = ""      # Username in-game (có thể trùng hoặc khác dn)
+    real_uid: str = ""    # UID số (định danh tuyệt đối)
+
+
+@router.post("/api/accounts/update-username")
+async def update_account_username(body: UpdateUsernameIn, request: Request):
+    """AUTO-SYNC tên in-game thực tế từ Extension vào accounts.json.
+    
+    Được gọi tự động mỗi khi game trả về cmd 100 (thông tin user).
+    Ghi đúng tên nhân vật thực tế (real_dn) vào trường username để tránh
+    lỗi lệch ký tự do người dùng nhập sai (ví dụ 1 chữ x vs 2 chữ x).
+    """
+    p_name   = (body.profile_name or "").strip()
+    real_dn  = (body.real_dn or "").strip()
+    real_u   = (body.real_u or "").strip()
+    real_uid = (body.real_uid or "").strip()
+
+    if not p_name or not real_dn:
+        return {"ok": False, "error": "Thiếu profile_name hoặc real_dn"}
+
+    accounts = load_accounts()
+    matched_profile = p_name
+    old_username = ""
+    updated = False
+
+    for a in accounts:
+        if _match_account(a, p_name):
+            old_char = a.get("character_name", "")
+            # Ghi đúng tên nhân vật in-game vào character_name (dùng để tìm bàn và so khớp)
+            a["character_name"] = real_dn
+            a["game_username"] = real_dn
+            if not a.get("username"):
+                a["username"] = real_dn
+
+            if real_uid:
+                a["uid"] = real_uid
+            if real_u and real_u != real_dn:
+                a["game_username"] = real_u  # lưu thêm u-field để tham chiếu
+            matched_profile = a.get("name") or p_name
+            updated = True
+            break
+
+    if updated:
+        save_accounts(accounts)
+        if old_username != real_dn:
+            log.info(
+                "AUTO-SYNC username: profile='%s' | '%s' -> '%s' (uid=%s)",
+                matched_profile, old_username, real_dn, real_uid
+            )
+
+    # Thông báo qua Hub WebSocket để broadcast_partners re-sync
+    ext_hub = getattr(request.app.state, "ext_hub", None)
+    if ext_hub:
+        ext_hub.handle_message(matched_profile, {
+            "type": "AUTOTOOL_USERNAME_SYNC",
+            "real_dn": real_dn,
+            "real_u": real_u,
+            "real_uid": real_uid,
+        })
+
+    # Đẩy sự kiện SSE lên App UI để cập nhật tên ngay lập tức
+    events = getattr(request.app.state, "events", None)
+    if events:
+        events.publish({
+            "type": "accounts_updated",
+            "profile_name": matched_profile,
+            "username": real_dn,
+            "uid": real_uid or None,
+        })
+
+    return {
+        "ok": True,
+        "profile_name": matched_profile,
+        "username": real_dn,
+        "uid": real_uid or None,
+        "changed": old_username != real_dn,
+    }
+
+
 @router.post("/api/accounts/import")
 async def import_accounts(body: ImportAccountsIn):
     """Import tài khoản (nick|pass hoặc nick|pass|proxy). Tự gán cho profile chưa có account,
@@ -379,14 +472,39 @@ async def add_accounts_bulk(b: AccountBulkIn):
 
 
 @router.patch("/api/accounts/{account_id}")
-async def update_account(account_id: str, body: AccountUpdateIn):
+async def update_account(account_id: str, body: AccountUpdateIn, request: Request):
     accounts = load_accounts()
     for a in accounts:
         if a["id"] == account_id:
             data = body.model_dump(exclude_unset=True)
             a.update(data)
+            # 1. Tên tài khoản đăng nhập (Account Username)
+            if "username" in data and data["username"]:
+                new_user = str(data["username"]).strip()
+                a["username"] = new_user
+                if "web_storage" not in a or not isinstance(a["web_storage"], dict):
+                    a["web_storage"] = {}
+                if "local" not in a["web_storage"] or not isinstance(a["web_storage"]["local"], dict):
+                    a["web_storage"]["local"] = {}
+                a["web_storage"]["local"]["KEY_USER_NAME"] = new_user
+
+            # 2. Tên nhân vật in-game (Character Name)
+            if "character_name" in data and data["character_name"]:
+                new_char = str(data["character_name"]).strip()
+                a["character_name"] = new_char
+                a["game_username"] = new_char
+
             save_accounts(accounts)
             log.info("updated account %s: %s", account_id, data)
+
+            # Broadcast lại partners cho mọi extension đang mở để nhận ngay lập tức
+            ext_hub = getattr(request.app.state, "ext_hub", None)
+            if ext_hub:
+                try:
+                    await ext_hub.broadcast_partners()
+                except Exception as ex:
+                    log.warning("broadcast_partners error: %s", ex)
+
             return a
     raise HTTPException(status_code=404, detail="Không tìm thấy profile")
 
