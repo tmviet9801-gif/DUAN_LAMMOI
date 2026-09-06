@@ -1837,7 +1837,8 @@
     // làm lệch mức cược đã cấu hình. Nếu đã ở sảnh thì JOIN ngay không cần LEAVE.
     if (!specificRid) {
       const insideTable = (G.__room_players && G.__room_players.length > 0) ||
-                          (G.__last_room_info && G.__last_room_info.rid > 0 && G.__last_room_info.rid !== 100);
+                          (G.__last_room_info && G.__last_room_info.rid > 0 && G.__last_room_info.rid !== 100) ||
+                          (typeof isInsideGameTable === "function" && isInsideGameTable());
       if (insideTable) {
         try {
           simms.send('[4,"Simms",-1]');

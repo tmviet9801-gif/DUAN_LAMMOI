@@ -1709,6 +1709,28 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             except Exception:
                 pass
 
+            # SÀNG LỌC "KẸT BÀN CŨ" TRƯỚC MỖI LẦN JOIN (Nguồn gốc lỗi vào nhầm bàn 500):
+            # Sau khi reset biến nhớ ở trên, nếu client ĐANG THỰC SỰ NGỒI TRONG BÀN CŨ
+            # (vd bàn $500 từ ván trước) thì lệnh cmd 308 b=100 mới sẽ bị game bỏ qua
+            # hoặc tự rejoin ĐÚNG bàn cũ $500. Hàm __autotool_is_inside_table đọc scene
+            # Cocos TRỰC TIẾP (không phụ thuộc biến nhớ vừa reset) -> phát hiện kẹt bàn
+            # và LEAVE TRƯỚC, đảm bảo join lần sau vào ĐÚNG mức cược đã cấu hình.
+            try:
+                stuck_in_old_table = await first_page.evaluate("""() => {
+                    if (typeof window.__autotool_is_inside_table === 'function') {
+                        return window.__autotool_is_inside_table();
+                    }
+                    return !!(window.__room_players && window.__room_players.length > 0);
+                }""")
+                if stuck_in_old_table:
+                    log.warning("find-and-match: [Chống nhầm bàn] Account 1 ĐANG KẸT TRONG BÀN CŨ (biến nhớ vừa reset) -> chủ động LEAVE trước khi join bàn $%s!", bet_val)
+                    await _set_hud_status(first_page, "Đang thoát bàn cũ (chống vào nhầm bàn)...")
+                    await _do_leave_room(first_page, name=first_name, target_mu=target_mu)
+                    await asyncio.sleep(1.2)
+                    await _ensure_in_tldl_lobby(first_page, first_name)
+            except Exception:
+                pass
+
             # BƯỚC 1: DUY NHẤT ACCOUNT 1 TÌM BÀN CÔNG CỘNG MỚI TRỐNG (THEO MỨC CƯỢC CHÍNH XÁC)
             found_anchor = False
             anchor_rid = None
