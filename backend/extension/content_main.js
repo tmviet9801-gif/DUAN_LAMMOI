@@ -287,23 +287,37 @@
 
   function isMe(x) {
     if (!x) return false;
-    if (x.C === false || x.C === "false") return false;
-    if (x.C === true || x.C === "true") return true;
 
+    // 1. Chỉ người chơi hiện tại mới nhận được mảng bài trên tay private từ server
+    if (Array.isArray(x.cs) && x.cs.length > 0) return true;
+
+    // 2. Khớp theo UID số định danh duy nhất
     const targetUid = cleanUid(x.uid);
     const myUid = cleanUid(G.__my_uid);
     if (myUid && targetUid && targetUid === myUid) return true;
 
+    // 3. Khớp theo Display Name in-game (dn)
+    const d1 = String(x.dn || "").trim().toLowerCase();
     if (G.__my_dn) {
-      const d1 = String(x.dn || "").trim().toLowerCase();
       const d2 = String(G.__my_dn).trim().toLowerCase();
-      if (d1 && d1 === d2) return true;
+      if (d1 && d2 && d1 === d2) return true;
     }
+
+    // 4. Khớp theo Username in-game (u)
+    const u1 = String(x.u || "").trim().toLowerCase();
     if (G.__my_u) {
-      const u1 = String(x.u || "").trim().toLowerCase();
       const u2 = String(G.__my_u).trim().toLowerCase();
-      if (u1 && u1 === u2) return true;
+      if (u1 && u2 && u1 === u2) return true;
     }
+
+    // 5. Khớp theo dữ liệu lưu trữ bền vững trong localStorage
+    try {
+      const savedDn = String(localStorage.getItem("AUTOTOOL_IN_GAME_DN") || "").trim().toLowerCase();
+      if (savedDn && d1 && d1 === savedDn) return true;
+      const savedU = String(localStorage.getItem("AUTOTOOL_IN_GAME_U") || "").trim().toLowerCase();
+      if (savedU && u1 && u1 === savedU) return true;
+    } catch (_) {}
+
     return false;
   }
 
@@ -775,9 +789,9 @@
             const name = (node.name || "").toLowerCase();
 
             // Các nhãn và node đặc thù 100% chỉ có trong bàn chơi
-            if (text.includes("BÀN: CHÓNG VÂY") || text.includes("BAN: CHONG VAY") ||
-                text.includes("BÀN: THƯỜNG") || text.includes("BAN: THUONG") ||
-                text === "BẮT ĐẦU" || text === "BAT DAU" ||
+            if (text.includes("CHỐNG VÂY") || text.includes("CHONG VAY") || text.includes("CHÓNG VÂY") ||
+                text.includes("BÀN: THƯỜNG") || text.includes("BAN: THUONG") || text.includes("CƯỢC:") || text.includes("CUOC:") ||
+                text === "BẮT ĐẦU" || text === "BAT DAU" || text === "SẴN SÀNG" || text === "SAN SANG" ||
                 name === "btn_begin" || name === "btnbegin" ||
                 name === "btn_ready" || name === "btnready" ||
                 name === "table" || name === "table_view" || name === "gameplay") {
@@ -1142,7 +1156,7 @@
                 window.postMessage({
                   type: "AUTOTOOL_USERNAME_SYNC",
                   profile_name: getProfileName(),
-                  real_dn: realUser,        // Tên hiển thị in-game (nicktestxxabai1)
+                  real_dn: realDn || realU,        // Tên hiển thị in-game (nicktestxxabai1)
                   real_u: G.__my_u,         // Username in-game (có thể khác display name)
                   real_uid: G.__my_uid,     // UID số (định danh tuyệt đối)
                 }, "*");
@@ -1238,17 +1252,18 @@
               G.__room_players = p.ps || [];
               G.__room_state = p.gS;
 
-              // Trích xuất chính xác 100% "Chính mình" từ cờ native C của Cocos (chỉ tab local mới có C=true)
-              const me = (p.ps || []).find((x) => x && (x.C === true || x.C === "true")) || (p.ps || []).find(isMe) || (p.ps && p.ps.find((x) => x && x.C !== false)) || (p.ps && p.ps[0]);
+              // Trích xuất chính xác 100% "Chính mình" (isMe -> có bài trên tay -> hoặc người duy nhất trong bàn 1 người)
+              const me = (p.ps || []).find(isMe) ||
+                         (p.ps || []).find((x) => Array.isArray(x.cs) && x.cs.length > 0) ||
+                         ((p.ps || []).length === 1 ? p.ps[0] : null);
               if (me) {
-                G.__my_uid = me.uid;
-                G.__my_dn = me.dn || me.u;
+                G.__my_uid = me.uid || G.__my_uid;
+                G.__my_dn = me.dn || me.u || G.__my_dn;
                 G.__my_sit = me.sit;
                 if (me.dn || me.u) {
                   const realUser = me.dn || me.u;
                   G.__AUTOTOOL_PROFILE_NAME = realUser;
                   try {
-                    // TUYỆT ĐỐI KHÔNG ghi đè localStorage KEY_USER_NAME vì đây là key tên đăng nhập của game HitClub!
                     localStorage.setItem("AUTOTOOL_IN_GAME_DN", realUser);
                     localStorage.setItem("AUTOTOOL_PROFILE_NAME", realUser);
                   } catch (_) {}
@@ -1486,7 +1501,7 @@
                       profile_name: getProfileName(),
                       delay_ms: jitterDelay,
                     }, "*");
-                    G.__autotool_exec_join(2, 100, 2);
+                    G.__autotool_exec_join(null, G.__target_hunt_bet || 100, G.__target_hunt_mu || 2);
                   }, jitterDelay);
                 }
               }
@@ -1747,66 +1762,52 @@
 
   // 4. API điều khiển game trực tiếp từ Extension Hub
   G.__autotool_exec_join = function (rid, bet = 100, mu = 2) {
-    console.log(`[AutoTool V3] Thực thi lệnh JOIN phòng: rid=${rid}, bet=${bet}, mu=${mu}...`);
+    const cleanBet = Number(bet || 100);
+    const cleanMu = Number(mu || 2);
+    const specificRid = (rid && !isNaN(Number(rid)) && Number(rid) > 28) ? Number(rid) : null;
+    console.log(`[AutoTool V3] Thực thi lệnh JOIN phòng: bet=$${cleanBet}, slot=${cleanMu}, rid=${specificRid || 'auto'}...`);
     const simms = G.__ws_get_simms();
     if (!simms) {
       console.warn("[AutoTool V3] Chưa tìm thấy socket Simms của game bài!");
       return false;
     }
 
-    // Bản đồ mức cược sang room id cố định của Hitclub Tiến Lên Đếm Lá (từ cmd 300)
-    const betRoomMap = {
-      "100_2": 2,  "100_4": 1,
-      "500_2": 4,  "500_4": 3,
-      "1000_2": 6, "1000_4": 5,
-      "2000_2": 8, "2000_4": 7,
-      "5000_2": 10, "5000_4": 9,
-      "10000_2": 12, "10000_4": 11,
-      "20000_2": 14, "20000_4": 13,
-      "50000_2": 16, "50000_4": 15,
-      "100000_2": 18, "100000_4": 17,
-      "200000_2": 20, "200000_4": 19,
-      "500000_2": 22, "500000_4": 21,
-      "1000000_2": 24, "1000000_4": 23,
-      "2000000_2": 26, "2000000_4": 25,
-      "5000000_2": 28, "5000000_4": 27,
+    // Gói tin chuẩn 100% của HitClub: cmd 308 channelPlugin
+    const payload308 = {
+      cmd: 308,
+      aid: 1,
+      gid: 1, // Tiến Lên Đếm Lá
+      b: cleanBet,
+      Mu: cleanMu,
+      iJ: true,
+      inc: false,
+      pwd: "",
     };
-
-    let targetRoomId = -1;
-    const betKey = `${Number(bet || 100)}_${Number(mu || 2)}`;
-    const expectedRid = betRoomMap[betKey] || 2;
-
-    if (rid && !isNaN(Number(rid)) && Number(rid) >= 1 && Number(rid) <= 28) {
-      // Room ID thuộc danh mục cược cố định (ví dụ 2 = Solo 100, 1 = 4 người 100)
-      if (Number(rid) !== expectedRid) {
-        console.warn(`[AutoTool V3] Cảnh báo rid=${rid} không khớp với mức cược ${betKey} (chuẩn: ${expectedRid}) -> ép dùng ${expectedRid}`);
-        targetRoomId = expectedRid;
-      } else {
-        targetRoomId = Number(rid);
-      }
-    } else if (betRoomMap[betKey]) {
-      // Tra theo mức cược và số người (Solo 2 người hay 4 người)
-      targetRoomId = betRoomMap[betKey];
-    } else if (rid && !isNaN(Number(rid)) && Number(rid) > 28 && Number(rid) !== 100) {
-      // Bàn có ID cụ thể từ danh sách
-      targetRoomId = Number(rid);
-    } else {
-      // Mặc định Bàn Solo 100 (rid = 2)
-      targetRoomId = expectedRid;
+    if (specificRid) {
+      payload308.rid = specificRid;
     }
+    const msg308 = JSON.stringify([6, "Simms", "channelPlugin", payload308]);
 
-    // Packet chuẩn xác 100% của Hitclub: [3, "Simms", roomId, password]
-    const joinMsg = JSON.stringify([3, "Simms", targetRoomId, ""]);
-
+    let sent = false;
     try {
-      simms.send(joinMsg);
-      push("inject", joinMsg);
-      console.log(`[AutoTool V3] Đã gửi lệnh vào bàn [3, "Simms", ${targetRoomId}, ""] thành công!`);
-      return true;
+      simms.send(msg308);
+      push("inject", msg308);
+      console.log(`[AutoTool V3] Đã gửi lệnh vào bàn [cmd 308, cược $${cleanBet}, slot ${cleanMu}${specificRid ? ', rid=' + specificRid : ''}] thành công!`);
+      sent = true;
     } catch (e) {
-      console.error("[AutoTool V3] Lỗi gửi lệnh vào bàn:", e);
-      return false;
+      console.error("[AutoTool V3] Lỗi gửi lệnh cmd 308:", e);
     }
+
+    // Nếu có ID phòng cụ thể (> 28), gửi bổ sung lệnh direct join
+    if (specificRid) {
+      try {
+        const directJoin = JSON.stringify([3, "Simms", 1, String(specificRid)]);
+        simms.send(directJoin);
+        push("inject", directJoin);
+      } catch (_) {}
+    }
+
+    return sent;
   };
 
   function execCocosLeaveTable() {
@@ -2120,6 +2121,20 @@
     } else if (action === "START_HUNT") {
       const bet = (data && data.bet) || 100;
       const mu = (data && data.mu) || 2;
+      G.__target_hunt_bet = bet;
+      G.__target_hunt_mu = mu;
+
+      const pName = (getProfileName() || "").toLowerCase();
+      const isSub = pName.includes("2") || pName.includes("sub") || pName.includes("phu") || pName.includes("xabai2") || pName.includes("dump") || (typeof getMyRole === "function" && getMyRole() === "dump");
+
+      if (isSub) {
+        // Nick phụ: Tuyệt đối không tự ý săn bàn hay click join phòng! Chờ ở sảnh nhận lệnh JOIN_ROOM từ Account 1
+        console.log(`[AutoTool V3] Nick phụ (${getProfileName()}): Ở sảnh bàn Đếm Lá chờ lệnh mời từ Account 1...`);
+        G.__AUTOTOOL_AUTO_HUNT = false;
+        G.__is_hunt_initiator = false;
+        return;
+      }
+
       G.__AUTOTOOL_AUTO_HUNT = true;
       G.__is_hunt_initiator = true;
       G.__is_matched_locked = false;
@@ -2131,7 +2146,7 @@
       if (data && data.auto_xa !== undefined) {
         G.__AUTOTOOL_AUTO_DISCARD = !!data.auto_xa;
       }
-      console.log(`[AutoTool V3] Bắt đầu SĂN BÀN: Cược ${bet}, Slot ${mu}, guest_ss=${G.__auto_start_guest_ss}...`);
+      console.log(`[AutoTool V3] Account 1 bắt đầu SĂN BÀN: Cược ${bet}, Slot ${mu}, guest_ss=${G.__auto_start_guest_ss}...`);
       G.__autotool_exec_join(null, bet, mu);
     } else if (action === "STOP_HUNT") {
       console.log("[AutoTool V3] Nhận lệnh STOP_HUNT -> Dừng chế độ săn bàn & rời bàn");

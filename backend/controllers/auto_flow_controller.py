@@ -1579,16 +1579,27 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         if ext_hub:
             try:
                 await ext_hub.broadcast_command("RESET_STATE", {})
-                await ext_hub.broadcast_command("START_HUNT", {
-                    "bet": bet_val,
-                    "mu": target_mu,
-                    "auto_start_guest_ss": auto_start_guest_ss,
-                    "auto_xa": auto_xa,
-                })
-                log.info("find-and-match: Đã broadcast START_HUNT (Cược $%s, Slot %s, KháchSS=%s)!", 
-                         bet_val, target_mu, auto_start_guest_ss)
+                # CHỈ gửi START_HUNT đích danh cho Account 1 (Anchor / Chủ bàn)
+                if ext_hub.is_connected(first_name):
+                    await ext_hub.send_command(first_name, "START_HUNT", {
+                        "bet": bet_val,
+                        "mu": target_mu,
+                        "auto_start_guest_ss": auto_start_guest_ss,
+                        "auto_xa": auto_xa,
+                    })
+                    log.info("find-and-match: Đã gửi START_HUNT cho Account 1 (%s) (Cược $%s, Slot %s, KháchSS=%s)!", 
+                             first_name, bet_val, target_mu, auto_start_guest_ss)
+                # Gửi lệnh chờ ở sảnh cho các nick phụ
+                for sub_name in other_profiles:
+                    if ext_hub.is_connected(sub_name):
+                        await ext_hub.send_command(sub_name, "WAIT_IN_LOBBY", {
+                            "bet": bet_val,
+                            "mu": target_mu,
+                            "anchor": first_name,
+                        })
+                        log.info("find-and-match: Đã gửi WAIT_IN_LOBBY cho nick phụ %s (chờ Account 1 tìm bàn)", sub_name)
             except Exception as e:
-                log.warning("find-and-match broadcast error: %s", e)
+                log.warning("find-and-match command error: %s", e)
 
         log.info("find-and-match: Khởi động tìm kiếm bàn: Account 1 (%s) tìm bàn, %d nick phụ (%s) đợi ở sảnh (Cược $%s)", 
                  first_name, len(other_profiles), other_profiles, bet_val)

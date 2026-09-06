@@ -727,6 +727,16 @@
           action: "START_HUNT",
           data: data,
         }, "*");
+      } else if (action === "WAIT_IN_LOBBY") {
+        isHuntOn = false;
+        const anchor = (data && data.anchor) || "Account 1";
+        const bet = (data && data.bet) || 100;
+        updateViewBanner(`⏳ <b>${activeProfileName || 'Nick phụ'}</b>: Đang đợi ${anchor} tìm bàn trống $${bet.toLocaleString()}...`, "lobby");
+        showToast(`⏳ Đang đợi ${anchor} tìm bàn trống $${bet.toLocaleString()}...`, "info");
+        requestControl("/api/accounts/update-log", {
+          profile_name: activeProfileName,
+          log: `Đang đợi ${anchor} tìm bàn...`,
+        }, "POST").catch(() => {});
       } else if (action === "STOP_HUNT") {
         isHuntOn = false;
         const hBtn = document.getElementById("autotool-hunt-btn");
@@ -927,6 +937,10 @@
 
     // XÁC NHẬN BÀN TRỐNG 100% TỪ CHỦ BÀN
     else if (ev.data.type === "AUTOTOOL_ANCHOR_ROOM_VERIFIED_EMPTY") {
+      const rId = ev.data.rid || (ev.data.room_info && ev.data.room_info.rid) || "Chống Vây";
+      const bVal = ev.data.b || 100;
+      updateViewBanner(`🎯 <b>${activeProfileName || 'Account 1'}</b>: Bàn #${rId} ($${bVal}) trống 100%! Đang phát lệnh mời đồng đội vào ghép...`, "active");
+      showToast(`🎯 Bàn #${rId} ($${bVal}) TRỐNG 100%! Đang gọi Account 2...`, "success");
       safeSendMessage({
         type: "ANCHOR_ROOM_VERIFIED_EMPTY",
         profile_name: activeProfileName || ev.data.profile_name,
