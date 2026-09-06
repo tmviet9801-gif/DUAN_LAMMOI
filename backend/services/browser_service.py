@@ -29,6 +29,29 @@ SW_SHOW         = 5       # hiện window ở trạng thái hiện tại
 # Tên process của Chromium (engine của Patchright) trên Windows/Linux/macOS.
 CHROME_PROCESS_NAMES = ("chrome.exe", "chrome", "chromium.exe", "chromium")
 
+# Key localStorage mà Extension V3 dùng để lưu số dư mới nhất của account.
+# Backend đọc key này khi mở/đóng Chrome để ghi "số dư lần cuối" vào accounts.json.
+BALANCE_STORAGE_KEY = "AUTOTOOL_BALANCE"
+
+
+def extract_balance_from_local(local: dict | None):
+    """Đọc số dư mới nhất từ localStorage dict (key AUTOTOOL_BALANCE).
+
+    Trả về int/float hợp lệ, None nếu chưa có / không parse được.
+    """
+    if not isinstance(local, dict):
+        return None
+    raw = local.get(BALANCE_STORAGE_KEY)
+    if raw is None or raw == "":
+        return None
+    try:
+        val = float(str(raw).strip())
+        if val.is_integer():
+            return int(val)
+        return val
+    except Exception:
+        return None
+
 
 def _find_hwnd_by_pid(pid):
     """Tìm HWND cửa sổ chính (Chrome_WidgetWin_1) thuộc PID hoặc các process con của PID."""
@@ -390,6 +413,17 @@ class BrowserManager:
                 if self.token_store.save(session.account.get("name") or acc_id, tok,
                                          extra={"username": session.account.get("username")}):
                     log.info("auto-saved NEW token for %s", session.account.get("name"))
+
+            # ---- capture SỐ DƯ mới nhất (Extension lưu trong localStorage) ----
+            bal = extract_balance_from_local(data.get("local"))
+            if bal is not None:
+                cur_acc = by_id[acc_id]
+                if cur_acc.get("balance") != bal:
+                    cur_acc["balance"] = bal
+                    session.account["balance"] = bal
+                    saved_any = True
+                    log.info("auto-saved balance %s for %s (từ localStorage)", bal, session.account.get("name"))
+
             if not data:
                 continue
             cur = by_id[acc_id].get("web_storage") or {}
@@ -866,19 +900,28 @@ class BrowserManager:
                         saved["session"] = sd
                 if saved:
                     session.account["web_storage"] = saved
+                    # ---- SỐ DƯ LẦN CUỐI: Extension lưu trong localStorage (AUTOTOOL_BALANCE) ----
+                    # Ghi vào accounts.json NGAY TRƯỚC KHI ĐÓNG Chrome để lần mở app sau
+                    # hiển thị đúng số dư cuối cùng account nhận được ở phiên trước.
+                    last_balance = extract_balance_from_local(saved.get("local"))
+                    if last_balance is not None:
+                        session.account["balance"] = last_balance
                     from models.config_model import load_accounts, save_accounts
 
                     accounts = load_accounts()
                     for a in accounts:
                         if a["id"] == session.account["id"]:
                             a["web_storage"] = saved
+                            if last_balance is not None:
+                                a["balance"] = last_balance
                             break
                     save_accounts(accounts)
                     log.info(
-                        "saved web storage for %s (local=%d, session=%d)",
+                        "saved web storage for %s (local=%d, session=%d%s)",
                         session.account.get("name"),
                         len(saved.get("local", {})),
                         len(saved.get("session", {})),
+                        f", balance={last_balance}" if last_balance is not None else ", balance=<không có>",
                     )
                 # ---- capture token MỚI nhất vào token store ----
                 tok = TokenStore.extract_from_storage(saved.get("local", {})) or TokenStore.extract_from_storage(saved.get("session", {}))

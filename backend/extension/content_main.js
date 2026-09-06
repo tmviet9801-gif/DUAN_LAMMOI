@@ -1163,10 +1163,14 @@
               }
               const gold = (p.As && p.As.gold !== undefined) ? p.As.gold : (p.gold !== undefined ? p.gold : (p.m !== undefined ? p.m : (p.g !== undefined ? p.g : null)));
               if (gold !== null && !isNaN(Number(gold))) {
+                G.__my_balance = Number(gold);
+                // LƯU SỐ DƯ CUỐI CÙNG VÀO localStorage -> backend đọc khi đóng Chrome
+                // để ghi lại accounts.json, mở app lần sau hiển thị đúng số dư lần cuối.
+                try { localStorage.setItem("AUTOTOOL_BALANCE", String(G.__my_balance)); } catch (_) {}
                 window.postMessage({
                   type: "AUTOTOOL_BALANCE_UPDATE",
                   profile_name: getProfileName(),
-                  balance: Number(gold),
+                  balance: G.__my_balance,
                 }, "*");
               }
               // Nếu đang ở sảnh (lr.rid === -1)
@@ -1277,10 +1281,13 @@
               if (me) {
                 const meGold = me.As && me.As.gold !== undefined ? me.As.gold : (me.m !== undefined ? me.m : null);
                 if (meGold !== null && !isNaN(Number(meGold))) {
+                  G.__my_balance = Number(meGold);
+                  // Lưu số dư mới nhất vào localStorage để backend đọc khi đóng Chrome
+                  try { localStorage.setItem("AUTOTOOL_BALANCE", String(G.__my_balance)); } catch (_) {}
                   window.postMessage({
                     type: "AUTOTOOL_BALANCE_UPDATE",
                     profile_name: getProfileName(),
-                    balance: Number(meGold),
+                    balance: G.__my_balance,
                   }, "*");
                 }
                 if (Array.isArray(me.cs) && me.cs.length > 0) {

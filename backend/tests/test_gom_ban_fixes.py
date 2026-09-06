@@ -102,6 +102,22 @@ def test_parse_balance_invalid():
     assert _parse_balance("") == ""
 
 
+# ---------- Lưu "số dư lần cuối" khi đóng Chrome ----------
+
+def test_extract_balance_from_local():
+    from services.browser_service import extract_balance_from_local
+
+    assert extract_balance_from_local({"AUTOTOOL_BALANCE": "57377"}) == 57377
+    assert extract_balance_from_local({"AUTOTOOL_BALANCE": 57377}) == 57377
+    assert extract_balance_from_local({"AUTOTOOL_BALANCE": "57377.0"}) == 57377
+    assert extract_balance_from_local({"AUTOTOOL_BALANCE": "17013"}) == 17013
+    assert extract_balance_from_local({"AUTOTOOL_BALANCE": "12.5"}) == 12.5
+    assert extract_balance_from_local({"AUTOTOOL_BALANCE": ""}) is None
+    assert extract_balance_from_local({}) is None
+    assert extract_balance_from_local(None) is None
+    assert extract_balance_from_local({"AUTOTOOL_BALANCE": "không-phải-số"}) is None
+
+
 # ---------- ExtensionHub alias-based update ----------
 
 class FakeHubWs:
