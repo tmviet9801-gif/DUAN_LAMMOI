@@ -376,6 +376,23 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
     tpl_gb = str(tpl_dir / "btn_game_bai.png")
     tpl_tldl = str(tpl_dir / "btn_tldl_icon.png")
 
+    # 0. Kiểm tra nếu đang ở trong bàn chơi -> PHẢI rời bàn trước khi thao tác sảnh!
+    try:
+        in_tbl = await p.evaluate("""() => {
+            if (typeof window.__autotool_is_inside_table === 'function') {
+                return window.__autotool_is_inside_table();
+            }
+            return false;
+        }""")
+        if in_tbl:
+            log.info("%s đang ở trong bàn chơi -> thực hiện rời bàn trước...", name)
+            await _do_leave_room(p, name=name, target_mu=target_mu)
+            await asyncio.sleep(0.5)
+            if await _is_in_tldl_lobby_util(p):
+                return True
+    except Exception:
+        pass
+
     # 0. Kiểm tra nếu đang ở màn hình đăng nhập / bị đăng xuất
     try:
         is_on_login = await p.evaluate("""() => {
@@ -458,7 +475,7 @@ async def _do_leave_room(p, name="Profile", target_mu=2):
         log.info("_do_leave_room: %s đã ở sẵn sảnh bàn Đếm Lá, giữ nguyên vị trí tại sảnh bàn.", name)
         return
 
-    # 1. Gửi lệnh WebSocket rời bàn tức thì chuẩn giao thức Simms (duy nhất 1 lần, không flood socket)
+    # 1. Gửi lệnh WebSocket và Cocos rời bàn tức thì chuẩn giao thức Simms
     try:
         await p.evaluate("""(() => {
             try {
@@ -474,40 +491,43 @@ async def _do_leave_room(p, name="Profile", target_mu=2):
 
     await asyncio.sleep(0.5)
 
-    # Nếu sau lệnh WS đã về sảnh bàn Đếm Lá an toàn -> DỪNG NGAY, tuyệt đối không click chuột!
+    # Nếu sau lệnh WS/Cocos đã về sảnh bàn Đếm Lá an toàn -> DỪNG NGAY
     if await _is_in_tldl_lobby_util(p):
-        log.info("_do_leave_room: %s đã về sảnh bàn Đếm Lá an toàn sau lệnh WS.", name)
+        log.info("_do_leave_room: %s đã về sảnh bàn Đếm Lá an toàn sau lệnh JS.", name)
         return
 
-    # 2. Gửi lại lệnh rời bàn qua Extension V3 và Simms WebSocket
+    # 2. Click vật lý nút Menu table [>] ở góc trên bên trái (~0.040 sw, 0.238 sh)
     try:
+        await p.mouse.click(int(sw * 0.040), int(sh * 0.238))
+        await asyncio.sleep(0.3)
+        # Nút RỜI BÀN trong menu drawer mở ra: ~0.085 sw, 0.238 sh hoặc 0.085 sw, 0.300 sh
+        await p.mouse.click(int(sw * 0.085), int(sh * 0.238))
+        await asyncio.sleep(0.2)
+        await p.mouse.click(int(sw * 0.085), int(sh * 0.300))
+        await asyncio.sleep(0.4)
+        # Xử lý nếu có popup xác nhận "Bạn có muốn rời bàn?"
         await p.evaluate("""(() => {
-            try {
-                if (typeof window.__autotool_exec_leave === 'function') window.__autotool_exec_leave();
-                if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[4,"Simms",-1]');
-                if (typeof window.__ws_send === 'function') window.__ws_send('[4,"Simms",-1]');
-            } catch(e) {}
+            if (typeof window.__autotool_dismiss_popups === 'function') window.__autotool_dismiss_popups();
         })()""")
+    except Exception as e:
+        log.warning("_do_leave_room %s click vật lý error: %s", name, e)
+
+    await asyncio.sleep(0.5)
+    if await _is_in_tldl_lobby_util(p):
+        log.info("_do_leave_room: %s đã về sảnh bàn Đếm Lá thành công.", name)
+        return
+
+    # 3. ĐẢM BẢO CUỐI CÙNG: Chỉ gọi _ensure_in_tldl_lobby_util nếu chắc chắn KHÔNG CÒN TRONG BÀN
+    try:
+        in_tbl = await p.evaluate("""() => {
+            if (typeof window.__autotool_is_inside_table === 'function') return window.__autotool_is_inside_table();
+            return false;
+        }""")
+        if not in_tbl:
+            log.info("_do_leave_room: %s chưa ở sảnh bàn Đếm Lá -> tự động điều hướng vào sảnh bàn Đếm Lá...", name)
+            await _ensure_in_tldl_lobby_util(p, name=name, target_mu=target_mu)
     except Exception:
         pass
-
-    # 4. Gửi lại lệnh WebSocket rời bàn lần 2 để đảm bảo 100% thoát thành công
-    try:
-        await p.evaluate("""(() => {
-            try {
-                if (typeof window.__ws_send_channel === 'function') window.__ws_send_channel('Simms', '[4,"Simms",-1]');
-                if (typeof window.__ws_send === 'function') window.__ws_send('[4,"Simms",-1]');
-            } catch(e) {}
-        })()""")
-    except Exception:
-        pass
-    await asyncio.sleep(0.4)
-
-    # 5. ĐẢM BẢO CUỐI CÙNG: Nếu tài khoản bị lọt ra ngoài Sảnh chính HitClub (hoặc bất kỳ đâu ngoài sảnh bàn Đếm Lá),
-    # TỰ ĐỘNG ĐƯA VỀ ĐỨNG TRƯỚC SẢNH BÀN TIẾN LÊN ĐẾM LÁ!
-    if not await _is_in_tldl_lobby_util(p):
-        log.info("_do_leave_room: %s chưa ở sảnh bàn Đếm Lá -> tự động điều hướng vào sảnh bàn Đếm Lá...", name)
-        await _ensure_in_tldl_lobby_util(p, name=name, target_mu=target_mu)
 
 
 @router.post("/api/autoplay/leave-all")
@@ -1554,14 +1574,21 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         first_page = pages[first_name]
         other_profiles = [name for name in pages.keys() if name != first_name]
 
-        # Làm sạch toàn bộ biến khóa cũ trên các Extension của toàn bộ tài khoản
+        # Làm sạch toàn bộ biến khóa cũ và kích hoạt chế độ SĂN BÀN trên các Extension
         ext_hub = getattr(request.app.state, "ext_hub", None)
         if ext_hub:
             try:
                 await ext_hub.broadcast_command("RESET_STATE", {})
-                log.info("find-and-match: Đã broadcast RESET_STATE làm sạch bộ nhớ cũ trên các extensions!")
+                await ext_hub.broadcast_command("START_HUNT", {
+                    "bet": bet_val,
+                    "mu": target_mu,
+                    "auto_start_guest_ss": auto_start_guest_ss,
+                    "auto_xa": auto_xa,
+                })
+                log.info("find-and-match: Đã broadcast START_HUNT (Cược $%s, Slot %s, KháchSS=%s)!", 
+                         bet_val, target_mu, auto_start_guest_ss)
             except Exception as e:
-                log.warning("find-and-match broadcast RESET_STATE error: %s", e)
+                log.warning("find-and-match broadcast error: %s", e)
 
         log.info("find-and-match: Khởi động tìm kiếm bàn: Account 1 (%s) tìm bàn, %d nick phụ (%s) đợi ở sảnh (Cược $%s)", 
                  first_name, len(other_profiles), other_profiles, bet_val)
@@ -1633,9 +1660,10 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             if await _is_in_tldl_lobby(first_page):
                 continue
 
-            # Kiểm tra xem bàn Account 1 vừa vào có phải bàn trống không (đọc trực tiếp biến bộ nhớ JS 0ms, không chụp ảnh màn hình)
+            # Kiểm tra xem bàn Account 1 vừa vào có phải bàn trống không (đọc trực tiếp biến bộ nhớ JS 0ms)
             is_empty = False
-            for _ in range(8):
+            guest_ss_triggered = False
+            for _ in range(10):
                 if _GOM_BAN_STOP:
                     break
                 try:
@@ -1646,7 +1674,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                             has_info: !!info,
                             player_count: pls.length,
                             has_stranger: info ? !!info.has_stranger : false,
-                            is_verified_empty: info ? !!info.is_verified_empty : false
+                            is_verified_empty: info ? !!info.is_verified_empty : false,
+                            guest_ready: pls.some(x => x && (x.aRd === true || x.aRd === 'true' || x.ss === true || x.ready === true)),
+                            in_game: !!window.__game_in_progress
                         };
                     }""")
                     if r_info.get("has_info"):
@@ -1654,9 +1684,36 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         is_empty = (r_info.get("player_count") <= 1 and not r_info.get("has_stranger"))
                         if is_empty:
                             break
+                        # NẾU BẬT auto_start_guest_ss VÀ KHÁCH ĐÃ SẴN SÀNG (SS):
+                        if auto_start_guest_ss and (r_info.get("guest_ready") or r_info.get("in_game")):
+                            log.info("find-and-match: ⚡ PHÁT HIỆN KHÁCH LẠ ĐÃ SẴN SÀNG! Kích hoạt BẮT ĐẦU VÁN NGAY!")
+                            guest_ss_triggered = True
+                            await first_page.evaluate("() => { if (typeof window.__autotool_exec_start === 'function') window.__autotool_exec_start(); }")
+                            w_p, h_p = await _get_screen_size(first_page)
+                            await first_page.mouse.click(int(w_p * 0.500), int(h_p * 0.525))
+                            break
                 except Exception:
                     pass
                 await asyncio.sleep(0.2)
+
+            if guest_ss_triggered:
+                log.info("find-and-match: >>> ĐÃ BẮT ĐẦU VÁN ĐẤU VỚI KHÁCH LẠ! Hủy lệnh join cho các nick phụ... <<<")
+                ext_hub = getattr(request.app.state, "ext_hub", None)
+                for sub_name in other_profiles:
+                    if ext_hub and ext_hub.is_connected(sub_name):
+                        asyncio.create_task(ext_hub.send_command(sub_name, "LEAVE_ROOM", {"reason": "Chủ bàn đang đấu với khách lạ"}))
+                # Chờ ván kết thúc (tối đa 60s)
+                for _ in range(60):
+                    if _GOM_BAN_STOP:
+                        break
+                    in_g = await first_page.evaluate("() => !!window.__game_in_progress")
+                    if not in_g:
+                        break
+                    await asyncio.sleep(1.0)
+                if auto_leave_after:
+                    await _do_leave_room(first_page, name=first_name, target_mu=target_mu)
+                    await _ensure_in_tldl_lobby(first_page, first_name)
+                continue
 
             if not is_empty:
                 log.info("find-and-match: Account 1 vào bàn có người lạ / bàn full -> out về sảnh bàn Đếm Lá ngay & HỦY LỆNH cho các profile phụ")
@@ -1678,29 +1735,49 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 log.info("find-and-match: >>> ACCOUNT 1 (%s) ĐÃ VÀO BÀN CÔNG CỘNG MỚI TRỐNG! ĐỨNG LẠI GIỮ BÀN! <<<", first_name)
 
             # BƯỚC 2: TRÍCH XUẤT ROOM ID (RID) NHANH CHÓNG TỪ ACCOUNT 1
+            bet_room_map = {
+                "100_2": 2, "100_4": 1,
+                "500_2": 4, "500_4": 3,
+                "1000_2": 6, "1000_4": 5,
+                "2000_2": 8, "2000_4": 7,
+                "5000_2": 10, "5000_4": 9,
+                "10000_2": 12, "10000_4": 11,
+                "20000_2": 14, "20000_4": 13,
+                "50000_2": 16, "50000_4": 15,
+            }
+            expected_fixed_rid = bet_room_map.get(f"{bet_val}_{target_mu}", 2)
+
             for _ in range(16):
                 if _GOM_BAN_STOP:
                     break
                 try:
                     val = await anchor_page.evaluate("() => (window.__last_room_info && window.__last_room_info.rid) || window.__ws_last_room_id || null")
                     if val and int(val) > 0 and int(val) != 100:
-                        anchor_rid = int(val)
-                        break
+                        int_val = int(val)
+                        if int_val <= 28:
+                            if int_val == expected_fixed_rid:
+                                anchor_rid = int_val
+                                break
+                        else:
+                            anchor_rid = int_val
+                            break
                 except Exception:
                     pass
                 if not anchor_rid:
                     cur = await adapter._page_current_room(anchor_page)
                     if cur and int(cur) > 0 and int(cur) != 100:
-                        anchor_rid = int(cur)
-                        break
+                        int_cur = int(cur)
+                        if int_cur <= 28:
+                            if int_cur == expected_fixed_rid:
+                                anchor_rid = int_cur
+                                break
+                        else:
+                            anchor_rid = int_cur
+                            break
                 await asyncio.sleep(0.12)
 
             if not anchor_rid:
-                log.warning("find-and-match: Không đọc được RID của Account 1 -> Account 1 out về sảnh bàn Đếm Lá để tìm lại!")
-                await _do_leave_room(anchor_page, name=anchor_name, target_mu=target_mu)
-                await _ensure_in_tldl_lobby(anchor_page, anchor_name)
-                await asyncio.sleep(0.5)
-                continue
+                anchor_rid = expected_fixed_rid
 
             selected_rid = anchor_rid
             log.info("find-and-match: Account 1 đang giữ bàn công cộng trống #%s ($%s). Điều phối các nick phụ join vào nhanh chóng...", 

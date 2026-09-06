@@ -755,11 +755,55 @@
     return clicked;
   }
 
+  function isInsideGameTable() {
+    try {
+      // 1. Kiểm tra trạng thái ván và danh sách người chơi
+      if (G.__game_in_progress) return true;
+      if (Array.isArray(G.__room_players) && G.__room_players.length > 0) return true;
+      if (G.__last_room_info && G.__last_room_info.rid > 0 && G.__last_room_info.rid !== 100) {
+        if (G.__room_players && G.__room_players.length > 0) return true;
+      }
+
+      // 2. Quét Cocos scene tìm các dấu hiệu nhận diện bàn chơi HitClub
+      if (typeof cc !== "undefined" && cc.director) {
+        const scene = cc.director.getScene();
+        if (scene) {
+          let foundTable = false;
+          function scanTable(node, depth) {
+            if (!node || depth > 25 || foundTable) return;
+            const text = getCocosNodeText(node).toUpperCase();
+            const name = (node.name || "").toLowerCase();
+
+            // Các nhãn và node đặc thù 100% chỉ có trong bàn chơi
+            if (text.includes("BÀN: CHÓNG VÂY") || text.includes("BAN: CHONG VAY") ||
+                text.includes("BÀN: THƯỜNG") || text.includes("BAN: THUONG") ||
+                text === "BẮT ĐẦU" || text === "BAT DAU" ||
+                name === "btn_begin" || name === "btnbegin" ||
+                name === "btn_ready" || name === "btnready" ||
+                name === "table" || name === "table_view" || name === "gameplay") {
+              if (node.active && (node.opacity === undefined || node.opacity > 0)) {
+                foundTable = true;
+                return;
+              }
+            }
+            const children = node.children || [];
+            for (let i = 0; i < children.length; i++) {
+              scanTable(children[i], depth + 1);
+              if (foundTable) return;
+            }
+          }
+          scanTable(scene, 0);
+          if (foundTable) return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+
   function isAlreadyInTLDLLobby() {
     try {
-      const inTable = (G.__last_room_info && G.__last_room_info.rid > 0 && G.__last_room_info.rid !== 100) &&
-                      ((G.__room_players && G.__room_players.length > 0) || G.__game_in_progress);
-      if (inTable) return false;
+      // Nếu đang ngồi trong bàn chơi -> Tuyệt đối không phải ở sảnh!
+      if (isInsideGameTable()) return false;
 
       const simms = typeof G.__ws_get_simms === "function" ? G.__ws_get_simms() : null;
       const hasSimmsWs = !!(simms && simms.readyState === 1);
@@ -779,8 +823,7 @@
               hasMainLobbyButtons = true;
             }
 
-            if (name.includes("demla") || name.includes("simms") || name.includes("tldl") ||
-                name.includes("roomselect") || name.includes("room_select") ||
+            if (name.includes("roomselect") || name.includes("room_select") ||
                 text === "SOLO" || text === "4 NGƯỜI" || text.includes("ĐẾM LÁ BÀN") ||
                 name === "btn_solo" || name === "btn_4nguoi") {
               hasTLDLScene = true;
@@ -797,7 +840,6 @@
 
       if (hasTLDLScene && !hasMainLobbyButtons) return true;
       if (hasSimmsWs && hasTLDLScene) return true;
-      if (hasSimmsWs && !hasMainLobbyButtons) return true;
 
       return false;
     } catch (e) {
@@ -858,6 +900,7 @@
     return { ok: inLobby, step: "done" };
   }
 
+  G.__autotool_is_inside_table = isInsideGameTable;
   G.__autotool_is_in_tldl_lobby = isAlreadyInTLDLLobby;
   G.__autotool_auto_enter_tldl = autoEnterTLDLLobby;
   G.__autotool_dismiss_popups = dismissPopupsAndBanners;
@@ -1286,41 +1329,68 @@
               if (partner) {
                 // 1. ĐÃ KHỚP ĐỒNG ĐỘI THÀNH CÔNG TRONG BÀN!
                 triggerVerifiedMatchReadyAndStart(partner.dn || partner.u, "cmd:202 RoomPlayers");
-              } else if (G.__AUTOTOOL_AUTO_HUNT || isSubProfile || G.__active_room_invite) {
-                if (hasStrangerOrFull) {
-                  // 2. BÀN CÓ KHÁCH LẠ HOẶC BÀN FULL -> HỦY LỆNH CHO ĐỒNG ĐỘI & OUT VỀ SẢNH NGAY!
-                  const guestNames = strangers.map((g) => g.dn || g.u || "Khách").join(", ") || "Bàn đầy người";
-                  console.warn(`[AutoTool V3] Phát hiện bàn có người lạ / Full: ${guestNames} -> HỦY LỆNH & Out bàn ngay!`);
-                  if (G.__backoff) G.__backoff.onFailure(false);
-
-                  if (G.__hunt_wait_timer) {
-                    clearTimeout(G.__hunt_wait_timer);
-                    G.__hunt_wait_timer = null;
-                  }
-
-                  // Nếu là Anchor: Phát ngay tín hiệu CANCEL lên Hub để hủy lệnh cho B!
-                  if (!isSubProfile) {
+              } else if (hasStrangerOrFull) {
+                // 2. BÀN CÓ KHÁCH LẠ HOẶC BÀN FULL
+                const guestSS = strangers.some((x) => x && (x.aRd === true || x.aRd === "true" || x.ss === true || x.ready === true));
+                if (G.__auto_start_guest_ss && !isSubProfile) {
+                  if (guestSS) {
+                    console.log("[AutoTool V3] ⚡ PHÁT HIỆN KHÁCH LẠ ĐÃ SẴN SÀNG (SS) & BẬT 'Bắt đầu nếu khách SS'! KÍCH HOẠT BẮT ĐẦU NGAY!");
+                    G.__is_matched_locked = true;
+                    G.__autotool_exec_start();
                     window.postMessage({
-                      type: "AUTOTOOL_CANCEL_ROOM_INVITE",
+                      type: "AUTOTOOL_GUEST_SS_STARTED",
                       profile_name: getProfileName(),
-                      rid: targetRid,
-                      reason: `Thấy khách lạ/Bàn full: ${guestNames}`,
+                      strangers: strangers,
                     }, "*");
+                    return;
                   }
+                  // Nếu khách chưa bấm SS: Chờ tối đa 3 giây xem khách có bấm SS không
+                  if (!G.__guest_ss_wait_timer) {
+                    console.log("[AutoTool V3] Bàn có khách lạ chưa SS, chờ tối đa 3s xem khách có SẴN SÀNG (SS) không...");
+                    G.__guest_ss_wait_timer = setTimeout(() => {
+                      G.__guest_ss_wait_timer = null;
+                      if (!G.__game_in_progress && !G.__is_matched_locked) {
+                        console.log("[AutoTool V3] Quá 3s khách không SS -> Rời bàn về sảnh!");
+                        G.__autotool_exec_leave();
+                      }
+                    }, 3000);
+                  }
+                  return;
+                }
 
+                // Không bật bắt đầu với khách hoặc là SubProfile -> Thoát bàn ngay!
+                const guestNames = strangers.map((g) => g.dn || g.u || "Khách").join(", ") || "Bàn đầy người";
+                console.warn(`[AutoTool V3] Phát hiện bàn có người lạ / Full: ${guestNames} -> HỦY LỆNH & Out bàn ngay!`);
+                if (G.__backoff) G.__backoff.onFailure(false);
+
+                if (G.__hunt_wait_timer) {
+                  clearTimeout(G.__hunt_wait_timer);
+                  G.__hunt_wait_timer = null;
+                }
+
+                // Nếu là Anchor: Phát ngay tín hiệu CANCEL lên Hub để hủy lệnh cho B!
+                if (!isSubProfile) {
                   window.postMessage({
-                    type: "AUTOTOOL_AUTO_LEAVING",
+                    type: "AUTOTOOL_CANCEL_ROOM_INVITE",
                     profile_name: getProfileName(),
+                    rid: targetRid,
                     reason: `Thấy khách lạ/Bàn full: ${guestNames}`,
                   }, "*");
+                }
 
-                  // Out an toàn (350 - 550ms) để server kịp xử lý trạng thái rời ghế
-                  const leaveDelay = 350 + Math.floor(Math.random() * 200);
-                  setTimeout(() => {
-                    G.__autotool_exec_leave();
-                  }, leaveDelay);
+                window.postMessage({
+                  type: "AUTOTOOL_AUTO_LEAVING",
+                  profile_name: getProfileName(),
+                  reason: `Thấy khách lạ/Bàn full: ${guestNames}`,
+                }, "*");
 
-                } else if (isAloneEmpty) {
+                // Out an toàn (350 - 550ms) để server kịp xử lý trạng thái rời ghế
+                const leaveDelay = 350 + Math.floor(Math.random() * 200);
+                setTimeout(() => {
+                  G.__autotool_exec_leave();
+                }, leaveDelay);
+
+              } else if (isAloneEmpty) {
                   // 3. BÀN 100% TRỐNG (CHỈ CÓ 1 MÌNH)!
                   if (isSubProfile) {
                     // Profile phụ không được tự ý ngồi giữ bàn trống một mình khi không có chủ bàn A
@@ -1441,6 +1511,24 @@
                 }
                 // TUYỆT ĐỐI KHÔNG gửi AUTOTOOL_ROOM_INFO tại cmd 308 vì chưa biết danh sách người chơi!
                 // Phải đợi cmd 202 để check bàn trống 100% trước khi gửi lệnh mời B!
+              }
+            }
+
+            // cmd 364 / 363: Người chơi trong phòng Sẵn Sàng (Ready)
+            if (p.cmd === 364 || p.cmd === 363) {
+              const rUid = p.uid || (p.fu && p.fu.uid);
+              const isOther = rUid ? !isMe({ uid: rUid }) : true;
+              if (isOther && (p.aRd === true || p.aRd === "true" || p.aRd === 1)) {
+                console.log("[AutoTool V3] ⚡ Nhận gói tin SẴN SÀNG từ đối phương (cmd " + p.cmd + ")!");
+                if (G.__auto_start_guest_ss && !G.__game_in_progress) {
+                  console.log("[AutoTool V3] ⚡ 'Bắt đầu nếu khách SS' đang bật -> KÍCH HOẠT BẮT ĐẦU NGAY!");
+                  G.__is_matched_locked = true;
+                  if (G.__guest_ss_wait_timer) {
+                    clearTimeout(G.__guest_ss_wait_timer);
+                    G.__guest_ss_wait_timer = null;
+                  }
+                  G.__autotool_exec_start();
+                }
               }
             }
 
@@ -1686,10 +1774,16 @@
 
     let targetRoomId = -1;
     const betKey = `${Number(bet || 100)}_${Number(mu || 2)}`;
+    const expectedRid = betRoomMap[betKey] || 2;
 
     if (rid && !isNaN(Number(rid)) && Number(rid) >= 1 && Number(rid) <= 28) {
       // Room ID thuộc danh mục cược cố định (ví dụ 2 = Solo 100, 1 = 4 người 100)
-      targetRoomId = Number(rid);
+      if (Number(rid) !== expectedRid) {
+        console.warn(`[AutoTool V3] Cảnh báo rid=${rid} không khớp với mức cược ${betKey} (chuẩn: ${expectedRid}) -> ép dùng ${expectedRid}`);
+        targetRoomId = expectedRid;
+      } else {
+        targetRoomId = Number(rid);
+      }
     } else if (betRoomMap[betKey]) {
       // Tra theo mức cược và số người (Solo 2 người hay 4 người)
       targetRoomId = betRoomMap[betKey];
@@ -1698,7 +1792,7 @@
       targetRoomId = Number(rid);
     } else {
       // Mặc định Bàn Solo 100 (rid = 2)
-      targetRoomId = 2;
+      targetRoomId = expectedRid;
     }
 
     // Packet chuẩn xác 100% của Hitclub: [3, "Simms", roomId, password]
@@ -1715,23 +1809,108 @@
     }
   };
 
+  function execCocosLeaveTable() {
+    let clicked = false;
+    try {
+      if (typeof cc !== "undefined" && cc.director) {
+        const scene = cc.director.getScene();
+        if (scene) {
+          // 1. Quét tìm trực tiếp nút Rời Bàn / Thoát nếu đã hiển thị
+          function scanLeave(node, depth) {
+            if (!node || depth > 30 || clicked) return;
+            const name = (node.name || "").toLowerCase();
+            const text = getCocosNodeText(node).toUpperCase();
+            if ((text.includes("RỜI BÀN") || text.includes("ROI BAN") || text === "THOÁT" || text === "THOAT" ||
+                 name === "btn_roiban" || name === "btn_roi_ban" || name === "btn_leave" || name === "btn_exit") &&
+                node.active && (node.opacity === undefined || node.opacity > 0)) {
+              clicked = clickCocosNode(node);
+              if (clicked) {
+                console.log(`[AutoTool V3] Cocos: Đã click nút rời bàn: name='${node.name}', text='${text}'`);
+                return;
+              }
+            }
+            const children = node.children || [];
+            for (let i = 0; i < children.length; i++) {
+              scanLeave(children[i], depth + 1);
+              if (clicked) return;
+            }
+          }
+          scanLeave(scene, 0);
+
+          // 2. Nếu chưa thấy nút rời bàn, quét tìm nút Menu góc trên bên trái để mở drawer
+          if (!clicked) {
+            function scanMenu(node, depth) {
+              if (!node || depth > 30 || clicked) return;
+              const name = (node.name || "").toLowerCase();
+              if ((name === "btn_menu" || name === "btn_nav" || name === "btn_arrow" || name === "btn_drawer" ||
+                   name === "btn_expand" || name.includes("menu")) &&
+                  node.active && (node.opacity === undefined || node.opacity > 0)) {
+                clicked = clickCocosNode(node);
+                if (clicked) {
+                  console.log(`[AutoTool V3] Cocos: Đã click nút Menu bàn: name='${node.name}'`);
+                  return;
+                }
+              }
+              const children = node.children || [];
+              for (let i = 0; i < children.length; i++) {
+                scanMenu(children[i], depth + 1);
+                if (clicked) return;
+              }
+            }
+            scanMenu(scene, 0);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[AutoTool V3] Lỗi execCocosLeaveTable:", e);
+    }
+    return clicked;
+  }
+
   G.__autotool_exec_leave = function () {
     console.log("[AutoTool V3] Thực thi lệnh RỜI BÀN về sảnh...");
+
+    // 1. Quét Cocos tìm nút Rời Bàn / Menu
+    execCocosLeaveTable();
+
+    // 2. Click vật lý canvas tại nút [>] góc trên bên trái (~0.040 sw, 0.238 sh)
+    dispatchCanvasClick(0.040, 0.238);
+
+    // 3. Sau 200ms: Quét Cocos lần 2 và click nút RỜI BÀN (drawer mở ra)
+    setTimeout(() => {
+      execCocosLeaveTable();
+      dispatchCanvasClick(0.085, 0.238);
+      dispatchCanvasClick(0.085, 0.300);
+      setTimeout(() => {
+        dismissPopupsAndBanners();
+      }, 250);
+    }, 200);
+
+    // 4. Gửi toàn bộ các gói tin WS rời phòng chuẩn của HitClub
     const simms = G.__ws_get_simms();
-    if (simms) {
+    if (simms && simms.readyState === 1) {
       try {
         simms.send('[4,"Simms",-1]');
         push("inject", '[4,"Simms",-1]');
-        return true;
+      } catch (_) {}
+      try {
+        const pLeave = '[5,"Simms",-1,{"cmd":308}]';
+        simms.send(pLeave);
+        push("inject", pLeave);
+      } catch (_) {}
+      try {
+        const pLeave2 = '[6,"Simms","channelPlugin",{"cmd":308}]';
+        simms.send(pLeave2);
+        push("inject", pLeave2);
       } catch (_) {}
     }
-    return false;
+    return true;
   };
 
   G.__autotool_exec_ready = function () {
-    // BẢO VỆ CHẶN: Chỉ sẵn sàng nếu đã có đồng đội được xác thực trong phòng
+    // BẢO VỆ CHẶN: Chỉ chặn nếu không có đồng đội VÀ KHÔNG BẬT auto_start_guest_ss
     const partner = (G.__room_players || []).find(isPartner);
-    if (!partner && G.__room_players && G.__room_players.length > 1) {
+    if (!partner && G.__room_players && G.__room_players.length > 1 && !G.__auto_start_guest_ss) {
       console.warn("[AutoTool V3] BẢO VỆ CHẶN: Trong phòng chỉ có khách lạ, không có đồng đội! TỪ CHỐI Sẵn Sàng / Bắt Đầu!");
       G.__autotool_exec_leave();
       return false;
@@ -1826,7 +2005,13 @@
 
     if (event.data.type === "AUTOTOOL_SET_HUNT") {
       G.__AUTOTOOL_AUTO_HUNT = !!event.data.auto_hunt;
-      console.log(`[AutoTool V3] Chế độ SĂN BÀN & AUTO OUT chuyển sang: ${G.__AUTOTOOL_AUTO_HUNT ? "BẬT" : "TẮT"}`);
+      if (event.data.auto_start_guest_ss !== undefined) {
+        G.__auto_start_guest_ss = !!event.data.auto_start_guest_ss;
+      }
+      if (event.data.auto_xa !== undefined) {
+        G.__AUTOTOOL_AUTO_DISCARD = !!event.data.auto_xa;
+      }
+      console.log(`[AutoTool V3] Chế độ SĂN BÀN & AUTO OUT chuyển sang: ${G.__AUTOTOOL_AUTO_HUNT ? "BẬT" : "TẮT"}, guest_ss=${G.__auto_start_guest_ss}`);
       return;
     }
 
@@ -1940,10 +2125,16 @@
       G.__is_matched_locked = false;
       G.__game_in_progress = false;
       G.__last_room_info = null;
-      console.log(`[AutoTool V3] Bắt đầu SĂN BÀN: Cược ${bet}, Slot ${mu}...`);
+      if (data && data.auto_start_guest_ss !== undefined) {
+        G.__auto_start_guest_ss = !!data.auto_start_guest_ss;
+      }
+      if (data && data.auto_xa !== undefined) {
+        G.__AUTOTOOL_AUTO_DISCARD = !!data.auto_xa;
+      }
+      console.log(`[AutoTool V3] Bắt đầu SĂN BÀN: Cược ${bet}, Slot ${mu}, guest_ss=${G.__auto_start_guest_ss}...`);
       G.__autotool_exec_join(null, bet, mu);
-    } else if (action === "STOP_HUNT" || action === "RESET_STATE") {
-      console.log(`[AutoTool V3] Nhận lệnh ${action} -> DỪNG TRIỆT ĐỂ toàn bộ trạng thái, auto-hunt & timers!`);
+    } else if (action === "STOP_HUNT") {
+      console.log("[AutoTool V3] Nhận lệnh STOP_HUNT -> Dừng chế độ săn bàn & rời bàn");
       G.__AUTOTOOL_AUTO_HUNT = false;
       G.__AUTOTOOL_ARMED = false;
       G.__is_hunt_initiator = false;
@@ -1964,11 +2155,38 @@
         clearTimeout(G.__hunt_retry_timer);
         G.__hunt_retry_timer = null;
       }
+      if (G.__guest_ss_wait_timer) {
+        clearTimeout(G.__guest_ss_wait_timer);
+        G.__guest_ss_wait_timer = null;
+      }
       if (G.__auto_turn_timer) {
         clearTimeout(G.__auto_turn_timer);
         G.__auto_turn_timer = null;
       }
       G.__autotool_exec_leave();
+    } else if (action === "RESET_STATE") {
+      console.log("[AutoTool V3] Nhận lệnh RESET_STATE -> Làm sạch biến khóa & bộ nhớ tạm");
+      G.__is_matched_locked = false;
+      G.__game_in_progress = false;
+      G.__last_room_info = null;
+      G.__room_players = [];
+      G.__active_room_invite = null;
+      if (G.__start_retry_timer) {
+        clearInterval(G.__start_retry_timer);
+        G.__start_retry_timer = null;
+      }
+      if (G.__hunt_wait_timer) {
+        clearTimeout(G.__hunt_wait_timer);
+        G.__hunt_wait_timer = null;
+      }
+      if (G.__hunt_retry_timer) {
+        clearTimeout(G.__hunt_retry_timer);
+        G.__hunt_retry_timer = null;
+      }
+      if (G.__guest_ss_wait_timer) {
+        clearTimeout(G.__guest_ss_wait_timer);
+        G.__guest_ss_wait_timer = null;
+      }
     }
   });
 

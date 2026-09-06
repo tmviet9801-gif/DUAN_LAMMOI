@@ -705,19 +705,53 @@
           type: "AUTOTOOL_CONFIRM_MATCH",
           partner: partner,
         }, "*");
-      } else {
-        if (action === "STOP_HUNT" || action === "RESET_STATE") {
-          const hBtn = document.getElementById("autotool-hunt-btn");
-          if (hBtn) {
-            hBtn.innerHTML = "⚪ Săn Bàn: TẮT";
-            hBtn.style.background = "rgba(30,41,59,0.9)";
-            hBtn.style.color = "#94a3b8";
-            hBtn.style.borderColor = "rgba(255,255,255,0.2)";
-          }
-          window.postMessage({ type: "AUTOTOOL_SET_HUNT", auto_hunt: false }, "*");
-          updateViewBanner(`⏹️ <b>${activeProfileName || 'Tool V3'}</b>: Đã DỪNG săn bàn`, "lobby");
-          showSweetToast("AutoTool", "Đã DỪNG săn bàn theo lệnh", "info", 1800);
+      } else if (action === "START_HUNT") {
+        isHuntOn = true;
+        const hBtn = document.getElementById("autotool-hunt-btn");
+        if (hBtn) {
+          hBtn.innerHTML = "🎯 Săn Bàn: BẬT";
+          hBtn.style.background = "rgba(69,26,3,0.9)";
+          hBtn.style.color = "#fde68a";
+          hBtn.style.borderColor = "rgba(245,158,11,0.5)";
         }
+        window.postMessage({
+          type: "AUTOTOOL_SET_HUNT",
+          auto_hunt: true,
+          auto_start_guest_ss: data && data.auto_start_guest_ss,
+          auto_xa: data && data.auto_xa,
+        }, "*");
+        updateViewBanner(`🎯 <b>${activeProfileName || 'Tool V3'}</b>: Đang SĂN BÀN mức $${((data && data.bet) || 100).toLocaleString()}`, "active");
+        showToast(`🎯 Bắt đầu SĂN BÀN mức $${((data && data.bet) || 100).toLocaleString()}!`, "info");
+        window.postMessage({
+          type: "AUTOTOOL_EXEC_COMMAND",
+          action: "START_HUNT",
+          data: data,
+        }, "*");
+      } else if (action === "STOP_HUNT") {
+        isHuntOn = false;
+        const hBtn = document.getElementById("autotool-hunt-btn");
+        if (hBtn) {
+          hBtn.innerHTML = "⚪ Săn Bàn: TẮT";
+          hBtn.style.background = "rgba(30,41,59,0.9)";
+          hBtn.style.color = "#94a3b8";
+          hBtn.style.borderColor = "rgba(255,255,255,0.2)";
+        }
+        window.postMessage({ type: "AUTOTOOL_SET_HUNT", auto_hunt: false }, "*");
+        updateViewBanner(`⏹️ <b>${activeProfileName || 'Tool V3'}</b>: Đã DỪNG săn bàn`, "lobby");
+        showSweetToast("AutoTool", "Đã DỪNG săn bàn theo lệnh", "info", 1800);
+        window.postMessage({
+          type: "AUTOTOOL_EXEC_COMMAND",
+          action: "STOP_HUNT",
+          data: data,
+        }, "*");
+      } else if (action === "RESET_STATE") {
+        // RESET_STATE CHỈ XÓA BỘ NHỚ BIẾN TRẠNG THÁI CŨ, TUYỆT ĐỐI KHÔNG TẮT SĂN BÀN!
+        window.postMessage({
+          type: "AUTOTOOL_EXEC_COMMAND",
+          action: "RESET_STATE",
+          data: data,
+        }, "*");
+      } else {
         window.postMessage({
           type: "AUTOTOOL_EXEC_COMMAND",
           action: action,
