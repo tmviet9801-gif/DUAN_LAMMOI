@@ -352,3 +352,101 @@ def test_dump_beat_wired_into_extension():
     assert "chooseDumpBeat" in src, "nhánh đè của phụ chưa gọi chooseDumpBeat"
     # Phải nằm TRƯỚC quy tắc "giảm thua trắng" cũ
     assert src.index("chooseDumpBeat") < src.index("Giảm thua trắng")
+
+
+# ---------- Đếm bài ----------
+
+def test_unseen_cards_arithmetic():
+    """52 lá trừ (bài mình ∪ lá đã ra) = tập còn ẩn; không đếm trùng."""
+    res = run_js("""
+      const u = C.unseenCards([0, 1, 2], [2, 3, 4, 4]);   // 2 và 4 lặp -> đếm 1
+      console.log(JSON.stringify({n: u.length, coTrung: u.some(c => [0,1,2,3,4].includes(c))}));
+    """)
+    assert res["n"] == 52 - 5
+    assert res["coTrung"] is False
+
+
+def test_can_anyone_beat_single_pair_quad_straight():
+    """Kiểm tra theo cấu trúc trên tập ẩn — từng loại tổ hợp."""
+    res = run_js("""
+      const all = [...Array(52).keys()];
+      const lowOnly = all.filter(c => C.getCardVal(c) <= 10);
+      console.log(JSON.stringify({
+        // K♠(48): còn A/Heo ẩn -> bị chặn; ẩn toàn lá thấp -> an toàn
+        kBiChan:     C.canAnyoneBeat([48], all.filter(c => c !== 48)),
+        kAnToan:     C.canAnyoneBeat([48], lowOnly),
+        // Heo đơn 2♠(4): còn tứ quý 7 ẩn -> bị chặt; chỉ ba lá 7 -> an toàn
+        heoBiTuQuy:  C.canAnyoneBeat([4], [24, 25, 26, 27]),
+        heoAnToan:   C.canAnyoneBeat([4], [24, 25, 26]),
+        // Đôi K: còn đôi A ẩn -> bị chặn; chỉ 1 lá A -> an toàn
+        doiKBiChan:  C.canAnyoneBeat([48, 49], [0, 1]),
+        doiKAnToan:  C.canAnyoneBeat([48, 49], [0]),
+        // Sảnh 3-4-5: còn sảnh 4-5-6 ẩn -> bị chặn; thiếu lá 6 -> an toàn
+        sanhBiChan:  C.canAnyoneBeat([8, 12, 16], [13, 17, 21]),
+        sanhAnToan:  C.canAnyoneBeat([8, 12, 16], [13, 17]),
+      }));
+    """)
+    assert res == {
+        "kBiChan": True, "kAnToan": False,
+        "heoBiTuQuy": True, "heoAnToan": False,
+        "doiKBiChan": True, "doiKAnToan": False,
+        "sanhBiChan": True, "sanhAnToan": False,
+    }, res
+
+
+def test_can_anyone_beat_matches_brute_force():
+    """Đối chiếu vét cạn: liệt kê MỌI tổ hợp trong tập ẩn rồi thử canBeat.
+
+    Tập ẩn giới hạn <= 18 lá để enumerateMelds (bitmask 32-bit) còn dùng được.
+    """
+    res = run_js("""
+      let bad = [];
+      for (let it = 0; it < 250; it++) {
+        const deck=[...Array(52).keys()];
+        for(let i=51;i>0;i--){const j=(Math.random()*(i+1))|0;[deck[i],deck[j]]=[deck[j],deck[i]];}
+        const mine = deck.slice(0, 8);
+        const unseen = deck.slice(8, 8 + 18);
+        const plan = C.planMinTurns(mine);
+        const su = C.sortCards(unseen);
+        const melds = C.enumerateMelds(su);
+        for (const m of plan.melds) {
+          const fast = C.canAnyoneBeat(m, unseen);
+          let brute = false;
+          for (const e of melds) {
+            const g = []; for (let i = 0; i < su.length; i++) if (e.mask & (1 << i)) g.push(su[i]);
+            if (C.canBeat(g, m)) { brute = true; break; }
+          }
+          if (fast !== brute) bad.push({meld: m, fast: fast, brute: brute, unseen: unseen});
+        }
+      }
+      console.log(JSON.stringify(bad.slice(0, 2)));
+    """)
+    assert res == [], f"canAnyoneBeat lệch vét cạn: {res}"
+
+
+def test_analyze_control_detects_sure_win():
+    """Mọi nhóm đều bất khả chặn -> allUnbeatable, đi hết bài là chắc chắn."""
+    res = run_js("""
+      // Mình: K♠ K♣ (48,49). Đã ra: hết A, hết Heo, K♦ K♥ -> không gì chặn được đôi K
+      const played = [0,1,2,3, 4,5,6,7, 50,51];
+      const a = C.analyzeControl([48, 49], played);
+      const b = C.analyzeControl([48, 49], []);        // chưa ai đánh
+      console.log(JSON.stringify({
+        a_all: a.allUnbeatable, a_sure: a.sureCount, a_unseen: a.unseen,
+        b_all: b.allUnbeatable, b_sure: b.sureCount
+      }));
+    """)
+    assert res["a_all"] is True and res["a_sure"] == 1
+    assert res["a_unseen"] == 52 - 2 - 10
+    assert res["b_all"] is False and res["b_sure"] == 0
+
+
+def test_card_counting_wired_into_extension():
+    ext = Path(__file__).parents[1] / "extension"
+    src = (ext / "content_main.js").read_text(encoding="utf-8")
+    # Gom lá đã ra từ fP.dCs (công khai, kèm ai đánh) và reset khi chia bài mới
+    assert "G.__cards_played.push(c)" in src
+    assert src.count("G.__cards_played = [];") >= 2, "phải reset khi khởi tạo VÀ khi chia bài mới"
+    # Account chính dùng kết quả đếm bài
+    assert "analyzeControl(myCards, G.__cards_played" in src
+    assert "CHẮC THẮNG" in src

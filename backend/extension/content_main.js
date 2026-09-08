@@ -335,6 +335,29 @@
         // Đánh nhóm THẤP nhất trước để giữ lá cao mà giành lại quyền dẫn.
         const planner = (typeof AutoToolCards !== "undefined") ? AutoToolCards
           : (G.AutoToolCards || null);
+
+        // ĐẾM BÀI: mọi lá đã ra bàn đều công khai. 52 lá trừ (bài mình + lá đã
+        // ra) = tập còn ẩn. Nếu MỌI nhóm trong phân rã đều không ai chặn được
+        // nữa thì cứ đánh lần lượt là đi hết bài — chắc thắng, không may rủi.
+        if (planner && typeof planner.analyzeControl === "function") {
+          try {
+            const ctrl = planner.analyzeControl(myCards, G.__cards_played || []);
+            if (ctrl && ctrl.melds && ctrl.melds.length) {
+              if (ctrl.allUnbeatable) {
+                console.log(`[AutoTool V3] [Role: WINNER] ✅ CHẮC THẮNG: cả ${ctrl.melds.length} nhóm đều không ai chặn được (còn ẩn ${ctrl.unseen} lá) -> chạy hết bài.`);
+                return ctrl.melds[0].cards;
+              }
+              console.log(`[AutoTool V3] [Role: WINNER] Phân rã ${ctrl.turns} lượt, ${ctrl.sureCount}/${ctrl.melds.length} nhóm chắc thắng (còn ẩn ${ctrl.unseen} lá).`);
+              // Ưu tiên nhóm KHÔNG BỊ CHẶN: đánh ra là chắc chắn giữ được
+              // quyền dẫn, không phải đánh cược mất lượt.
+              const sure = ctrl.melds.find((m) => m.unbeatable);
+              if (sure) return sure.cards;
+              return ctrl.melds[0].cards;
+            }
+          } catch (e) {
+            console.warn("[AutoTool V3] analyzeControl lỗi, lùi về phân rã thường:", e);
+          }
+        }
         if (planner && typeof planner.planMinTurns === "function") {
           try {
             const plan = planner.planMinTurns(myCards);
@@ -1942,6 +1965,8 @@
               if (Array.isArray(cards) && cards.length > 0) {
                 G.__my_cards = cards;
                 G.__autotool_round_play_count = 0;
+                // ĐẾM BÀI: bắt đầu ván mới -> xoá danh sách lá đã ra bàn.
+                G.__cards_played = [];
                 G.__game_in_progress = true;
                 G.__last_table_cards = null;
                 G.__last_table_player = null;
@@ -1967,6 +1992,12 @@
 
               if (fp.pS === 1 && Array.isArray(fp.dCs) && fp.dCs.length > 0) {
                 // Có người vừa đánh bài
+                // ĐẾM BÀI: mọi lá đánh ra bàn đều công khai (ai ngồi bàn cũng
+                // thấy). Gom lại để suy ra tập lá CÒN ẨN.
+                if (!Array.isArray(G.__cards_played)) G.__cards_played = [];
+                for (const c of fp.dCs) {
+                  if (G.__cards_played.indexOf(c) < 0) G.__cards_played.push(c);
+                }
                 G.__last_table_cards = fp.dCs;
                 G.__last_table_player = fp;
                 if (isMe(fp)) {
@@ -2485,6 +2516,7 @@
   G.__AUTOTOOL_ARMED = false;
   G.__AUTOTOOL_AUTO_HUNT = false;
   G.__AUTOTOOL_ENGAGED = false;   // chỉ controller mới được bật
+  G.__cards_played = [];          // đếm bài: lá đã ra bàn trong ván này
   G.__autotool_partners = [];
 
   function persistStopState(stopped) {

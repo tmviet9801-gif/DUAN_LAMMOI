@@ -113,6 +113,18 @@
           for (let t = s; t <= e; t++) idxs.push(byVal.get(vals[t])[j]);
           push(idxs, "straight");
         }
+        // Biến thể LÁ ĐỈNH CAO NHẤT. Với mục đích ĐÈ, chỉ lá trên cùng của sảnh
+        // quyết định (canBeat so lá cuối, tính cả chất). Sinh theo tầng bỏ sót
+        // trường hợp bậc đỉnh có nhiều lá hơn các bậc khác: vd Q♠Q♦ K♠K♦ A♠A♣A♥
+        // -> layers = 2, A♥ không bao giờ được xếp vào sảnh, dù Q♠K♠A♥ đè được
+        // một sảnh đỉnh A♦. Vét cạn trong test đã bắt được đúng ca này.
+        const topGroup = byVal.get(vals[e]);
+        if (topGroup.length > layers) {
+          const idxs = [];
+          for (let t = s; t < e; t++) idxs.push(byVal.get(vals[t])[0]);
+          idxs.push(topGroup[topGroup.length - 1]);
+          push(idxs, "straight");
+        }
       }
     }
 
@@ -260,6 +272,11 @@
     if (cand.length === 3 && table.length === 3 && sameVal(cand) && sameVal(table)) {
       return compareCards(sc[2], st[2]) > 0;
     }
+    // Tứ quý đè tứ quý (bậc cao hơn). Cần có để canAnyoneBeat và vét cạn
+    // thống nhất khi nhóm là tứ quý.
+    if (cand.length === 4 && table.length === 4 && sameVal(cand) && sameVal(table)) {
+      return compareCards(sc[3], st[3]) > 0;
+    }
     if (cand.length === table.length && cand.length >= 3
         && isStraight(cand) && isStraight(table)) {
       return compareCards(sc[sc.length - 1], st[st.length - 1]) > 0;
@@ -350,8 +367,111 @@
     return best;
   }
 
+  // ===================== ĐẾM BÀI =====================
+  // Mọi lá đã đánh ra bàn đều công khai (luồng WS gửi `fP.dCs` kèm ai đánh).
+  // Biết bài mình + mọi lá đã ra => suy ra tập lá CÒN ẨN. Từ đó biết nước nào
+  // không ai chặn được nữa.
+
+  /** 52 lá trừ đi (bài mình ∪ lá đã ra bàn). */
+  function unseenCards(myCards, playedCards) {
+    const seen = new Set();
+    for (const c of myCards || []) seen.add(Number(c));
+    for (const c of playedCards || []) seen.add(Number(c));
+    const out = [];
+    for (let c = 0; c < 52; c++) if (!seen.has(c)) out.push(c);
+    return out;
+  }
+
+  /**
+   * Có ai còn chặn được nhóm này không?
+   *
+   * Kiểm tra theo CẤU TRÚC trên tập lá còn ẩn, không liệt kê tổ hợp: tập ẩn có
+   * thể tới ~39 lá, mà enumerateMelds dùng bitmask 32-bit nên sẽ tràn.
+   */
+  function canAnyoneBeat(meld, unseen) {
+    if (!meld || !meld.length) return false;
+    const sc = sortCards(meld);
+    const high = sc[sc.length - 1];
+    const n = sc.length;
+    const sameVal = sc.every((c) => getCardVal(c) === getCardVal(sc[0]));
+
+    // Gom lá ẩn theo bậc (mỗi bậc sắp tăng dần)
+    const byVal = new Map();
+    for (const c of sortCards(unseen || [])) {
+      const v = getCardVal(c);
+      if (!byVal.has(v)) byVal.set(v, []);
+      byVal.get(v).push(c);
+    }
+
+    if (n === 1) {
+      for (const c of unseen || []) if (compareCards(c, high) > 0) return true;
+      // Tứ quý chặt Heo đơn
+      if (getCardVal(high) === 15) {
+        for (const g of byVal.values()) if (g.length >= 4) return true;
+      }
+      return false;
+    }
+    if ((n === 2 || n === 3) && sameVal) {
+      for (const g of byVal.values()) {
+        if (g.length < n) continue;
+        // canBeat so lá CAO NHẤT của mỗi bên -> lấy n lá cao nhất của bậc đó
+        const top = g[g.length - 1];
+        if (compareCards(top, high) > 0) return true;
+      }
+      return false;
+    }
+    if (n === 4 && sameVal) {
+      for (const g of byVal.values()) {
+        if (g.length >= 4 && compareCards(g[g.length - 1], high) > 0) return true;
+      }
+      return false;
+    }
+    if (n >= 3 && isStraight(meld)) {
+      // Sảnh cùng độ dài, lá cao hơn: cần n bậc liên tiếp đều còn lá ẩn
+      const vals = Array.from(byVal.keys()).filter((v) => v < 15).sort((a, b) => a - b);
+      for (let s = 0; s + n - 1 < vals.length; s++) {
+        let ok = true;
+        for (let k = 1; k < n; k++) {
+          if (vals[s + k] !== vals[s + k - 1] + 1) { ok = false; break; }
+        }
+        if (!ok) continue;
+        const topVal = vals[s + n - 1];
+        const topCard = byVal.get(topVal)[byVal.get(topVal).length - 1];
+        if (compareCards(topCard, high) > 0) return true;
+      }
+      return false;
+    }
+    return false;
+  }
+
+  /**
+   * Phân rã tối ưu + đánh dấu nhóm nào KHÔNG AI CHẶN ĐƯỢC nữa.
+   *
+   * `allUnbeatable = true` nghĩa là mọi nhóm còn lại đều bất khả chặn: cứ đánh
+   * lần lượt là đi hết bài, KHÔNG phụ thuộc may rủi. Đây là trạng thái đáng
+   * phát hiện nhất — nó biến ván thành chắc thắng.
+   */
+  function analyzeControl(myCards, playedCards) {
+    const plan = planMinTurns(myCards);
+    const unseen = unseenCards(myCards, playedCards);
+    const melds = plan.melds.map(function (m) {
+      return { cards: m, unbeatable: !canAnyoneBeat(m, unseen) };
+    });
+    const sure = melds.filter((m) => m.unbeatable).length;
+    return {
+      turns: plan.turns,
+      melds: melds,
+      unseen: unseen.length,
+      sureCount: sure,
+      allUnbeatable: melds.length > 0 && sure === melds.length,
+    };
+  }
+
   const api = {
     DEFAULT_RESERVE: DEFAULT_RESERVE,
+    unseenCards: unseenCards,
+    canAnyoneBeat: canAnyoneBeat,
+    analyzeControl: analyzeControl,
     canBeat: canBeat,
     chooseDumpDischarge: chooseDumpDischarge,
     chooseDumpBeat: chooseDumpBeat,
