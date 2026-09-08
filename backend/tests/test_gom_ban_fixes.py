@@ -9,12 +9,28 @@
 """
 import asyncio
 import copy
+import inspect
 import json
+from pathlib import Path
 
 import pytest
 from unittest.mock import AsyncMock
 
 from controllers.account_controller import _match_account, _parse_balance
+
+
+def _controller_source() -> str:
+    """Toàn bộ source của package `controllers/auto_flow_controller`.
+
+    Trước đây luồng gom bàn nằm trong MỘT file nên test đọc thẳng file đó. Nay
+    đã tách thành package (constants/deps/lobby/routes_basic/matching/
+    routes_debug), nên nối tất cả module lại để các assert theo chuỗi vẫn kiểm
+    đúng phạm vi cũ mà không phụ thuộc code nằm ở file nào.
+    """
+    pkg = Path(__file__).parents[1] / "controllers" / "auto_flow_controller"
+    return "\n".join(
+        f.read_text(encoding="utf-8") for f in sorted(pkg.glob("*.py"))
+    )
 
 
 SAMPLE_ACCOUNTS = [
@@ -314,7 +330,7 @@ def test_extension_requires_controller_assigned_match_roles():
     assert "function isSubMatchProfile()" in source
     assert "function isAnchorMatchProfile()" in source
     assert 'G.__AUTOTOOL_AUTO_HUNT = false;' in source
-    controller = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    controller = _controller_source()
     assert 'requested_anchor = _resolve_profile_name(body.get("profile_a"))' in controller
     assert "first_name = profile_a" in controller
     assert 'window.__AUTOTOOL_MATCH_ROLE = \'anchor\';' in controller
@@ -339,10 +355,13 @@ def test_stop_is_immediate_and_lobby_preparation_is_parallel():
     đã đồng bộ được sảnh chọn bàn."""
     from pathlib import Path
 
-    source = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    from controllers.auto_flow_controller.routes_basic import autoplay_stop
+
+    source = _controller_source()
     assert "lobby_results = await asyncio.gather(" in source
     assert "Không cho Anchor gửi cmd=308 cho" in source
-    stop_fn = source.split("async def autoplay_stop", 1)[1].split("@router.post(\"/api/autoplay/leave-room\")", 1)[0]
+    # Lấy source theo chính function object: không phụ thuộc thứ tự hàm trong file.
+    stop_fn = inspect.getsource(autoplay_stop)
     assert "Đã dừng tức thì" in stop_fn
     assert "await _ensure_in_tldl_lobby_util(s.page" not in stop_fn
 
@@ -352,7 +371,7 @@ def test_join_always_includes_verified_fixed_rid():
     Không được bỏ các rid nhỏ để game tự chọn mức cược theo state cũ."""
     from pathlib import Path
 
-    source = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    source = _controller_source()
     assert '"100_2": 2, "100_4": 1' in source
     assert '"500_2": 4, "500_4": 3' in source
     assert '"100000_2": 18, "100000_4": 17' in source
@@ -366,7 +385,7 @@ def test_join_always_includes_verified_fixed_rid():
 def test_sub_has_explicit_dump_role_and_auto_discard():
     from pathlib import Path
 
-    source = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    source = _controller_source()
     assert "window.__AUTOTOOL_ROLE = 'dump';" in source
     assert "window.__AUTOTOOL_AUTO_DISCARD" in source
     assert "window.__AUTOTOOL_PARTNER_PROFILES" in source
@@ -401,7 +420,7 @@ def test_dump_policy_avoids_blank_loss_and_sub_leaves_after_verified_round():
     assert "Anchor thấp < Phụ < Anchor cao hơn" in ext_source
     assert "getLooseSingles(myCards, combs)" in ext_source
 
-    controller = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    controller = _controller_source()
     assert "game_completed = False" in controller
     assert "if game_completed:" in controller
     assert "Account phụ đã rời bàn về sảnh chọn bàn" in controller
@@ -425,7 +444,7 @@ def test_sub_join_requires_controller_ticket_after_anchor_verification():
     from pathlib import Path
 
     ext = (Path(__file__).parents[1] / "extension" / "content_main.js").read_text(encoding="utf-8")
-    controller = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    controller = _controller_source()
     assert "__AUTOTOOL_SUB_JOIN_TICKET" in ext
     assert "không có vé xác nhận từ Account chính" in ext
     assert "expires_at: Date.now() + 8000" in controller
@@ -434,7 +453,7 @@ def test_sub_join_requires_controller_ticket_after_anchor_verification():
 def test_multiple_pairs_are_isolated_and_stop_cancels_every_pair_task():
     from pathlib import Path
 
-    controller = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    controller = _controller_source()
     assert '@router.post("/api/autoplay/find-and-match-pairs-ws")' in controller
     assert "Một profile chỉ được xuất hiện trong một cặp" in controller
     assert "asyncio.gather(*[" in controller
@@ -448,13 +467,14 @@ def test_multiple_pairs_are_isolated_and_stop_cancels_every_pair_task():
 
 
 def test_ready_start_and_quick_join_never_use_cross_role_or_blind_clicks():
-    from pathlib import Path
+    from controllers.auto_flow_controller.routes_basic import autoplay_create_table
 
-    controller = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    controller = _controller_source()
     assert "(wantStart) =>" in controller
     assert "labelMatchesRole" in controller
     assert "Không thấy nút '%s'; chỉ dùng WS helper đúng vai trò" in controller
-    quick_fn = controller.split("async def autoplay_create_table", 1)[1].split('@router.post("/api/autoplay/join-rid")', 1)[0]
+    # Lấy source theo chính function object: không phụ thuộc thứ tự hàm trong file.
+    quick_fn = inspect.getsource(autoplay_create_table)
     assert "FIXED_TABLE_RIDS" in quick_fn
     assert "JSON.stringify([3, 'Simms', Number(rid), ''])" in quick_fn
     assert "page.mouse.click" not in quick_fn
@@ -469,7 +489,7 @@ def test_ready_start_and_quick_join_never_use_cross_role_or_blind_clicks():
 def test_match_preflight_always_leaves_stale_table_before_lobby_check():
     from pathlib import Path
 
-    source = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    source = _controller_source()
     assert "PRE-FLIGHT BẮT BUỘC" in source
     assert "window.__AUTOTOOL_AUTO_HUNT = false;" in source
     assert "Gửi leave một lần ngay cả khi extension không nhìn ra table" in source
