@@ -124,6 +124,38 @@ def new_account_record(account: dict, existing: list | None = None) -> dict:
     return record
 
 
+def ensure_profile_dirs_current(accounts: list) -> tuple[list, int]:
+    """Nắn `profile_dir` về thư mục profiles của bản cài HIỆN TẠI.
+
+    `profile_dir` được lưu dạng đường dẫn TUYỆT ĐỐI trong accounts.json. Khi di
+    chuyển/đổi tên thư mục dự án, mọi đường dẫn đó chết theo, còn
+    `ensure_accounts_save_session` chỉ điền khi THIẾU nên không phát hiện ra.
+    Hậu quả: Chromium tự tạo profile RỖNG ở đường dẫn cũ -> mất toàn bộ session
+    đăng nhập, lần nào mở cũng phải đăng nhập lại.
+
+    Giữ nguyên tên thư mục (vd `account01-6f50bda5`) nên dữ liệu profile cũ nằm
+    sẵn trong thư mục profiles mới sẽ được dùng lại nguyên vẹn.
+    """
+    changed = 0
+    base = get_profiles_dir()
+    for a in accounts:
+        raw = (a.get("profile_dir") or "").strip()
+        if not raw:
+            continue
+        cur = Path(raw)
+        try:
+            already_here = cur.parent.resolve() == base.resolve()
+        except Exception:
+            already_here = False
+        if already_here:
+            continue
+        fixed = str(base / cur.name)
+        if fixed != raw:
+            a["profile_dir"] = fixed
+            changed += 1
+    return accounts, changed
+
+
 def ensure_accounts_save_session(accounts: list) -> tuple[list, int]:
     """Bật lưu session cho mọi account (migration cho account cũ).
 

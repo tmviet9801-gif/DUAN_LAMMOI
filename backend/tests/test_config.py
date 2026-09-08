@@ -107,3 +107,43 @@ def test_ensure_accounts_save_session_migrates(tmp_config):
 def test_default_config_has_default_url(tmp_config):
     cfg = config.load_config()
     assert cfg["default_url"] == "https://v.hitclub.latino/?a=hitclub"
+
+
+def test_ensure_profile_dirs_current_fixes_moved_project(tmp_config, monkeypatch):
+    """Di chuyển/đổi tên thư mục dự án làm profile_dir tuyệt đối chết theo.
+
+    Trước đây chỉ có ensure_accounts_save_session, mà hàm đó chỉ điền khi THIẾU
+    profile_dir nên không phát hiện đường dẫn cũ đã hỏng -> Chromium tự tạo
+    profile RỖNG ở đó, mất sạch session đăng nhập của mọi account.
+    """
+    from models import config_model as config
+
+    base = config.get_profiles_dir()
+    accounts = [
+        {"id": "a1", "name": "Account 01",
+         "profile_dir": r"C:\duong\dan\cu\backend\data\profiles\account01-6f50bda5"},
+        {"id": "a2", "name": "Account 02",
+         "profile_dir": str(base / "account02-ed7a8fb2")},  # đã đúng, phải giữ nguyên
+        {"id": "a3", "name": "Account 03"},                 # thiếu hẳn, không đụng tới
+    ]
+
+    out, n = config.ensure_profile_dirs_current(accounts)
+
+    assert n == 1, "chỉ account có đường dẫn lạc mới bị nắn"
+    # Nắn về thư mục hiện tại nhưng GIỮ NGUYÊN tên thư mục -> dùng lại đúng
+    # dữ liệu profile (cookie/login) đang nằm sẵn ở đó.
+    assert out[0]["profile_dir"] == str(base / "account01-6f50bda5")
+    assert out[1]["profile_dir"] == str(base / "account02-ed7a8fb2")
+    assert "profile_dir" not in out[2]
+
+
+def test_is_game_url_matches_any_domain():
+    """Cổng game đổi TLD liên tục — không được khớp cứng tên miền đầy đủ."""
+    from platform_config import is_game_url
+
+    for u in ["https://v.hitclub.latino/?a=hitclub", "https://v.hitclub.bike/",
+              "https://v.hitclub.chat/", "https://v.hitclub.email/",
+              "https://PLAY.HITCLUB.voting/"]:
+        assert is_game_url(u), u
+    for u in ["https://google.com", "about:blank", "", None]:
+        assert not is_game_url(u)

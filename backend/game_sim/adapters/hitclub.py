@@ -38,6 +38,7 @@ from game_sim.protocol import ProtocolLearner
 from game_sim.token_store import TokenStore
 from game_sim.ws_sniffer import WsSniffer
 from models.config_model import DATA_DIR
+from platform_config import is_game_url
 
 log = logging.getLogger("adapter.hitclub")
 
@@ -203,9 +204,12 @@ class HitClubAdapter(GameAdapter):
         if not page:
             return
         try:
-            cur_url = (getattr(page, "url", "") or "").lower()
-            if "hitclub" in cur_url:
-                log.info("Page đã ở trang hitclub (%s), bỏ qua reload để giữ nguyên phiên", cur_url)
+            cur_url = getattr(page, "url", "") or ""
+            # Khớp theo từ khoá, KHÔNG theo tên miền đầy đủ: site đổi TLD liên
+            # tục (.latino -> .bike -> .chat -> .email). Nhận nhầm là "chưa ở
+            # trang game" sẽ goto lại và làm mất phiên đăng nhập.
+            if is_game_url(cur_url):
+                log.info("Page đã ở trang game (%s), bỏ qua reload để giữ nguyên phiên", cur_url)
                 return
             await page.goto(self.url, wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(float(self.game.get("load_wait", 4)))

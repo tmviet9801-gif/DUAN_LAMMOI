@@ -670,10 +670,23 @@ class BrowserManager:
                     pass
             url = account["url"] if account and account.get("url") else "about:blank"
             if url and url != "about:blank":
+                opened = False
                 try:
                     await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                    opened = True
                 except Exception as e:
                     log.warning("goto %s failed: %s", url, e)
+                # Cổng game đổi tên miền liên tục và tên miền cũ chết hẳn
+                # (.latino -> .bike -> .chat -> .email). URL ghim trong account
+                # sẽ mở ra trang lỗi; thử tiếp URL mặc định đang cấu hình.
+                if not opened:
+                    try:
+                        fallback = (self.config.get("default_url") or "").strip()
+                        if fallback and fallback != url:
+                            log.warning("thử URL mặc định thay cho tên miền đã chết: %s", fallback)
+                            await page.goto(fallback, wait_until="domcontentloaded", timeout=60000)
+                    except Exception as e2:
+                        log.warning("goto fallback failed: %s", e2)
             pid, hwnd = await self._wait_new_window(before)
             if pid is None:
                 # Fallback: lấy PID từ process của context (Patchright/Playwright

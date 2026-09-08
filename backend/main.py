@@ -78,13 +78,23 @@ def create_app() -> FastAPI:
 
         # Migration: bật lưu session (save_session) cho mọi profile cũ + tạo
         # profile_dir nếu thiếu, để login được giữ lại khi mở lại.
-        from models.config_model import ensure_accounts_save_session, load_accounts, save_accounts
+        from models.config_model import (
+            ensure_accounts_save_session,
+            ensure_profile_dirs_current,
+            load_accounts,
+            save_accounts,
+        )
 
         try:
             migrated_accounts, n = ensure_accounts_save_session(load_accounts())
-            if n:
+            # Dự án đổi chỗ (đổi tên/di chuyển thư mục) làm profile_dir tuyệt đối
+            # chết theo -> Chromium tạo profile rỗng, mất session đăng nhập.
+            migrated_accounts, n_dir = ensure_profile_dirs_current(migrated_accounts)
+            if n_dir:
+                log.warning("đã nắn %d profile_dir về thư mục profiles hiện tại", n_dir)
+            if n or n_dir:
                 save_accounts(migrated_accounts)
-                log.info("migrated %d accounts (enable save_session)", n)
+                log.info("migrated %d accounts (save_session) + %d profile_dir", n, n_dir)
         except Exception:
             log.exception("migrate accounts save_session failed")
 
