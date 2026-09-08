@@ -362,6 +362,27 @@
         // Nhờ vậy không bị "thua trắng", nhưng vẫn chỉ dùng tổ hợp nhỏ nhất
         // hợp lệ để Account chính đè lại và giữ nhịp xả bài. Không dùng tứ quý
         // / chặt để tránh đảo nhịp hoặc tăng mức phạt không cần thiết.
+        // ƯU TIÊN 1: còn NHIỀU HƠN phần giữ -> đè bằng tổ hợp CAO NHẤT.
+        // Mượn chính lượt của Account chính làm cơ hội xả lá nguy hiểm; chỉ khi
+        // đã tụt về đúng 3-4 lá thấp mới thôi đè và chuyển sang mồi để Account
+        // chính giành lại quyền dẫn rồi đi hết bài.
+        {
+          const reserveBeat = Number.isFinite(G.__AUTOTOOL_DUMP_RESERVE)
+            ? G.__AUTOTOOL_DUMP_RESERVE : undefined;
+          const api = (typeof AutoToolCards !== "undefined") ? AutoToolCards : (G.AutoToolCards || null);
+          if (api && typeof api.chooseDumpBeat === "function") {
+            try {
+              const beat = api.chooseDumpBeat(myCards, tableCards, reserveBeat);
+              if (beat && beat.length) {
+                console.log(`[AutoTool V3] [Role: DUMP] Đè lá cao để xả nguy hiểm: [${beat.join(", ")}] (còn ${myCards.length} lá).`);
+                return beat;
+              }
+            } catch (e) {
+              console.warn("[AutoTool V3] chooseDumpBeat lỗi, dùng lại chiến lược cũ:", e);
+            }
+          }
+        }
+
         const hasPlayedThisRound = Number(G.__autotool_round_play_count || 0) > 0;
         if (!hasPlayedThisRound) {
           const tLen = tableCards.length;

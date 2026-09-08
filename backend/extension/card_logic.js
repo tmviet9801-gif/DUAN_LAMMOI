@@ -242,6 +242,31 @@
   // Số lá thấp nhất mà Account phụ GIỮ LẠI để mồi cho Account chính đè.
   const DEFAULT_RESERVE = 4;
 
+  /** Bản sao luật đè của content_main.js — giữ đồng bộ tuyệt đối với luật game. */
+  function canBeat(cand, table) {
+    if (!cand || !table || !cand.length || !table.length) return false;
+    const sc = sortCards(cand);
+    const st = sortCards(table);
+    const sameVal = (a) => a.every((c) => getCardVal(c) === getCardVal(a[0]));
+
+    if (cand.length === 1 && table.length === 1) return compareCards(sc[0], st[0]) > 0;
+    // Tứ quý chặt Heo đơn
+    if (cand.length === 4 && table.length === 1) {
+      if (sameVal(cand) && getCardVal(table[0]) === 15) return true;
+    }
+    if (cand.length === 2 && table.length === 2 && sameVal(cand) && sameVal(table)) {
+      return compareCards(sc[1], st[1]) > 0;
+    }
+    if (cand.length === 3 && table.length === 3 && sameVal(cand) && sameVal(table)) {
+      return compareCards(sc[2], st[2]) > 0;
+    }
+    if (cand.length === table.length && cand.length >= 3
+        && isStraight(cand) && isStraight(table)) {
+      return compareCards(sc[sc.length - 1], st[st.length - 1]) > 0;
+    }
+    return false;
+  }
+
   /**
    * Nước xả cho ACCOUNT PHỤ: tống lá NGUY HIỂM đi sớm, giữ lại vài lá thấp.
    *
@@ -290,9 +315,46 @@
     return best;
   }
 
+  /**
+   * Nước ĐÈ cho Account phụ: khi Account chính vừa đánh mà phụ CÒN NHIỀU HƠN
+   * phần giữ lại thì đè bằng tổ hợp CAO NHẤT — mượn chính lượt của đồng đội
+   * làm cơ hội xả lá nguy hiểm.
+   *
+   * Chỉ khi đã tụt về đúng phần giữ (3-4 lá thấp) mới thôi đè và chuyển sang
+   * mồi, để Account chính giành lại quyền dẫn rồi đi hết bài.
+   *
+   * Vẫn không đụng vào phần giữ: tổ hợp chỉ tìm ngoài `reserveSize` lá thấp nhất.
+   *
+   * @returns {number[]|null} nhóm lá nên đè, hoặc null -> bên ngoài PASS.
+   */
+  function chooseDumpBeat(cards, tableCards, reserveSize) {
+    if (!tableCards || !tableCards.length) return null;
+    const keep = (reserveSize === undefined || reserveSize === null)
+      ? DEFAULT_RESERVE : Math.max(0, reserveSize | 0);
+    const hand = sortCards(cards || []);
+    if (hand.length <= keep) return null;        // đã về phần giữ -> nhường lượt
+
+    const pool = hand.slice(keep);
+    const melds = enumerateMelds(pool);
+    let best = null;
+    let bestHigh = null;
+    for (const m of melds) {
+      const group = [];
+      for (let i = 0; i < pool.length; i++) if (m.mask & (1 << i)) group.push(pool[i]);
+      if (!canBeat(group, tableCards)) continue;
+      const high = group[group.length - 1];
+      if (best === null || compareCards(high, bestHigh) > 0) {
+        best = group; bestHigh = high;
+      }
+    }
+    return best;
+  }
+
   const api = {
     DEFAULT_RESERVE: DEFAULT_RESERVE,
+    canBeat: canBeat,
     chooseDumpDischarge: chooseDumpDischarge,
+    chooseDumpBeat: chooseDumpBeat,
     getCardVal: getCardVal,
     getCardSuit: getCardSuit,
     compareCards: compareCards,

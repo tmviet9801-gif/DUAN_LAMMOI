@@ -298,3 +298,57 @@ def test_dump_discharge_wired_into_extension():
     content = (ext / "content_main.js").read_text(encoding="utf-8")
     assert "chooseDumpDischarge" in content, "nhánh DUMP chưa gọi tới hàm xả nguy hiểm"
     assert "__AUTOTOOL_DUMP_RESERVE" in content, "chưa cho cấu hình số lá giữ lại"
+
+
+def test_dump_de_la_cao_khi_con_nhieu_hon_phan_giu():
+    """Account chính đánh, phụ CÒN NHIỀU HƠN phần giữ -> phải đè bằng lá CAO.
+
+    Trước đây phụ chỉ đè đúng một lần mỗi ván ("giảm thua trắng") và bằng tổ
+    hợp NHỎ NHẤT, nên khi còn nhiều lá nó vẫn PASS — lá nguy hiểm bị giữ tới
+    cuối ván rồi bị phạt.
+    """
+    # B: 3♠ 4♣ 5♠ 6♦ | 9♠ | K♣ | 2♠(Heo)
+    B = [8, 13, 16, 22, 32, 49, 4]
+    res = run_js(f"""
+      const B = {B};
+      console.log(JSON.stringify({{
+        deKhi7:  (C.chooseDumpBeat(B, [24], 4) || []).map(C.getCardVal),
+        deKhi10: (C.chooseDumpBeat(B, [36], 4) || []).map(C.getCardVal),
+        gapHeo:  C.chooseDumpBeat(B, [5], 4),
+        vePhanGiu: C.chooseDumpBeat([8, 13, 16, 22], [24], 4)
+      }}));
+    """)
+    assert res["deKhi7"] == [15], "phải đè bằng Heo — lá nguy hiểm nhất"
+    assert res["deKhi10"] == [15]
+    assert res["gapHeo"] is None, "không đè được Heo đơn bằng lá lẻ -> PASS"
+    assert res["vePhanGiu"] is None, "về đúng phần giữ thì nhường lượt cho chính"
+
+
+def test_dump_beat_khong_dung_bai_da_giu():
+    """Nước đè cũng không được xé vào phần giữ lại."""
+    res = run_js("""
+      let bad = [];
+      for (let it = 0; it < 300; it++) {
+        const deck=[...Array(52).keys()];
+        for(let i=51;i>0;i--){const j=(Math.random()*(i+1))|0;[deck[i],deck[j]]=[deck[j],deck[i]];}
+        const hand = deck.slice(0, 11);
+        const table = [deck[20]];
+        const keep = 4;
+        const reserve = new Set(C.sortCards(hand).slice(0, keep));
+        const beat = C.chooseDumpBeat(hand, table, keep);
+        if (beat) {
+          for (const c of beat) if (reserve.has(c)) bad.push({hand:hand, beat:beat});
+          if (!C.canBeat(beat, table)) bad.push({loi:'khong de duoc', beat:beat, table:table});
+        }
+      }
+      console.log(JSON.stringify(bad.slice(0, 3)));
+    """)
+    assert res == [], f"sai: {res}"
+
+
+def test_dump_beat_wired_into_extension():
+    ext = Path(__file__).parents[1] / "extension"
+    src = (ext / "content_main.js").read_text(encoding="utf-8")
+    assert "chooseDumpBeat" in src, "nhánh đè của phụ chưa gọi chooseDumpBeat"
+    # Phải nằm TRƯỚC quy tắc "giảm thua trắng" cũ
+    assert src.index("chooseDumpBeat") < src.index("Giảm thua trắng")
