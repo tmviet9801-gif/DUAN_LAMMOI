@@ -191,15 +191,19 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
     # Chuẩn bị Playwright Page cho tất cả tài khoản tham gia (2 đến 5 tài khoản)
     pages = {}
-    content_main_code = ""
+    # card_logic.js phải nạp TRƯỚC content_main.js: nó cung cấp AutoToolCards
+    # (phân rã bài tối ưu) mà nhánh xả bài của Account chính gọi tới.
+    ext_scripts = []
     try:
         from models.bundled_model import get_extension_dir
         ext_dir = get_extension_dir()
-        cm_file = Path(ext_dir or "") / "content_main.js"
-        if not cm_file.exists():
-            cm_file = Path(__file__).resolve().parent.parent / "extension" / "content_main.js"
-        if cm_file.exists():
-            content_main_code = cm_file.read_text(encoding="utf-8")
+        fallback_dir = Path(__file__).resolve().parent.parent / "extension"
+        for fname in ("card_logic.js", "content_main.js"):
+            f = Path(ext_dir or "") / fname
+            if not f.exists():
+                f = fallback_dir / fname
+            if f.exists():
+                ext_scripts.append((fname, f.read_text(encoding="utf-8")))
     except Exception:
         pass
 
@@ -213,11 +217,11 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     await adapter.sniffer.inject(p)
                 except Exception:
                     pass
-                if content_main_code:
+                for fname, code in ext_scripts:
                     try:
-                        await eval_page(p, content_main_code)
+                        await eval_page(p, code)
                     except Exception as e:
-                        log.warning("Inject content_main to %s: %s", p_name, e)
+                        log.warning("Inject %s to %s: %s", fname, p_name, e)
         except Exception as e:
             log.warning("find-and-match: Không mở được trang cho %s: %s", p_name, e)
 

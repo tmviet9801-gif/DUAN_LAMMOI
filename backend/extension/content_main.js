@@ -268,7 +268,27 @@
       } else {
         const relayLead = chooseVerifiedSingleRelay(myCards, G.__partner_cards);
         if (relayLead) return relayLead;
-        // Account 1 (Chính): XẢ SẠCH BÀI VỀ NHẤT! Ưu tiên tổ hợp dài: Sảnh -> Tứ quý -> Ba -> Đôi -> Rác nhỏ
+
+        // Account 1 (Chính): XẢ SẠCH BÀI VỀ NHẤT -> mục tiêu là ÍT LƯỢT NHẤT.
+        // Dùng phân rã tối ưu (quy hoạch động trên đa tập bậc, card_logic.js)
+        // thay cho chuỗi tham lam "sảnh dài nhất -> tứ quý -> ba -> đôi".
+        // Tham lam có thể xé nhầm: lấy sảnh dài nhất đôi khi phá mất một sảnh
+        // thứ hai hoặc một đôi, làm tăng tổng số lượt.
+        // Đánh nhóm THẤP nhất trước để giữ lá cao mà giành lại quyền dẫn.
+        const planner = (typeof AutoToolCards !== "undefined") ? AutoToolCards
+          : (G.AutoToolCards || null);
+        if (planner && typeof planner.planMinTurns === "function") {
+          try {
+            const plan = planner.planMinTurns(myCards);
+            if (plan && plan.melds && plan.melds.length) {
+              console.log(`[AutoTool V3] [Role: WINNER] Phân rã tối ưu ${plan.turns} lượt, đánh [${plan.melds[0].join(", ")}].`);
+              return plan.melds[0];
+            }
+          } catch (e) {
+            console.warn("[AutoTool V3] planMinTurns lỗi, dùng lại chiến lược cũ:", e);
+          }
+        }
+        // Dự phòng khi card_logic.js chưa nạp được
         if (combs.straights.length > 0) return combs.straights[0];
         if (combs.quads.length > 0) return combs.quads[0];
         if (combs.triples.length > 0) return combs.triples[0];
