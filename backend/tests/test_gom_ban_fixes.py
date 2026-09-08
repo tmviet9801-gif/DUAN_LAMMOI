@@ -676,3 +676,22 @@ def test_controller_mo_va_dong_cong_kich_hoat():
     assert "window.__AUTOTOOL_ENGAGED = false;" in lobby, "_clear_hunt_state chưa đóng cổng"
     # Và phải xoá mức cược cũ, nếu không lần chơi tay sau vẫn bị tự out
     assert "window.__target_hunt_bet = 0;" in lobby
+
+
+def test_ready_start_uu_tien_goi_api_component():
+    """Ready/Start phải gọi thẳng API game trước, chỉ click khi API không có.
+
+    Dò trên scene thật (TLDLScene) cho thấy HitClub lộ phương thức, tên KHÔNG
+    bị obfuscate: CardGameTableNoDealer.sendReady() và btn_begin của TLMNScene.
+    Đường cũ (dò nhãn "SẴN SÀNG"/"BẮT ĐẦU" -> so ảnh OpenCV -> click toạ độ)
+    phụ thuộc ngôn ngữ hiển thị và độ phân giải; chính kiểu dò nhãn đó đã gây
+    lỗi nhận nhầm sảnh trước đây.
+    """
+    src = _controller_source()
+
+    assert "typeof c.sendReady === \"function\"" in src, "chưa gọi sendReady()"
+    assert "c.btn_begin.node.activeInHierarchy" in src, \
+        "phải dùng activeInHierarchy, không dùng node.active (bỏ sót node cha bị tắt)"
+    # Đường cũ vẫn phải còn làm dự phòng
+    assert "OpenCV phát hiện nút" in src
+    assert "Không thấy nút '%s'; chỉ dùng WS helper đúng vai trò" in src

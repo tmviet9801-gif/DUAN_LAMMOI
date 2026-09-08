@@ -1094,6 +1094,54 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             4. Bắn song song WebSocket packet tương ứng.
             """
             btn_type = "BẮT ĐẦU" if is_anchor else "SẴN SÀNG"
+
+            # 0. ĐƯỜNG ƯU TIÊN: gọi thẳng API component của game.
+            # Dò trên scene thật cho thấy HitClub có lộ phương thức, tên KHÔNG
+            # bị obfuscate (chỉ tên lớp bị rút thành 'e'):
+            #   TLDLScene/.../CardGameTableNoDealer -> sendReady()
+            #   TLDLScene/.../TLMNScene            -> btn_begin (chủ bàn)
+            # Gọi hàm thì chắc chắn hơn hẳn việc dò nhãn "SẴN SÀNG"/"BẮT ĐẦU"
+            # rồi so ảnh OpenCV rồi click toạ độ: không phụ thuộc ngôn ngữ
+            # hiển thị, không phụ thuộc độ phân giải, không click nhầm UI khác.
+            # Nếu không tìm thấy thì rơi xuống đường cũ bên dưới.
+            try:
+                api_ok = await eval_page(p, """(wantStart) => {
+                    const scene = (typeof cc !== "undefined" && cc.director) ? cc.director.getScene() : null;
+                    if (!scene) return false;
+                    let done = false;
+                    function comps(node) {
+                        try { return node.getComponents(cc.Component) || []; } catch (e) { return []; }
+                    }
+                    function walk(node, depth) {
+                        if (!node || depth > 30 || done) return;
+                        for (const c of comps(node)) {
+                            if (!c) continue;
+                            if (wantStart) {
+                                // Chủ bàn: kích nút Bắt đầu qua chính component của game
+                                if (c.btn_begin && c.btn_begin.node && c.btn_begin.node.activeInHierarchy) {
+                                    try {
+                                        if (cc.Component && cc.Component.EventHandler && c.btn_begin.clickEvents) {
+                                            cc.Component.EventHandler.emitEvents(c.btn_begin.clickEvents, c.btn_begin);
+                                            done = true; return;
+                                        }
+                                    } catch (_) {}
+                                }
+                            } else if (typeof c.sendReady === "function") {
+                                try { c.sendReady(); done = true; return; } catch (_) {}
+                            }
+                        }
+                        const ch = node.children || [];
+                        for (let i = 0; i < ch.length && !done; i++) walk(ch[i], depth + 1);
+                    }
+                    walk(scene, 0);
+                    return done;
+                }""", bool(is_anchor))
+            except Exception:
+                api_ok = False
+            if api_ok:
+                log.info("find-and-match: [%s] >>> Gọi thẳng API game cho '%s' (không cần click) <<<", name, btn_type)
+                return True
+
             sw, sh = await _get_screen_size(p)
             default_x = int(sw * 0.500)
             default_y = int(sh * 0.525)
