@@ -503,3 +503,42 @@ def test_extension_toasts_are_replaced_and_rendered_on_one_line():
     assert 'container.querySelectorAll(".sw-toast").forEach((oldToast) => oldToast.remove());' in source
     assert "const oneLine = [title, bodyText]" in source
     assert "white-space: nowrap !important;" in source
+
+
+def test_anchor_leaves_and_joins_in_one_beat_against_client_auto_rejoin():
+    """Chống livelock: game tự rejoin bàn cũ nhanh hơn cổng xác nhận sảnh.
+
+    Bằng chứng ws_capture.jsonl (backend/data/game_sim_debug):
+    - 40 frame `[3,"Simms",4,""]` (rid 4 = $500 Solo) đều là dir="send" thuần,
+      KHÔNG có bản dir="inject" nào -> không phải extension gửi (extension luôn
+      push("inject", ...) sau mỗi lần gửi; rid=2 có đúng 2 bản inject).
+    - 5 cặp trong số đó cách nhau <2500ms -> cũng không thể do controller gửi,
+      vì server_join_fn chặn cứng ở 2500ms. Suy ra chính client game tự vào lại.
+    - Phiên lỗi 09-08 02:40 và 03:34: 0 frame rid=2, tức tool CHƯA TỪNG gửi được
+      lệnh join nào — cổng cũ (range(6) + sleep 0.8s) không bao giờ xác nhận nổi
+      sảnh nên luôn `continue`.
+    - Chuỗi chạy đúng 09-08 01:46:30 (LEAVE -> ack -> JOIN trong 123ms):
+        [4,"Simms",-1] + cmd 203 -> [4,true,1,-1,0,""] -> [3,"Simms",2,""] -> b=100
+
+    Vì vậy anchor phải rời bàn và join lại NGAY trong trang khi nhận ack, không
+    được quay vòng qua Python rồi mới join.
+    """
+    source = _controller_source()
+
+    # 1. Phải có hàm leave->join liền mạch, chờ đúng ack rời bàn của server.
+    assert "__autotool_leave_then_join" in source
+    assert "d.indexOf('[4,true') === 0" in source
+    assert "simms.send('[4,\"Simms\",-1]');" in source
+    assert "JSON.stringify([3, 'Simms', specificRid, ''])" in source
+
+    # 2. Anchor phải gọi hàm liền mạch đó, không gọi lại exec_join rời rạc.
+    assert "window.__autotool_leave_then_join(" in source
+
+    # 3. Cổng cũ gây livelock phải biến mất: không còn vòng 6 lần + sleep 0.8s
+    #    rồi bỏ lượt join khi phát hiện đang kẹt bàn cũ.
+    assert "nghỉ 3s bỏ qua lượt join này" not in source
+    assert "chủ động LEAVE (lần %d/6)" not in source
+
+    # 4. Chống flood khi đã có RID cụ thể phải là 1200ms — 2500ms còn rộng hơn
+    #    chu kỳ auto-rejoin của game nên tự khoá chính mình.
+    assert "< 1200" in source

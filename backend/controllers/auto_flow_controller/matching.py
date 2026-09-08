@@ -412,9 +412,80 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             console.warn('[AutoTool V3][SRV] Không thấy socket game; từ chối click fallback để tránh vào sai mức cược.');
             return false;
         })"""
+        # LEAVE → JOIN LIỀN MẠCH (chống game tự rejoin bàn cũ).
+        # Bằng chứng ws_capture: sau khi tool rời bàn, CHÍNH CLIENT GAME tự gửi
+        # [3,"Simms",4,""] để vào lại bàn $500 của phiên trước — 40 frame rid=4
+        # đều là `send` thuần, không có bản `inject` (extension luôn push inject)
+        # và 5 cặp cách nhau <2500ms nên cũng không thể do controller gửi.
+        # Cửa sổ trước khi game kịp rejoin chỉ ~100-600ms, trong khi cổng cũ tiêu
+        # 0.8s chỉ để kiểm tra -> không bao giờ lọt, tool không gửi nổi lệnh join
+        # nào (phiên lỗi 09-08 02:40 và 03:34: 0 frame rid=2).
+        # Chuỗi đã chứng minh chạy đúng (09-08 01:46:30, LEAVE→JOIN 123ms):
+        #   [4,"Simms",-1] + cmd 203 -> [4,true,...] -> [3,"Simms",2,""] -> b=100
+        # Nên phải chờ ack rời bàn NGAY TRONG TRANG rồi bắn join, không quay vòng
+        # qua Python (mỗi evaluate là một round-trip CDP).
+        leave_then_join_fn = """(function (rid, bet, mu) {
+            return new Promise(function (resolve) {
+                const simms = (window.__ws_get_simms && window.__ws_get_simms()) || null;
+                if (!simms || simms.readyState !== 1) {
+                    resolve({ ok: false, reason: 'no_socket' });
+                    return;
+                }
+                const specificRid = (rid && !isNaN(Number(rid)) && Number(rid) > 0) ? Number(rid) : null;
+                if (!specificRid) {
+                    console.warn('[AutoTool V3][SRV] Thiếu RID cố định, từ chối join để tránh nhầm mức cược.');
+                    resolve({ ok: false, reason: 'no_rid' });
+                    return;
+                }
+                // Chống flood: có RID cụ thể thì 1200ms là đủ (khớp extension).
+                // 2500ms của bản cũ còn rộng hơn cả chu kỳ auto-rejoin của game.
+                const now = Date.now();
+                if (window.__last_join_ts && (now - window.__last_join_ts) < 1200) {
+                    resolve({ ok: false, reason: 'anti_flood' });
+                    return;
+                }
+
+                let done = false;
+                function fireJoin(via) {
+                    if (done) return;
+                    done = true;
+                    try { simms.removeEventListener('message', onMsg); } catch (e) {}
+                    try {
+                        simms.send(JSON.stringify([3, 'Simms', specificRid, '']));
+                        window.__last_join_ts = Date.now();
+                        console.log('[AutoTool V3][SRV] JOIN rid=' + specificRid + ' ($' + bet + ') qua ' + via);
+                        resolve({ ok: true, via: via, rid: specificRid });
+                    } catch (e) {
+                        resolve({ ok: false, reason: 'send_fail' });
+                    }
+                }
+                function onMsg(ev) {
+                    const d = (typeof ev.data === 'string') ? ev.data : '';
+                    // Server xác nhận đã rời bàn: [4,true,1,-1,0,""]
+                    if (d.indexOf('[4,true') === 0) fireJoin('leave_ack');
+                }
+
+                const inside = (typeof window.__autotool_is_inside_table === 'function')
+                    ? !!window.__autotool_is_inside_table()
+                    : !!(window.__room_players && window.__room_players.length > 0);
+                if (!inside) { fireJoin('already_lobby'); return; }
+
+                try { simms.addEventListener('message', onMsg); } catch (e) {}
+                try {
+                    simms.send('[4,"Simms",-1]');
+                    simms.send('[6,"Simms","channelPlugin",{"cmd":203}]');
+                } catch (e) {}
+                // Không thấy ack (có thể đã ở sảnh sẵn) -> vẫn join sau 700ms.
+                setTimeout(function () { fireJoin('timeout'); }, 700);
+            });
+        })"""
         for p_n, p in pages.items():
             try:
-                await p.evaluate(f"() => {{ window.__autotool_exec_join = {server_join_fn}; window.__last_join_ts = 0; }}")
+                await p.evaluate(
+                    f"() => {{ window.__autotool_exec_join = {server_join_fn};"
+                    f" window.__autotool_leave_then_join = {leave_then_join_fn};"
+                    f" window.__last_join_ts = 0; }}"
+                )
                 log.info("find-and-match: Đã cài đè hàm join chuẩn (b/Mu đầy đủ) cho %s", p_n)
             except Exception as e:
                 log.warning("find-and-match: Cài đè join cho %s thất bại: %s", p_n, e)
@@ -497,33 +568,22 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             # (lobby && KHÔNG ngồi trong bàn && không còn room cũ). Capture cho thấy:
             # khi còn ngồi bàn 500 mà gửi 308 -> game trả [4,false,...,102] từ chối,
             # spam 18 lần/2s càng làm kẹt vĩnh viễn.
-            lobby_confirmed = False
-            for _gate_try in range(6):
-                try:
-                    stuck_in_old_table = await first_page.evaluate("""() => {
-                        if (typeof window.__autotool_is_inside_table === 'function') {
-                            return window.__autotool_is_inside_table();
-                        }
-                        return !!(window.__room_players && window.__room_players.length > 0);
-                    }""")
-                except Exception:
-                    stuck_in_old_table = False
-                in_lobby = await _is_in_tldl_lobby(first_page)
-                if in_lobby and not stuck_in_old_table:
-                    lobby_confirmed = True
-                    break
-                if stuck_in_old_table:
-                    log.warning("find-and-match: [Chống nhầm bàn] Account 1 ĐANG KẸT TRONG BÀN CŨ -> chủ động LEAVE (lần %d/6) trước khi join bàn $%s!", _gate_try + 1, bet_val)
-                    await _set_hud_status(first_page, "Đang thoát bàn cũ (chống vào nhầm bàn)...")
-                    await _do_leave_room(first_page, name=first_name, target_mu=target_mu)
-                    await asyncio.sleep(0.8)
-                else:
-                    await _ensure_in_tldl_lobby(first_page, first_name)
-                    await asyncio.sleep(0.6)
-            if not lobby_confirmed:
-                log.warning("find-and-match: [Chống nhầm bàn] Account 1 KHÔNG xác nhận được sảnh sau 6 lần -> nghỉ 3s bỏ qua lượt join này (tránh spam 308 bị 102)!")
-                await asyncio.sleep(3.0)
-                continue
+            try:
+                stuck_in_old_table = await first_page.evaluate("""() => {
+                    if (typeof window.__autotool_is_inside_table === 'function') {
+                        return window.__autotool_is_inside_table();
+                    }
+                    return !!(window.__room_players && window.__room_players.length > 0);
+                }""")
+            except Exception:
+                stuck_in_old_table = False
+            if stuck_in_old_table:
+                # KHÔNG bỏ lượt join nữa. Trước đây chỗ này lặp LEAVE + sleep(0.8)
+                # tối đa 6 lần rồi `continue`; nhưng game tự rejoin bàn cũ nhanh hơn
+                # 0.8s nên cờ này luôn bật -> tool không bao giờ gửi được lệnh join.
+                # Nay để __autotool_leave_then_join xử lý liền mạch bên dưới.
+                log.info("find-and-match: [Chống nhầm bàn] Account 1 đang trong bàn cũ -> LEAVE và JOIN liền mạch sang bàn $%s.", bet_val)
+                await _set_hud_status(first_page, "Đang thoát bàn cũ & vào thẳng bàn đúng cược...")
 
             # BƯỚC 1: DUY NHẤT ACCOUNT 1 TÌM BÀN CÔNG CỘNG MỚI TRỐNG (THEO MỨC CƯỢC CHÍNH XÁC)
             found_anchor = False
@@ -533,21 +593,25 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 log.info("find-and-match: Trình duyệt Account 1 đã đóng. Dừng chu trình.")
                 return {"ok": False, "error": "Trình duyệt Account 1 đã bị đóng.", "stopped": True}
 
-            # 1. Gửi lệnh join trực tiếp qua Simms WebSocket để vào chính xác mức cược mong muốn
-            ws_join_sent = False
+            # 1. Rời bàn cũ (nếu còn) rồi JOIN đúng RID trong cùng một nhịp, ngay
+            # khi server ack — không để hở cửa sổ cho game tự rejoin bàn $500.
+            join_res = {}
             try:
-                ws_join_sent = bool(await first_page.evaluate(
-                    f"() => {{ if (typeof window.__autotool_exec_join === 'function') return window.__autotool_exec_join({requested_rid or 'null'}, {bet_val}, {target_mu}); return false; }}"
-                ))
+                join_res = await first_page.evaluate(
+                    f"() => {{ if (typeof window.__autotool_leave_then_join === 'function') return window.__autotool_leave_then_join({requested_rid or 'null'}, {bet_val}, {target_mu}); return {{ok: false, reason: 'no_fn'}}; }}"
+                ) or {}
             except Exception as e:
                 if "closed" in str(e).lower() or "target" in str(e).lower():
                     log.info("find-and-match: Trình duyệt đã đóng (%s). Dừng chu trình.", e)
                     return {"ok": False, "error": "Trình duyệt đã bị đóng.", "stopped": True}
 
+            ws_join_sent = bool(join_res.get("ok"))
             if not ws_join_sent:
-                log.warning("find-and-match: Không gửi được join RID=%s cho $%s. Bỏ lượt thay vì click mù sang bàn khác.", requested_rid, bet_val)
+                log.warning("find-and-match: Không gửi được join RID=%s cho $%s (lý do: %s). Bỏ lượt thay vì click mù sang bàn khác.",
+                            requested_rid, bet_val, join_res.get("reason"))
                 await asyncio.sleep(1.0)
                 continue
+            log.info("find-and-match: Đã gửi JOIN rid=%s ($%s) qua '%s'", requested_rid, bet_val, join_res.get("via"))
             await asyncio.sleep(1.6)
 
             if _should_stop():
@@ -870,12 +934,16 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     pass
                 # Nick phụ dùng CÙNG protocol RID thật với anchor. Không phát
                 # cmd=308 auto-join để không bị game đổi sang mức cược khác.
+                # Cũng dùng leave→join liền mạch: nếu phụ còn kẹt trong bàn cũ thì
+                # lệnh join thẳng sẽ bị game từ chối, phụ lỡ mất bàn anchor đang giữ.
+                # Phụ đang đứng sẵn ở sảnh (trường hợp thường) đi nhánh
+                # 'already_lobby' -> bắn join ngay, không chậm thêm nhịp nào.
                 try:
                     join_res = await sub_p.evaluate(f"""() => {{
                         window.__last_join_ts = 0;
                         const _rid = {int(selected_rid)};
-                        if (typeof window.__autotool_exec_join !== 'function') return 'no_join_fn';
-                        return window.__autotool_exec_join(_rid, {bet_val}, {target_mu}) ? 'sent' : 'not_sent';
+                        if (typeof window.__autotool_leave_then_join !== 'function') return {{ok: false, reason: 'no_join_fn'}};
+                        return window.__autotool_leave_then_join(_rid, {bet_val}, {target_mu});
                     }}""")
                     log.info("find-and-match: [%s] Gửi lệnh JOIN trực tiếp bàn #%s -> %s", sub_name, selected_rid, join_res)
                 except Exception as e:
