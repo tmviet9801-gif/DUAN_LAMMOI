@@ -94,8 +94,21 @@ from unittest.mock import AsyncMock
 
 
 @pytest.mark.anyio
-async def test_instant_dual_profile_room_sharing():
-    """Kiểm tra luồng tức thời (<2ms): Chỉ khi Profile A xác nhận bàn trống 100% -> Profile B mới nhận lệnh JOIN_ROOM!"""
+async def test_hub_never_auto_forwards_join_room():
+    """Hub KHÔNG được tự gửi JOIN_ROOM, kể cả khi anchor báo bàn trống 100%.
+
+    Trước đây Hub tự forward ngay khi nhận ANCHOR_ROOM_VERIFIED_EMPTY. Hai vấn
+    đề thật đã khiến hành vi đó bị bỏ:
+      1. Hub forward theo `ri.get('b')` — mức cược do chính client báo — nên
+         Account phụ dễ bị mời vào bàn sai mức ($100 -> $500).
+      2. Phụ có thể vào TRƯỚC khi anchor kịp xác minh mình còn ngồi một mình,
+         dẫn tới hai nick cùng nhảy vào bàn đã có khách lạ.
+
+    Nay controller là nguồn DUY NHẤT cấp vé join, sau khi kiểm anchor đúng RID
+    + đúng mức cược + còn một mình (xem gate trong matching.py). Test này khoá
+    lại nguyên tắc đó; phần huỷ mời (CANCEL_ROOM_INVITE) vẫn phải hoạt động vì
+    nó chỉ ra lệnh RỜI bàn, không đưa ai vào bàn.
+    """
     from services.extension_hub import ExtensionHubManager
 
     hub = ExtensionHubManager()
@@ -106,41 +119,31 @@ async def test_instant_dual_profile_room_sharing():
     await hub.register("ProfileB", ws_b)
     assert len(hub.active_sockets) == 2
 
-    # 1. Trường hợp bàn chưa xác thực hoặc có khách lạ -> B TUYỆT ĐỐI KHÔNG nhận JOIN_ROOM
+    import asyncio
+
+    # 1. Bàn có khách lạ -> B tuyệt đối không nhận JOIN_ROOM
     hub.handle_message("ProfileA", {
         "type": "ROOM_UPDATE",
         "room_info": {"rid": 12345, "rn": "Bàn $100", "b": 100, "Mu": 2, "has_stranger": True}
     })
-    import asyncio
     await asyncio.sleep(0.01)
     b_calls = [json.loads(c.args[0]) for c in ws_b.send_text.call_args_list]
     assert not any(c.get("action") == "JOIN_ROOM" for c in b_calls)
 
-    # 2. Trường hợp Profile A xác thực 100% bàn trống (ngồi 1 mình) -> Profile B nhận lệnh JOIN_ROOM tức thời
+    # 2. Anchor xác nhận bàn TRỐNG 100% -> B VẪN không được nhận JOIN_ROOM.
+    #    Đây là điểm khác biệt cốt lõi so với hành vi cũ.
     ws_b.send_text.reset_mock()
     ws_a.send_text.reset_mock()
     hub.handle_message("ProfileA", {
         "type": "ANCHOR_ROOM_VERIFIED_EMPTY",
-        "room_info": {"rid": 12345, "rn": "Bàn Solo $100", "b": 100, "Mu": 2, "is_verified_empty": True, "player_count": 1}
+        "room_info": {"rid": 12345, "rn": "Bàn Solo $100", "b": 100, "Mu": 2,
+                      "is_verified_empty": True, "player_count": 1}
     })
     await asyncio.sleep(0.01)
-
-    assert ws_b.send_text.called
     b_calls = [json.loads(c.args[0]) for c in ws_b.send_text.call_args_list]
-    join_call = next((c for c in b_calls if c.get("action") == "JOIN_ROOM"), None)
-    assert join_call is not None
-    assert join_call["data"]["rid"] == 12345
-    assert join_call["data"]["source_profile"] == "ProfileA"
+    assert not any(c.get("action") == "JOIN_ROOM" for c in b_calls),         "Hub tự mời Account phụ — chỉ controller mới được cấp vé join"
 
-    # Profile A nhận được xác nhận ROOM_SHARED_CONFIRM
-    assert ws_a.send_text.called
-    a_calls = [json.loads(c.args[0]) for c in ws_a.send_text.call_args_list]
-    confirm_call = next((c for c in a_calls if c.get("action") == "ROOM_SHARED_CONFIRM"), None)
-    assert confirm_call is not None
-    assert confirm_call["data"]["rid"] == 12345
-    assert confirm_call["data"]["target_count"] == 1
-
-    # 3. Khi Profile A phát hiện khách lạ -> Gửi CANCEL_ROOM_INVITE -> Profile B lập tức nhận LEAVE_ROOM
+    # 3. Huỷ mời vẫn phải chạy: lệnh RỜI bàn không đưa ai vào bàn nên an toàn.
     ws_b.send_text.reset_mock()
     hub.handle_message("ProfileA", {
         "type": "CANCEL_ROOM_INVITE",

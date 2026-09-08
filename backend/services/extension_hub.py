@@ -539,63 +539,16 @@ class ExtensionHubManager:
                     # User đã bấm Dừng -> chặn mọi lệnh mời tự động phát ra trễ (zombie gom bàn)
                     log.info("ExtensionHub V3: room_share ĐANG TẮT (đã Dừng) -> bỏ qua phát lệnh mời bàn #%s từ '%s'", rid, profile_name)
                 elif is_verified_empty and not partner_found:
-                    # Deprecated safety path: Hub không còn được gửi JOIN_ROOM.
-                    # Controller là nguồn duy nhất cấp join ticket sau khi check
-                    # anchor một mình + đúng RID/mức cược; tránh B vào trước A.
-                    log.warning("ExtensionHub V3: bỏ qua auto-forward bàn #%s từ '%s'; chỉ controller được phép mời Account phụ.", rid, profile_name)
-                    return
-                    # BÀN TRỐNG THỰC SỰ ĐÃ XÁC MINH (Chỉ 1 mình Anchor) -> Gọi đồng đội vào ngay tức thời (<2ms)!
-                    last_rid = getattr(self, "_last_broadcast_rid", None)
-                    now_t = time.time()
-                    last_t = getattr(self, "_last_broadcast_time", 0)
-
-                    # Tránh lặp lại cùng 1 rid trong 1.5 giây
-                    if str(rid) != str(last_rid) or (now_t - last_t > 1.5):
-                        self._last_broadcast_rid = rid
-                        self._last_broadcast_time = now_t
-                        self._last_shared_room = {
-                            "rid": rid,
-                            "b": ri.get("b", 100),
-                            "Mu": ri.get("Mu", 2),
-                            "source_profile": profile_name,
-                            "timestamp": now_t,
-                        }
-
-                        # Thông báo realtime cho đồng đội: chủ bàn ĐANG GIỮ BÀN TRỐNG
-                        self.relay_toast(profile_name,
-                                         f"Đang GIỮ bàn #{rid} TRỐNG (${ri.get('b', 100)}) — đồng đội vào ghép ngay!",
-                                         "active", f"🎯 {profile_name}")
-
-                        # 1. Báo về cho Profile A (Chủ phòng) biết đã chia sẻ thành công khi có đồng đội online
-                        target_count = max(0, len(self.active_sockets) - 1)
-                        if target_count > 0:
-                            asyncio.create_task(self.send_command(profile_name, "ROOM_SHARED_CONFIRM", {
-                                "rid": rid,
-                                "target_count": target_count,
-                            }))
-
-                        # 2. Bắn lệnh JOIN_ROOM ngay lập tức (<2ms) tới tất cả các profile khác đang online!
-                        # CRITICAL FIX: Gửi kèm định danh in-game thực tế của Anchor (A) để B có thể
-                        # nhận diện đúng A trong cmd 202, tránh race condition khi SYNC_PARTNERS chưa cập nhật.
-                        anchor_state = self.profile_states.get(profile_name) or {}
-                        anchor_dn  = anchor_state.get("dn") or ""   # tên in-game thực (nicktestxxabai1)
-                        anchor_u   = anchor_state.get("u") or ""
-                        anchor_uid = str(anchor_state.get("uid") or "")
-
-                        for other_profile in list(self.active_sockets.keys()):
-                            if other_profile != profile_name:
-                                log.info("ExtensionHub V3: >>> BÀN TRỐNG ĐÃ XÁC THỰC! TỰ ĐỘNG CHUYỂN TIẾP BÀN '%s' TỪ '%s' SANG '%s' TỨC THỜI (<2ms)! [anchor_dn=%s, uid=%s] <<<",
-                                         rid, profile_name, other_profile, anchor_dn, anchor_uid)
-                                asyncio.create_task(self.send_command(other_profile, "JOIN_ROOM", {
-                                    "rid": rid,
-                                    "bet": ri.get("b", 100),
-                                    "mu": ri.get("Mu", 2),
-                                    "source_profile": profile_name,
-                                    # Định danh thực tế của Anchor để B inject vào partners list ngay lập tức
-                                    "anchor_dn":  anchor_dn,
-                                    "anchor_u":   anchor_u,
-                                    "anchor_uid": anchor_uid,
-                                }))
+                    # Hub KHÔNG được tự gửi JOIN_ROOM. Trước đây nó forward theo
+                    # ri.get('b') — mức cược do chính client báo — nên dễ mời
+                    # Account phụ vào bàn sai mức (100 -> 500), và phụ có thể
+                    # vào TRƯỚC khi anchor kịp xác minh mình còn ngồi một mình.
+                    # Nay controller là nguồn DUY NHẤT cấp vé join, sau khi đã
+                    # kiểm anchor đúng RID + đúng mức cược + còn một mình.
+                    # Xem gate cấp vé trong auto_flow_controller/matching.py.
+                    log.warning(
+                        "ExtensionHub V3: bỏ qua auto-forward bàn #%s từ '%s'; "
+                        "chỉ controller được phép mời Account phụ.", rid, profile_name)
 
         # 3b. HỦY LỆNH MỜI VÀO BÀN KHI ANCHOR PHÁT HIỆN NGƯỜI LẠ / BÀN FULL
         elif msg_type in ("CANCEL_ROOM_INVITE", "AUTOTOOL_CANCEL_ROOM_INVITE"):
