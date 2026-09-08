@@ -216,10 +216,12 @@ def test_wired_into_extension_and_manifest():
     content = (ext / "content_main.js").read_text(encoding="utf-8")
     assert "planMinTurns" in content, "nhánh xả bài chưa gọi tới phân rã tối ưu"
 
-    # Controller cũng tự inject script vào trang -> phải nạp cả hai, đúng thứ tự
-    matching = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller"
-                / "matching.py").read_text(encoding="utf-8")
-    assert '("card_logic.js", "content_main.js")' in matching
+    # Controller cũng tự inject script vào trang -> phải nạp cả hai, ĐÚNG THỨ TỰ.
+    # Đọc cả package: hàm nạp script đã chuyển sang context.py khi tách module,
+    # nên bám theo một file cụ thể là sai chỗ.
+    pkg = Path(__file__).parents[1] / "controllers" / "auto_flow_controller"
+    controller = "\n".join(f.read_text(encoding="utf-8") for f in sorted(pkg.glob("*.py")))
+    assert '("card_logic.js", "content_main.js")' in controller
 
 
 # ---------- Đảo chiều ưu tiên cho Account phụ ----------

@@ -334,7 +334,9 @@ def test_extension_requires_controller_assigned_match_roles():
     assert "function isAnchorMatchProfile()" in source
     assert 'G.__AUTOTOOL_AUTO_HUNT = false;' in source
     controller = _controller_source()
-    assert 'requested_anchor = _resolve_profile_name(body.get("profile_a"))' in controller
+    # Anchor lấy từ lựa chọn của UI, không suy từ tên nick. Hàm chuẩn hoá đã
+    # chuyển sang context.py và nhận thêm `accounts` khi tách module.
+    assert 'requested_anchor = resolve_profile_name(body.get("profile_a"), accounts)' in controller
     assert "first_name = profile_a" in controller
     assert 'window.__AUTOTOOL_MATCH_ROLE = \'anchor\';' in controller
     assert 'window.__AUTOTOOL_MATCH_ROLE = \'sub\';' in controller
