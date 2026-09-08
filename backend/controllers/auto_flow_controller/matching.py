@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from models.config_model import load_accounts
 
+from .constants import BET_RATIOS, FIXED_TABLE_RIDS
 from .deps import _build_adapter, _notify_all
 from .lobby import (
     _clear_hunt_state,
@@ -79,7 +80,6 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
       - bet_levels: list[int] (mặc định [100, 500])
       - gid: int (mặc định 1 = Tiến Lên Đếm Lá)
     """
-    import random as _rand
     import json as _json
     import time
 
@@ -152,47 +152,12 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     if not page_a:
         raise HTTPException(status_code=400, detail=f"Không mở được profile {profile_a}")
 
-    BET_RATIOS = {
-        100: (0.290, 0.310),      # Hàng 1 - Cột 1 ($100)
-        500: (0.500, 0.310),      # Hàng 1 - Cột 2 ($500)
-        1000: (0.700, 0.310),     # Hàng 1 - Cột 3 ($1K / 1.000)
-        2000: (0.290, 0.480),     # Hàng 2 - Cột 1 ($2K / 2.000)
-        5000: (0.500, 0.480),     # Hàng 2 - Cột 2 ($5K / 5.000)
-        10000: (0.700, 0.480),    # Hàng 2 - Cột 3 ($10K / 10.000)
-        20000: (0.290, 0.650),    # Hàng 3 - Cột 1 ($20K / 20.000)
-        50000: (0.500, 0.650),    # Hàng 3 - Cột 2 ($50K / 50.000)
-        100000: (0.700, 0.650),   # Hàng 3 - Cột 3 ($100K / 100.000)
-        200000: (0.290, 0.820),   # Hàng 4 - Cột 1 ($200K)
-        500000: (0.500, 0.820),   # Hàng 4 - Cột 2 ($500K)
-        1000000: (0.700, 0.820),  # Hàng 4 - Cột 3 ($1M)
-    }
-
     bet_val = target_bet if target_bet in BET_RATIOS else 100
-    rx, ry = BET_RATIOS[bet_val]
 
     # RID cố định đã xác nhận từ frame cmd=300 của HITCLUB.  Bắt buộc gửi rid
     # trong cmd=308: nếu chỉ gửi b/Mu, server có thể dùng lựa chọn bàn còn lưu
     # trong client và nhảy sang mức $500.
-    fixed_table_rids = {
-        "100_2": 2, "100_4": 1,
-        "500_2": 4, "500_4": 3,
-        "1000_2": 6, "1000_4": 5,
-        "2000_2": 8, "2000_4": 7,
-        "5000_2": 10, "5000_4": 9,
-        "10000_2": 12, "10000_4": 11,
-        "20000_2": 14, "20000_4": 13,
-        "50000_2": 16, "50000_4": 15,
-        "100000_2": 18, "100000_4": 17,
-        "200000_2": 20, "200000_4": 19,
-        "500000_2": 22, "500000_4": 21,
-        "1000000_2": 24, "1000000_4": 23,
-        "2000000_2": 26, "2000000_4": 25,
-        "5000000_2": 28, "5000000_4": 27,
-    }
-    requested_rid = fixed_table_rids.get(f"{bet_val}_{target_mu}")
-
-    from PIL import Image
-    import io
+    requested_rid = FIXED_TABLE_RIDS.get(f"{bet_val}_{target_mu}")
 
     async def _get_screen_size(p):
         try:
@@ -1385,7 +1350,6 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             "room_id": selected_rid,
             "bet": bet_val,
             "room_name": f"Bàn #{selected_rid} (${bet_val})",
-            "theoretical_savings": savings if 'savings' in locals() else None,
             "screenshot": shot_a,
         }
 
