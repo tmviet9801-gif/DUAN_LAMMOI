@@ -450,3 +450,86 @@ def test_card_counting_wired_into_extension():
     # Account chính dùng kết quả đếm bài
     assert "analyzeControl(myCards, G.__cards_played" in src
     assert "CHẮC THẮNG" in src
+
+
+# ---------- Giữ nhịp tiếp sức (phụ mồi — chính đè) ----------
+
+def test_dump_uu_tien_la_cao_ma_dong_doi_con_de_duoc():
+    """Không biết bài đồng đội -> phụ tống Heo, chính không đè được, đứt nhịp.
+
+    Biết bài đồng đội -> phụ phải chọn lá cao NHƯNG chính còn đè lại được.
+    """
+    # B: 3♠ 4♣ 5♠ 6♦ | K♣ | 2♠(Heo)      A: A♠ 8♠
+    B = [8, 13, 16, 22, 49, 4]
+    A = [0, 28]
+    res = run_js(f"""
+      const B = {B}, A = {A};
+      console.log(JSON.stringify({{
+        khongBietBaiA: C.chooseDumpDischarge(B, 4).map(C.getCardVal),
+        bietBaiA:      C.chooseDumpDischarge(B, 4, A).map(C.getCardVal),
+        deKhongBiet:   C.chooseDumpBeat(B, [26], 4).map(C.getCardVal),
+        deBiet:        C.chooseDumpBeat(B, [26], 4, A).map(C.getCardVal),
+      }}));
+    """)
+    assert res["khongBietBaiA"] == [15], "không biết bài A thì tống Heo"
+    assert res["bietBaiA"] == [13], "biết bài A thì phải chừa Heo, tống K"
+    assert res["deKhongBiet"] == [15]
+    assert res["deBiet"] == [13]
+
+
+def test_hall_check_phat_hien_chuoi_moi_khong_kha_thi():
+    """Định lý Hall: mỗi lá mồi phải ghép được một lá RIÊNG của chính đè nó."""
+    res = run_js("""
+      const reserve = [8, 13, 16, 22];      // 3♠ 4♣ 5♠ 6♦
+      console.log(JSON.stringify({
+        thieuLa:  C.hallCheck(reserve, [0, 28]),          // A chỉ có 2 lá
+        duLa:     C.hallCheck(reserve, [24, 28, 32, 36]), // 7 8 9 10 -> đủ
+        toanThap: C.hallCheck(reserve, [9, 10, 11, 12]),  // toàn lá 4 -> đè được 3 nhưng không đè 4/5/6
+      }));
+    """)
+    assert res["thieuLa"]["ok"] is False and res["thieuLa"]["matched"] == 2
+    assert res["duLa"]["ok"] is True and res["duLa"]["matched"] == 4
+    assert res["toanThap"]["ok"] is False
+
+
+def test_hall_check_khop_vet_can():
+    """Ghép cặp phải cho cùng kết quả với vét cạn mọi hoán vị (n nhỏ)."""
+    res = run_js("""
+      function bruteSDR(reserve, pool) {
+        const used = new Array(pool.length).fill(false);
+        function rec(i) {
+          if (i === reserve.length) return true;
+          for (let j = 0; j < pool.length; j++) {
+            if (used[j] || !C.canBeat([pool[j]], [reserve[i]])) continue;
+            used[j] = true;
+            if (rec(i + 1)) return true;
+            used[j] = false;
+          }
+          return false;
+        }
+        return rec(0);
+      }
+      let bad = [];
+      for (let it = 0; it < 300; it++) {
+        const deck=[...Array(52).keys()];
+        for(let i=51;i>0;i--){const j=(Math.random()*(i+1))|0;[deck[i],deck[j]]=[deck[j],deck[i]];}
+        const reserve = deck.slice(0, 4);
+        const pool = deck.slice(4, 9);
+        const fast = C.hallCheck(reserve, pool).ok;
+        const brute = bruteSDR(reserve, pool);
+        if (fast !== brute) bad.push({reserve: reserve, pool: pool, fast: fast, brute: brute});
+      }
+      console.log(JSON.stringify(bad.slice(0, 2)));
+    """)
+    assert res == [], f"hallCheck lệch vét cạn: {res}"
+
+
+def test_relay_wired_into_extension():
+    ext = Path(__file__).parents[1] / "extension"
+    src = (ext / "content_main.js").read_text(encoding="utf-8")
+    # Cả hai nhánh của phụ phải truyền bài đồng đội
+    assert "chooseDumpDischarge(myCards, reserve, G.__partner_cards)" in src
+    assert "chooseDumpBeat(myCards, tableCards, reserveBeat, G.__partner_cards)" in src
+    # Nhánh đè của chính phải ưu tiên nước không ai chặn lại được
+    assert "canAnyoneBeat(c, unseen)" in src
+    assert "không ai chặn lại được" in src

@@ -303,33 +303,31 @@
    * @returns {number[]|null} nhóm lá nên đánh, hoặc null khi chỉ còn phần giữ
    *          lại (lúc đó gọi bên ngoài tự chuyển sang chế độ mồi lá thấp).
    */
-  function chooseDumpDischarge(cards, reserveSize) {
+  /** Mọi nhóm xả được (ngoài phần giữ), xếp theo lá cao GIẢM DẦN. */
+  function dischargeCandidates(cards, reserveSize) {
     const keep = (reserveSize === undefined || reserveSize === null)
       ? DEFAULT_RESERVE : Math.max(0, reserveSize | 0);
     const hand = sortCards(cards || []);
-    if (hand.length <= keep) return null;      // chỉ còn phần giữ để mồi
+    if (hand.length <= keep) return [];        // chỉ còn phần giữ để mồi
 
     // Phần được phép xả = bỏ đi `keep` lá thấp nhất. Tổ hợp chỉ tìm TRONG phần
     // này nên phần giữ lại không bao giờ bị xé.
     const pool = hand.slice(keep);
-    const melds = enumerateMelds(pool);
-    if (!melds.length) return null;
-
-    let best = null;
-    let bestHigh = null;
-    for (const m of melds) {
+    const out = [];
+    for (const m of enumerateMelds(pool)) {
       const group = [];
       for (let i = 0; i < pool.length; i++) if (m.mask & (1 << i)) group.push(pool[i]);
-      const high = group[group.length - 1];     // pool đã sắp tăng dần
-      if (best === null) {
-        best = group; bestHigh = high; continue;
-      }
-      const cmp = compareCards(high, bestHigh);
-      if (cmp > 0 || (cmp === 0 && group.length > best.length)) {
-        best = group; bestHigh = high;
-      }
+      out.push(group);
     }
-    return best;
+    out.sort((a, b) => {
+      const cmp = compareCards(b[b.length - 1], a[a.length - 1]);  // lá cao trước
+      return cmp !== 0 ? cmp : (b.length - a.length);              // cùng lá cao: nhóm to trước
+    });
+    return out;
+  }
+
+  function chooseDumpDischarge(cards, reserveSize, partnerCards) {
+    return preferPartnerBeatable(dischargeCandidates(cards, reserveSize), partnerCards);
   }
 
   /**
@@ -344,27 +342,12 @@
    *
    * @returns {number[]|null} nhóm lá nên đè, hoặc null -> bên ngoài PASS.
    */
-  function chooseDumpBeat(cards, tableCards, reserveSize) {
+  function chooseDumpBeat(cards, tableCards, reserveSize, partnerCards) {
     if (!tableCards || !tableCards.length) return null;
-    const keep = (reserveSize === undefined || reserveSize === null)
-      ? DEFAULT_RESERVE : Math.max(0, reserveSize | 0);
-    const hand = sortCards(cards || []);
-    if (hand.length <= keep) return null;        // đã về phần giữ -> nhường lượt
-
-    const pool = hand.slice(keep);
-    const melds = enumerateMelds(pool);
-    let best = null;
-    let bestHigh = null;
-    for (const m of melds) {
-      const group = [];
-      for (let i = 0; i < pool.length; i++) if (m.mask & (1 << i)) group.push(pool[i]);
-      if (!canBeat(group, tableCards)) continue;
-      const high = group[group.length - 1];
-      if (best === null || compareCards(high, bestHigh) > 0) {
-        best = group; bestHigh = high;
-      }
-    }
-    return best;
+    const cands = dischargeCandidates(cards, reserveSize)
+      .filter((g) => canBeat(g, tableCards));
+    if (!cands.length) return null;             // đã về phần giữ / không đè được
+    return preferPartnerBeatable(cands, partnerCards);
   }
 
   // ===================== ĐẾM BÀI =====================
@@ -467,8 +450,94 @@
     };
   }
 
+  // ============ GIỮ NHỊP TIẾP SỨC (phụ mồi — chính đè) ============
+
+  /** Đồng đội có đè được nhóm này không? Dùng bài thật của đồng đội (Hub chia sẻ). */
+  function canPartnerBeat(meld, partnerCards) {
+    if (!partnerCards || !partnerCards.length) return false;
+    const pool = sortCards(partnerCards);
+    if (pool.length > 20) {
+      // Ngoài tầm bitmask -> chỉ xét lá lẻ, đủ cho phần mồi (toàn lá đơn).
+      if (meld.length !== 1) return false;
+      return pool.some((c) => canBeat([c], meld));
+    }
+    const melds = enumerateMelds(pool);
+    for (const m of melds) {
+      const g = [];
+      for (let i = 0; i < pool.length; i++) if (m.mask & (1 << i)) g.push(pool[i]);
+      if (canBeat(g, meld)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * ĐIỀU KIỆN HALL cho chuỗi mồi–đè.
+   *
+   * Phần giữ lại của phụ toàn lá đơn dùng để mồi. Muốn chính LUÔN giành lại
+   * được quyền dẫn thì mỗi lá mồi phải ghép được với một lá RIÊNG của chính đè
+   * nó — tức tồn tại hệ đại diện phân biệt (SDR). Định lý Hall cho biết điều đó
+   * khả thi hay không NGAY TỪ ĐẦU, thay vì phát hiện muộn giữa ván.
+   *
+   * Ghép cặp hai phía bằng đường tăng luồng; n <= 13 nên chi phí không đáng kể.
+   */
+  function hallCheck(reserveCards, partnerCards) {
+    const reserve = sortCards(reserveCards || []);
+    const pool = sortCards(partnerCards || []);
+    const adj = reserve.map((r) => {
+      const out = [];
+      for (let j = 0; j < pool.length; j++) if (canBeat([pool[j]], [r])) out.push(j);
+      return out;
+    });
+
+    const matchOf = new Array(pool.length).fill(-1);
+    let matched = 0;
+    for (let i = 0; i < reserve.length; i++) {
+      const seen = new Array(pool.length).fill(false);
+      const tryAssign = (u) => {
+        for (const v of adj[u]) {
+          if (seen[v]) continue;
+          seen[v] = true;
+          if (matchOf[v] === -1 || tryAssign(matchOf[v])) {
+            matchOf[v] = u;
+            return true;
+          }
+        }
+        return false;
+      };
+      if (tryAssign(i)) matched++;
+    }
+    return {
+      ok: matched === reserve.length,
+      matched: matched,
+      need: reserve.length,
+      // Lá mồi mà đồng đội KHÔNG có gì đè -> phải bỏ khỏi phần giữ
+      unmatched: reserve.filter((_, i) => !matchOf.includes(i)),
+    };
+  }
+
+  /**
+   * Chọn nước xả/đè cho phụ sao cho GIỮ ĐƯỢC NHỊP: ưu tiên nhóm CAO NHẤT mà
+   * đồng đội vẫn đè lại được.
+   *
+   * Không có ràng buộc này thì phụ hay tống ngay Heo — mà Heo đơn chỉ tứ quý
+   * mới chặt được, nên chính mất quyền dẫn và chuỗi tiếp sức đứt.
+   *
+   * `candidates` là danh sách nhóm hợp lệ đã sắp theo lá cao giảm dần.
+   */
+  function preferPartnerBeatable(candidates, partnerCards) {
+    if (!candidates || !candidates.length) return null;
+    if (partnerCards && partnerCards.length) {
+      for (const g of candidates) if (canPartnerBeat(g, partnerCards)) return g;
+    }
+    return candidates[0];   // không có thì cứ xả cao nhất
+  }
+
   const api = {
     DEFAULT_RESERVE: DEFAULT_RESERVE,
+    canPartnerBeat: canPartnerBeat,
+    hallCheck: hallCheck,
+    preferPartnerBeatable: preferPartnerBeatable,
+    dischargeCandidates: dischargeCandidates,
     unseenCards: unseenCards,
     canAnyoneBeat: canAnyoneBeat,
     analyzeControl: analyzeControl,

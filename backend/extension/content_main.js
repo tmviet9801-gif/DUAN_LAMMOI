@@ -310,7 +310,10 @@
         const cardsApi = (typeof AutoToolCards !== "undefined") ? AutoToolCards : (G.AutoToolCards || null);
         if (cardsApi && typeof cardsApi.chooseDumpDischarge === "function") {
           try {
-            const discharge = cardsApi.chooseDumpDischarge(myCards, reserve);
+            // Truyền bài đồng đội: ưu tiên lá cao mà CHÍNH CÒN ĐÈ ĐƯỢC,
+            // giữ nhịp tiếp sức. Không có ràng buộc này thì phụ hay tống
+            // ngay Heo — mà Heo đơn chỉ tứ quý mới chặt, chính mất quyền dẫn.
+            const discharge = cardsApi.chooseDumpDischarge(myCards, reserve, G.__partner_cards);
             if (discharge && discharge.length) {
               console.log(`[AutoTool V3] [Role: DUMP] Xả lá nguy hiểm trước: [${discharge.join(", ")}] (giữ lại ${reserve === undefined ? cardsApi.DEFAULT_RESERVE : reserve} lá thấp để mồi).`);
               return discharge;
@@ -395,7 +398,7 @@
           const api = (typeof AutoToolCards !== "undefined") ? AutoToolCards : (G.AutoToolCards || null);
           if (api && typeof api.chooseDumpBeat === "function") {
             try {
-              const beat = api.chooseDumpBeat(myCards, tableCards, reserveBeat);
+              const beat = api.chooseDumpBeat(myCards, tableCards, reserveBeat, G.__partner_cards);
               if (beat && beat.length) {
                 console.log(`[AutoTool V3] [Role: DUMP] Đè lá cao để xả nguy hiểm: [${beat.join(", ")}] (còn ${myCards.length} lá).`);
                 return beat;
@@ -440,11 +443,27 @@
           cands = combs.straights.filter((s) => s.length === tLen);
         }
 
-        for (const cand of cands) {
-          if (canBeat(cand, tableCards)) {
-            console.log(`[AutoTool V3] [Role: WINNER] Đè bài đồng đội bằng [${cand.join(", ")}] để giành lượt!`);
-            return cand;
+        const beatable = cands.filter((c) => canBeat(c, tableCards));
+
+        // ĐẾM BÀI: trong số nước đè được, ưu tiên nước KHÔNG AI CHẶN LẠI ĐƯỢC.
+        // Đè xong mà bị người khác đè tiếp thì mất quyền dẫn — đúng thứ đang
+        // cần giành. Nhóm bất khả chặn bảo đảm giữ được lượt.
+        if (beatable.length) {
+          const api = (typeof AutoToolCards !== "undefined") ? AutoToolCards : (G.AutoToolCards || null);
+          if (api && typeof api.canAnyoneBeat === "function") {
+            try {
+              const unseen = api.unseenCards(myCards, G.__cards_played || []);
+              const safe = beatable.find((c) => !api.canAnyoneBeat(c, unseen));
+              if (safe) {
+                console.log(`[AutoTool V3] [Role: WINNER] Đè bằng [${safe.join(", ")}] — không ai chặn lại được, chắc giữ quyền dẫn.`);
+                return safe;
+              }
+            } catch (e) {
+              console.warn("[AutoTool V3] canAnyoneBeat lỗi ở nhánh đè:", e);
+            }
           }
+          console.log(`[AutoTool V3] [Role: WINNER] Đè bài đồng đội bằng [${beatable[0].join(", ")}] để giành lượt!`);
+          return beatable[0];
         }
 
         // Tứ quý chặt Heo đơn nếu đồng đội lỡ đánh Heo
