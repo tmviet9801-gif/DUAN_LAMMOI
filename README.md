@@ -92,6 +92,31 @@ Panel **"Auto xả bài — tìm nhau"** trong Game view:
 - **WS sniffer** (`game_sim/ws_sniffer.py`): hook `WebSocket` trong page, ghi mọi send/recv ra `ws_capture.jsonl`, expose `__ws_send()` để gửi lại message
 - **Capture workflow**: `POST /api/gamesim/capture` → chơi thủ công 1 ván → `GET /api/gamesim/ws-capture` phân tích protocol
 
+### Chính sách xả bài an toàn (cập nhật)
+
+- Account chính là `anchor/winner`; Account phụ là `sub/dump`. Vai trò do backend gán theo profile người dùng chọn, không suy đoán theo tên nick.
+- Account phụ mở lượt tự do bằng lá nhỏ nhất. Khi Account chính vừa đánh, phụ ưu tiên pass để giữ nhịp; tuy nhiên nếu phụ chưa đánh lá nào trong ván, phụ được đè **một lần duy nhất** bằng tổ hợp nhỏ nhất hợp lệ. Điều này hạn chế ván phụ thua trắng mà không dùng tứ quý/chặt hoặc phá nhịp của Account chính.
+- Khi nhận `cmd 252` và backend xác nhận ván đã kết thúc, toàn bộ Account phụ tự rời bàn về **sảnh chọn bàn**. Giao diện cập nhật log: `Đã xả bài xong — Account phụ đã rời bàn về sảnh chọn bàn`.
+- Account chính chỉ rời bàn nếu bật `auto_leave_after`. Nếu sau 45 giây chưa xác nhận kết thúc ván, hệ thống giữ nguyên trạng thái và báo cảnh báo, không tự out Account phụ.
+
+### Lưu ý vận hành Gom bàn HITCLUB
+
+- Chỉ chạy khi tất cả profile đã đăng nhập và đứng tại **sảnh chọn bàn Tiến Lên Đếm Lá**. Không chạy từ sảnh chính hoặc trong một bàn khác.
+- Mapping được xác minh trực tiếp từ gói `cmd 300`: `$100 Solo = rid 2`, `$100 bốn người = rid 1`; `$500 Solo = rid 4`, `$500 bốn người = rid 3`.
+- Join bàn cố định dùng frame thực tế `[3,"Simms",rid,""]`. Không dùng click tọa độ canvas để chọn cược; nếu chưa có socket game, luồng phải báo/đợi thử lại thay vì tự click sang mức cược khác.
+- Sau join, chỉ gói `cmd 202` có `b` đúng bằng cấu hình mới là xác nhận bàn hợp lệ. Nếu bàn chứa khách lạ hoặc `b` lệch mức cược, Account chính và phụ phải rời bàn; không phát lời mời hoặc Ready/Start tiếp theo.
+- Account phụ chỉ gửi **Sẵn sàng** sau khi thấy Account chính cùng cặp. Account chính chỉ gửi **Bắt đầu** sau khi đã xác minh Account phụ. Không gửi Ready/Start cho bàn có khách lạ trong chế độ ghép cặp.
+- Nút **Dừng** hủy toàn bộ task gom bàn tức thì và dập các timer; nó không thực hiện click điều hướng bổ sung sau khi người dùng đã dừng.
+- Sau khi cập nhật `content_main.js`, reload các tab game hoặc mở lại profile để extension hook được WebSocket của phiên mới.
+
+### Chạy nhiều cặp đồng thời
+
+Tick profile theo thứ tự cặp trên bảng rồi bấm **GOM BÀN & XẢ**. Với bốn
+profile `Account01`, `Account02`, `Account03`, `Account04`, ứng dụng tạo hai
+job song song: `Account01 → Account02` và `Account03 → Account04`. Mỗi cặp
+tìm RID/bàn riêng, chỉ nhận diện partner trong chính cặp đó và tối đa có ba cặp
+(6 profile). Số profile phải là số chẵn; nút **Dừng** hủy toàn bộ các cặp.
+
 ### 2.7. UI
 - **Menubar kiểu VS Code**: `Game | Trang chủ | Proxy | Cấu hình | Nhóm | Hệ thống`
 - **Game là màn hình chính** (mặc định mở Game)

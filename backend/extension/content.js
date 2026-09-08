@@ -107,6 +107,9 @@
         font-weight: 700 !important;
         letter-spacing: 0.2px !important;
         line-height: 1.3 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
       }
       .sw-toast-body {
         font-size: 11px !important;
@@ -481,6 +484,10 @@
       makeDraggable(container, "AUTOTOOL_POS_SWEET_TOAST");
     }
 
+    // Chỉ hiển thị MỘT toast tại một thời điểm. Các event Hub thường đến liên
+    // tiếp (banner + toast + relay), nếu xếp chồng sẽ che canvas game.
+    container.querySelectorAll(".sw-toast").forEach((oldToast) => oldToast.remove());
+
     const icons = {
       success: `<div class="sw-icon"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>`,
       warn: `<div class="sw-icon"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg></div>`,
@@ -492,12 +499,17 @@
     const iconHtml = icons[type] || icons.info;
     const toast = document.createElement("div");
     toast.className = `sw-toast sw-type-${type}`;
+    const oneLine = [title, bodyText]
+      .filter(Boolean)
+      .join(" — ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
     toast.innerHTML = `
       <div class="sw-toast-content">
         ${iconHtml}
         <div class="sw-toast-text">
-          <div class="sw-toast-title">${title}</div>
-          ${bodyText ? `<div class="sw-toast-body">${bodyText}</div>` : ""}
+          <div class="sw-toast-title" title="${oneLine.replace(/"/g, "&quot;")}">${oneLine}</div>
         </div>
       </div>
       <div class="sw-toast-progress" style="animation-duration: ${duration}ms"></div>

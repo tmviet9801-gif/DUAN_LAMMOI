@@ -161,6 +161,23 @@
     return "winner";
   }
 
+  // Vai trò ghép bàn do backend ấn định cho từng lượt chạy.  Không suy đoán
+  // bằng tên profile khi controller đã biết chính xác account nào là anchor:
+  // tên nick có chữ/số "1" hoặc "2" rất dễ làm đảo chiều điều phối.
+  function isSubMatchProfile() {
+    if (G.__AUTOTOOL_MATCH_ROLE === "anchor") return false;
+    if (G.__AUTOTOOL_MATCH_ROLE === "sub") return true;
+    const pName = (getProfileName() || "").toLowerCase();
+    return pName.includes("2") || pName.includes("sub") || pName.includes("phu") ||
+      pName.includes("xabai2") || pName.includes("dump") || getMyRole() === "dump";
+  }
+
+  function isAnchorMatchProfile() {
+    if (G.__AUTOTOOL_MATCH_ROLE === "anchor") return true;
+    if (G.__AUTOTOOL_MATCH_ROLE === "sub") return false;
+    return (getProfileName() || "").toLowerCase().includes("1") || !!G.__is_hunt_initiator;
+  }
+
   function findBestPlay(myCards, tableCards, role, isPartnerTurn) {
     if (!myCards || !myCards.length) return null;
     const combs = findCombinations(myCards);
@@ -185,8 +202,26 @@
     // 2. LƯỢT ĐÈ BÀI (Follow Turn)
     if (isPartnerTurn) {
       if (role === "dump") {
-        // Account 2 (Phụ): LUÔN LUÔN BỎ LƯỢT (PASS) để nhường quyền cho Account 1 xả tiếp!
-        console.log("[AutoTool V3] [Role: DUMP] Đồng đội vừa đánh -> BỎ LƯỢT (Pass) nhường quyền cho Account 1 xả tiếp!");
+        // Account phụ được phép đè ĐÚNG MỘT lần trong ván nếu chưa hề đánh.
+        // Nhờ vậy không bị "thua trắng", nhưng vẫn chỉ dùng tổ hợp nhỏ nhất
+        // hợp lệ để Account chính đè lại và giữ nhịp xả bài. Không dùng tứ quý
+        // / chặt để tránh đảo nhịp hoặc tăng mức phạt không cần thiết.
+        const hasPlayedThisRound = Number(G.__autotool_round_play_count || 0) > 0;
+        if (!hasPlayedThisRound) {
+          const tLen = tableCards.length;
+          let cands = [];
+          if (tLen === 1) cands = combs.singles;
+          else if (tLen === 2) cands = combs.pairs;
+          else if (tLen === 3) cands = combs.triples;
+          else if (tLen >= 3 && isStraight(tableCards)) cands = combs.straights.filter((s) => s.length === tLen);
+          for (const cand of cands) {
+            if (canBeat(cand, tableCards)) {
+              console.log(`[AutoTool V3] [Role: DUMP] Giảm thua trắng: đè 1 lần bằng [${cand.join(", ")}], sau đó nhường lại Account chính.`);
+              return cand;
+            }
+          }
+        }
+        console.log("[AutoTool V3] [Role: DUMP] Đã đánh trong ván hoặc không có bài đè an toàn -> PASS nhường Account chính.");
         return null;
       } else {
         // Account 1 (Chính): BẮT BUỘC ĐÈ BÀI ĐỒNG ĐỘI ĐỂ GIÀNH LƯỢT ĐI TỰ DO!
@@ -545,6 +580,39 @@
         clicked = true;
       }
     } catch (_) {}
+    return clicked;
+  }
+
+  // Chọn đúng ô cược bằng node Cocos thay vì toạ độ tỉ lệ. Canvas game thay
+  // đổi theo zoom/resolution; click xấp xỉ từng bấm nhầm $500 khi chọn $100.
+  function joinCocosTableByBet(bet, mu) {
+    const expected = String(Number(bet));
+    let clicked = false;
+    try {
+      if (typeof cc === "undefined" || !cc.director) return false;
+      const scene = cc.director.getScene();
+      if (!scene) return false;
+      function scan(node, depth) {
+        if (!node || depth > 35 || clicked) return;
+        const name = String(node.name || "").toLowerCase();
+        const text = getCocosNodeText(node).replace(/[^0-9]/g, "");
+        // Cần khớp CHÍNH XÁC giá trị nhãn/nút, không dùng includes("100")
+        // vì $100 cũng là một phần của $1000/$10000.
+        const nameNumbers = name.match(/\d+/g) || [];
+        const exactBet = text === expected || nameNumbers.includes(expected);
+        const isTable = name.includes("room") || name.includes("table") ||
+          name.includes("bet") || name.includes("cuoc") || name.includes("ban");
+        if (exactBet && isTable && node.active) {
+          clicked = clickCocosNode(node);
+          if (clicked) console.log(`[AutoTool V3] Cocos join đúng mức $${expected}: node='${node.name}', text='${getCocosNodeText(node)}'`);
+          return;
+        }
+        for (const child of (node.children || [])) scan(child, depth + 1);
+      }
+      scan(scene, 0);
+    } catch (e) {
+      console.warn("[AutoTool V3] Lỗi joinCocosTableByBet:", e);
+    }
     return clicked;
   }
 
@@ -951,6 +1019,7 @@
   G.__autotool_is_inside_table = isInsideGameTable;
   G.__autotool_is_in_tldl_lobby = isAlreadyInTLDLLobby;
   G.__autotool_auto_enter_tldl = autoEnterTLDLLobby;
+  G.__autotool_join_table_by_bet = joinCocosTableByBet;
   G.__autotool_dismiss_popups = dismissPopupsAndBanners;
   G.__autotool_is_on_login_screen = isOnLoginScreen;
   G.__autotool_check_logged_out = checkAndHandleLoggedOut;
@@ -1006,15 +1075,25 @@
       rid: (G.__last_room_info && G.__last_room_info.rid) || 2,
     }, "*");
 
-    setTimeout(() => {
-      console.log("[AutoTool V3] Tự động gửi lệnh SẴN SÀNG / BẮT ĐẦU (cmd 5)...");
-      G.__autotool_exec_ready();
-    }, 150);
+    const executeHandshakeAction = () => {
+      // Account phụ chỉ Sẵn Sàng; chỉ chủ bàn mới được Bắt đầu. Trước đây cả
+      // hai cùng gọi ready (có kèm cmd 5) khiến chủ bàn có thể không phát Start
+      // đúng thời điểm và bị server out vì timeout.
+      if (isAnchorMatchProfile()) {
+        console.log("[AutoTool V3] Chủ bàn đã xác minh đồng đội -> gửi BẮT ĐẦU.");
+        G.__autotool_exec_start();
+      } else {
+        console.log("[AutoTool V3] Account phụ đã xác minh chủ bàn -> gửi SẴN SÀNG.");
+        G.__autotool_exec_ready();
+      }
+    };
+
+    setTimeout(executeHandshakeAction, 150);
 
     setTimeout(() => {
       if (!G.__game_in_progress && (!G.__my_cards || G.__my_cards.length === 0)) {
-        console.log("[AutoTool V3] Tự động gửi nhắc SẴN SÀNG lần 2 (cmd 5)...");
-        G.__autotool_exec_ready();
+        console.log("[AutoTool V3] Nhắc lại handshake theo đúng vai trò.");
+        executeHandshakeAction();
       }
     }, 450);
 
@@ -1035,8 +1114,8 @@
         G.__start_retry_timer = null;
         return;
       }
-      console.log(`[AutoTool V3] [Retry Start #${attempts}] Gửi lại SẴN SÀNG / BẮT ĐẦU (cmd 5)...`);
-      G.__autotool_exec_ready();
+      console.log(`[AutoTool V3] [Retry Start #${attempts}] Gửi lại handshake đúng vai trò.`);
+      executeHandshakeAction();
     }, 600);
   }
 
@@ -1134,8 +1213,11 @@
           if (m && m[1] && Number(m[1]) > 0 && Number(m[1]) !== 100) {
             G.__ws_pending_rid = Number(m[1]);
           }
-        } else if (text.includes('[3,"Simms",1,')) {
-          const m = text.match(/\[3,"Simms",1,\s*"?(\d+)"?/);
+        } else if (text.includes('[3,"Simms",')) {
+          // Protocol bàn cố định: [3,"Simms",<rid>,""] . Trước đây chỉ
+          // bắt biến thể cũ có số 1 ở vị trí thứ ba nên khi join rid=4 ($500)
+          // không được ghi nhận, rồi cmd 202 bị suy diễn nhầm thành bàn $100.
+          const m = text.match(/\[3,"Simms",\s*"?(\d+)"?/);
           if (m && m[1] && Number(m[1]) > 0) {
             G.__ws_pending_rid = Number(m[1]);
           }
@@ -1341,10 +1423,25 @@
                 G.__partner_cards_count = partner.rmC;
               }
 
-              // Xác định mã bàn: Có ID cụ thể hoặc Bàn Chống Vây
+              // Xác định mã bàn. RID 1..28 là các bàn cố định hợp lệ, không
+              // được coi là "Chống Vây" rồi thay bằng RID mặc định $100.
               let rid = (p.ri && p.ri.rid) || p.rid || G.__ws_pending_rid || null;
-              const isChongVay = !rid || rid === -1 || String(rid) === "100" || rid === 2 || rid === 1;
-              const targetRid = rid && !isNaN(Number(rid)) && Number(rid) > 28 ? Number(rid) : (p.Mu === 2 ? 2 : 1);
+              const isChongVay = !rid || Number(rid) === -1 || String(rid) === "100";
+              const fixedRidByBet = {
+                "100_2": 2, "100_4": 1, "500_2": 4, "500_4": 3,
+                "1000_2": 6, "1000_4": 5, "2000_2": 8, "2000_4": 7,
+                "5000_2": 10, "5000_4": 9, "10000_2": 12, "10000_4": 11,
+                "20000_2": 14, "20000_4": 13, "50000_2": 16, "50000_4": 15,
+                "100000_2": 18, "100000_4": 17, "200000_2": 20, "200000_4": 19,
+                "500000_2": 22, "500000_4": 21, "1000000_2": 24, "1000000_4": 23,
+                "2000000_2": 26, "2000000_4": 25, "5000000_2": 28, "5000000_4": 27,
+              };
+              const roomBet = Number(p.b || 0);
+              const roomMu = Number(p.Mu || 2);
+              const fallbackRid = fixedRidByBet[`${roomBet}_${roomMu}`] || (roomMu === 2 ? 2 : 1);
+              const targetRid = rid && !isNaN(Number(rid)) && Number(rid) > 0
+                ? Number(rid)
+                : fallbackRid;
 
               const totalPlayers = (p.ps || []).length;
               const isAloneEmpty = (!partner && strangers.length === 0 && totalPlayers === 1 && !!me);
@@ -1378,8 +1475,7 @@
               }, "*");
 
               // Phân định vai trò: Anchor (Chủ bàn) hay Sub (Phụ / Khách vào theo lệnh)
-              const pName = (getProfileName() || "").toLowerCase();
-              const isSubProfile = pName.includes("2") || pName.includes("sub") || pName.includes("phu") || pName.includes("xabai2") || pName.includes("dump") || (typeof getMyRole === "function" && getMyRole() === "dump");
+              const isSubProfile = isSubMatchProfile();
 
               // --- LOGIC TỰ ĐỘNG SĂN BÀN & ĐIỀU PHỐI VÀO BÀN TRỐNG CHUẨN XÁC ---
               if (partner) {
@@ -1546,8 +1642,7 @@
               // Nếu đang bật Auto Hunt và là Account 1 (Anchor): Tự động tìm lại lượt mới với ADAPTIVE BACKOFF (#1)
               // TRỪ KHI TÀI KHOẢN ĐÃ BỊ ĐĂNG XUẤT -> KHÔNG gửi thêm bất kỳ lệnh WS nào (giữ phiên đăng nhập)
               if (G.__AUTOTOOL_AUTO_HUNT && !(typeof checkAndHandleLoggedOut === "function" && checkAndHandleLoggedOut())) {
-                const pName = (getProfileName() || "").toLowerCase();
-                if (pName.includes("1") || G.__is_hunt_initiator) {
+                if (isAnchorMatchProfile()) {
                   if (G.__hunt_retry_timer) clearTimeout(G.__hunt_retry_timer);
 
                   // ADAPTIVE BACKOFF (#1): Tự động co giãn thời gian chờ thông minh (2.2s - 8s) chống Rate-Limit "Bạn thao tác quá nhanh"
@@ -1616,6 +1711,7 @@
               const cards = p.cs || [];
               if (Array.isArray(cards) && cards.length > 0) {
                 G.__my_cards = cards;
+                G.__autotool_round_play_count = 0;
                 G.__game_in_progress = true;
                 G.__last_table_cards = null;
                 G.__last_table_player = null;
@@ -1646,6 +1742,7 @@
                 if (isMe(fp)) {
                   // Tôi vừa đánh thành công nhóm bài này
                   G.__my_cards = (G.__my_cards || []).filter((c) => !fp.dCs.includes(c));
+                  G.__autotool_round_play_count = Number(G.__autotool_round_play_count || 0) + 1;
                   console.log(`[AutoTool V3] Đã đánh [${fp.dCs.join(", ")}], bài trên tay còn ${G.__my_cards.length} lá.`);
                   window.postMessage({
                     type: "AUTOTOOL_CARDS_UPDATED",
@@ -1716,8 +1813,7 @@
                 }, 1500);
 
                 // 2. Chủ bàn tự động gửi Bắt Đầu sau 2.5s
-                const pName = (getProfileName() || "").toLowerCase();
-                if (pName.includes("1") || G.__is_hunt_initiator) {
+                if (isAnchorMatchProfile()) {
                   setTimeout(() => {
                     console.log("[AutoTool V3] Chủ bàn tự động gửi BẮT ĐẦU (cmd 364) cho ván kế tiếp!");
                     G.__autotool_exec_start();
@@ -2006,7 +2102,9 @@
       }, 250);
     }, 200);
 
-    // 4. Gửi toàn bộ các gói tin WS rời phòng chuẩn của HitClub
+    // 4. Gửi gói rời phòng. `cmd:308` là JOIN (không phải leave); trước đây
+    // gửi 308 không có b/Mu sau lúc rời bàn khiến game tự xếp lại vào bàn mặc
+    // định $500, dù UI đang chọn $100.
     const simms = G.__ws_get_simms();
     if (simms && simms.readyState === 1) {
       try {
@@ -2014,14 +2112,9 @@
         push("inject", '[4,"Simms",-1]');
       } catch (_) {}
       try {
-        const pLeave = '[5,"Simms",-1,{"cmd":308}]';
+        const pLeave = '[6,"Simms","channelPlugin",{"cmd":203}]';
         simms.send(pLeave);
         push("inject", pLeave);
-      } catch (_) {}
-      try {
-        const pLeave2 = '[6,"Simms","channelPlugin",{"cmd":308}]';
-        simms.send(pLeave2);
-        push("inject", pLeave2);
       } catch (_) {}
     }
     return true;
@@ -2032,10 +2125,13 @@
     if (typeof checkAndHandleLoggedOut === "function" && checkAndHandleLoggedOut()) {
       return false;
     }
-    // BẢO VỆ CHẶN: Chỉ chặn nếu không có đồng đội VÀ KHÔNG BẬT auto_start_guest_ss
+    // BẢO VỆ CHẶN: Trong một lượt ghép cặp, tuyệt đối không Ready với khách
+    // lạ. `auto_start_guest_ss` chỉ dành cho luồng chơi khách độc lập, không
+    // được cho phép Account chính/phụ Start trước khi xác minh đồng đội.
     const partner = (G.__room_players || []).find(isPartner);
-    if (!partner && G.__room_players && G.__room_players.length > 1 && !G.__auto_start_guest_ss) {
-      console.warn("[AutoTool V3] BẢO VỆ CHẶN: Trong phòng chỉ có khách lạ, không có đồng đội! TỪ CHỐI Sẵn Sàng / Bắt Đầu!");
+    const matchingPair = G.__AUTOTOOL_MATCH_ROLE === "anchor" || G.__AUTOTOOL_MATCH_ROLE === "sub";
+    if (!partner && G.__room_players && G.__room_players.length > 1 && (matchingPair || !G.__auto_start_guest_ss)) {
+      console.warn("[AutoTool V3] BẢO VỆ CHẶN: Trong lượt ghép cặp bàn có khách lạ, không có đồng đội -> từ chối Ready/Start và rời bàn.");
       G.__autotool_exec_leave();
       return false;
     }
@@ -2122,8 +2218,10 @@
     __user_stopped = localStorage.getItem(AUTOTOOL_STOP_KEY) === "1";
   } catch (_) {}
 
-  G.__AUTOTOOL_ARMED = !__user_stopped;
-  G.__AUTOTOOL_AUTO_HUNT = !__user_stopped; // Mặc định BẬT (trừ khi đã bấm Dừng trước đó)
+  // Không tự chạy khi tab load/reload. Chỉ controller mới khởi tạo một lượt
+  // ghép bàn và chỉ định rõ anchor/sub; nhờ vậy nick phụ luôn ở sảnh lắng nghe.
+  G.__AUTOTOOL_ARMED = false;
+  G.__AUTOTOOL_AUTO_HUNT = false;
   G.__autotool_partners = [];
 
   function persistStopState(stopped) {
@@ -2241,7 +2339,9 @@
       console.log(`[AutoTool V3] [JOIN_ROOM] Pre-load anchor: src='${srcProfile}', dn='${anchorDn}', uid='${anchorUid}' -> Partners: ${currentPartners.length} entries`);
       // ===== END CRITICAL FIX =====
 
-      G.__autotool_exec_join(data.rid, data.bet || 100, data.mu || 2);
+      // KHÔNG tự gọi __autotool_exec_join ở đây nữa: backend sẽ bắn lệnh join TRỰC TIẾP
+      // qua page.evaluate (single-source-of-truth), tránh double-join & lệch phiên bản
+      // hàm join (server_join_fn bị content_main re-inject đè khi page navigate).
     } else if (action === "LEAVE_ROOM") {
       G.__is_matched_locked = false;
       G.__game_in_progress = false;
@@ -2270,8 +2370,7 @@
       G.__target_hunt_bet = bet;
       G.__target_hunt_mu = mu;
 
-      const pName = (getProfileName() || "").toLowerCase();
-      const isSub = pName.includes("2") || pName.includes("sub") || pName.includes("phu") || pName.includes("xabai2") || pName.includes("dump") || (typeof getMyRole === "function" && getMyRole() === "dump");
+      const isSub = isSubMatchProfile();
 
       if (isSub) {
         // Nick phụ: Tuyệt đối không tự ý săn bàn hay click join phòng! Chờ ở sảnh nhận lệnh JOIN_ROOM từ Account 1

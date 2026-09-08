@@ -64,6 +64,43 @@ Chromium có sẵn của ứng dụng.
 Mỗi transition có: điều kiện, timeout, retry tối đa, log chi tiết (event_id,
 session_id, group, state_from→state_to), recovery khi disconnect.
 
+## Phụ lục — Auto-flow xả bài và thoát bàn
+
+Auto-flow HITCLUB dùng WebSocket event làm nguồn trạng thái: `cmd 250` đánh dấu
+bắt đầu ván, `cmd 251` cập nhật lượt/nhóm bài, và chỉ `cmd 252` mới xác nhận kết
+thúc ván. Account phụ được đếm số lần đánh trong ván. Nếu chưa từng đánh và có
+lượt đè hợp lệ bài của Account chính, phụ đè đúng một lần bằng nhóm nhỏ nhất;
+sau đó pass để Account chính lấy lại nhịp. Không dùng tứ quý/chặt trong nhánh
+giảm thua trắng.
+
+Sau `cmd 252`, controller cho Account phụ rời bàn và quay về sảnh chọn bàn,
+cập nhật room = `-1` cùng log trên giao diện. Account chính chỉ rời theo tùy
+chọn `auto_leave_after`. Nếu hết thời gian theo dõi mà chưa có xác nhận kết
+thúc, controller không tự rời Account phụ vì đó có thể là một ván đang chạy.
+
+### Chạy đa cặp
+
+Endpoint `POST /api/autoplay/find-and-match-pairs-ws` nhận `pairs`, ví dụ
+`[["Account01", "Account02"], ["Account03", "Account04"]]`. Controller
+chạy các cặp song song; mỗi task có stop token riêng và danh sách partner chỉ
+gồm hai profile của cặp. Một profile không được xuất hiện ở hai cặp. Nút Dừng
+tăng stop epoch và hủy mọi task đang hoạt động, vì vậy dừng một lần áp dụng cho
+toàn bộ cặp chạy song song.
+
+### Protocol đã xác minh và hàng rào an toàn
+
+Capture thao tác tay trên HITCLUB xác nhận join bàn cố định dùng
+`[3,"Simms",rid,""]`; server phản hồi ACK dạng `[3,true,0,-1,null]`.
+Danh sách `cmd 300` tại thời điểm capture xác nhận `rid=2, b=100, Mu=2` và
+`rid=4, b=500, Mu=2`. Vì vậy controller dùng RID, không sử dụng click theo
+tọa độ để chọn mức cược.
+
+Trạng thái bàn chỉ được coi là hợp lệ sau phản hồi `cmd 202` và giá trị `b`
+trùng cược cấu hình. Nếu gặp khách lạ hoặc cược không trùng, cặp rời bàn trước
+khi gửi lệnh Ready/Start. Trong một cặp đã cấu hình, Account phụ chỉ Ready;
+Account chính chỉ Start khi đã nhận diện đúng phụ. Điều này tránh timeout
+Account chính vì Start sai thời điểm và tránh khởi động ván với khách lạ.
+
 ## 3. JSON config
 
 ```json

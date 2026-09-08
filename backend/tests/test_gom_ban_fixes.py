@@ -241,3 +241,200 @@ async def test_hub_log_update_matches_account_and_clears(tmp_config, monkeypatch
 
     ev_names = [e.get("profile_name") for e in events if e.get("type") == "accounts_updated"]
     assert "Account01" in ev_names
+
+
+# ---------- Part A: chặn "phụ đứng nguyên ở sảnh chính" ----------
+
+def test_is_in_tldl_lobby_dropped_simms_fallback():
+    """Regression: fallback `simms.readyState === 1` đã bị gỡ. Khi extension chưa
+    inject `__autotool_is_in_tldl_lobby`, hàm PHẢI trả False (ép điều hướng vào
+    sảnh bàn Đếm Lá) thay vì nhầm 'có socket' là 'đã ở sảnh'."""
+    import inspect
+    import re
+
+    from controllers.auto_flow_controller import _is_in_tldl_lobby_util
+
+    src = inspect.getsource(_is_in_tldl_lobby_util)
+    m = re.search(r'evaluate\("""(\(\) => \{.*?\})"""\)', src, re.DOTALL)
+    assert m, "Không tìm thấy khối JS trong _is_in_tldl_lobby_util"
+    js = m.group(1)
+    assert "simms" not in js
+    assert "readyState" not in js
+    assert "__autotool_is_in_tldl_lobby" in js
+    assert "return false;" in js
+
+
+class _FakeLobbyPage:
+    def __init__(self, evaluate_result=None, closed=False):
+        self._result = evaluate_result
+        self.closed = closed
+        self.eval_calls = []
+
+    def is_closed(self):
+        return self.closed
+
+    async def evaluate(self, js):
+        self.eval_calls.append(js)
+        return self._result
+
+
+@pytest.mark.anyio
+async def test_is_in_tldl_lobby_passthrough():
+    from controllers.auto_flow_controller import _is_in_tldl_lobby_util
+
+    assert await _is_in_tldl_lobby_util(_FakeLobbyPage(False)) is False
+    assert await _is_in_tldl_lobby_util(_FakeLobbyPage(True)) is True
+
+
+@pytest.mark.anyio
+async def test_clear_hunt_state_disables_auto_hunt():
+    from controllers.auto_flow_controller import _clear_hunt_state
+
+    page = _FakeLobbyPage(True)
+    await _clear_hunt_state(page)
+    assert page.eval_calls
+    js = page.eval_calls[0]
+    assert "__AUTOTOOL_AUTO_HUNT = false" in js
+    assert "__is_hunt_initiator = false" in js
+    assert "__hunt_retry_timer" in js
+    assert "__start_retry_timer" in js
+    assert "__auto_turn_timer" in js
+
+
+def test_extension_requires_controller_assigned_match_roles():
+    """Không được tự suy ra chiều main/sub khi tab vừa load.
+
+    Controller gán anchor/sub theo profile đã chọn; extension chỉ dùng heuristic
+    cũ như fallback cho thao tác tay ngoài một lượt gom bàn.
+    """
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "extension" / "content_main.js").read_text(encoding="utf-8")
+    assert "function isSubMatchProfile()" in source
+    assert "function isAnchorMatchProfile()" in source
+    assert 'G.__AUTOTOOL_AUTO_HUNT = false;' in source
+    controller = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    assert 'requested_anchor = _resolve_profile_name(body.get("profile_a"))' in controller
+    assert "first_name = profile_a" in controller
+    assert 'window.__AUTOTOOL_MATCH_ROLE = \'anchor\';' in controller
+    assert 'window.__AUTOTOOL_MATCH_ROLE = \'sub\';' in controller
+
+
+def test_leave_command_never_rejoins_default_bet_table():
+    """Rời bàn không được gửi cmd 308 vì đó là lệnh join.
+
+    Một payload 308 thiếu `b`/`Mu` bị game đưa về bàn mặc định $500.
+    """
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "extension" / "content_main.js").read_text(encoding="utf-8")
+    leave_fn = source.split("G.__autotool_exec_leave = function () {", 1)[1].split("G.__autotool_exec_ready = function () {", 1)[0]
+    assert '"cmd":203' in leave_fn
+    assert '"cmd":308' not in leave_fn
+
+
+def test_stop_is_immediate_and_lobby_preparation_is_parallel():
+    """Stop không được tiếp tục điều hướng, và main chỉ join sau khi mọi nick
+    đã đồng bộ được sảnh chọn bàn."""
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    assert "lobby_results = await asyncio.gather(" in source
+    assert "Không cho Anchor gửi cmd=308 cho" in source
+    stop_fn = source.split("async def autoplay_stop", 1)[1].split("@router.post(\"/api/autoplay/leave-room\")", 1)[0]
+    assert "Đã dừng tức thì" in stop_fn
+    assert "await _ensure_in_tldl_lobby_util(s.page" not in stop_fn
+
+
+def test_join_always_includes_verified_fixed_rid():
+    """Protocol từ cmd=300: Solo $100 là rid=2, Solo $500 là rid=4.
+    Không được bỏ các rid nhỏ để game tự chọn mức cược theo state cũ."""
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    assert '"100_2": 2, "100_4": 1' in source
+    assert '"500_2": 4, "500_4": 3' in source
+    assert '"100000_2": 18, "100000_4": 17' in source
+    assert '"1000000_2": 24, "1000000_4": 23' in source
+    assert "Number(rid) > 0" in source
+    assert "Number(rid) > 28" not in source
+    assert "[3, 'Simms', specificRid, '']" in source
+    assert "Bỏ lượt thay vì click mù sang bàn khác" in source
+
+
+def test_sub_has_explicit_dump_role_and_auto_discard():
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    assert "window.__AUTOTOOL_ROLE = 'dump';" in source
+    assert "window.__AUTOTOOL_AUTO_DISCARD" in source
+
+
+def test_fixed_table_join_frame_preserves_small_rid():
+    """RID 1..28 là RID bàn cược hợp lệ; [3, Simms, 4] phải vẫn là $500."""
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "extension" / "content_main.js").read_text(encoding="utf-8")
+    assert "text.includes('[3,\"Simms\",')" in source
+    assert 'const isChongVay = !rid || Number(rid) === -1 || String(rid) === "100";' in source
+    assert '"500_2": 4, "500_4": 3' in source
+    assert "Number(rid) > 0" in source
+
+
+def test_dump_policy_avoids_blank_loss_and_sub_leaves_after_verified_round():
+    from pathlib import Path
+
+    ext_source = (Path(__file__).parents[1] / "extension" / "content_main.js").read_text(encoding="utf-8")
+    assert "Giảm thua trắng" in ext_source
+    assert "__autotool_round_play_count" in ext_source
+    assert "Không dùng tứ quý" in ext_source
+
+    controller = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    assert "game_completed = False" in controller
+    assert "if game_completed:" in controller
+    assert "Account phụ đã rời bàn về sảnh chọn bàn" in controller
+    assert "không tự out Account phụ" in controller
+
+
+def test_multiple_pairs_are_isolated_and_stop_cancels_every_pair_task():
+    from pathlib import Path
+
+    controller = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    assert '@router.post("/api/autoplay/find-and-match-pairs-ws")' in controller
+    assert "Một profile chỉ được xuất hiện trong một cặp" in controller
+    assert "asyncio.gather(*[" in controller
+    assert "gom_ban_stop_epoch" in controller
+    assert "active_match_tasks" in controller
+
+    ui = (Path(__file__).parents[2] / "app" / "renderer" / "js" / "autoplay.js").read_text(encoding="utf-8")
+    assert '"/api/autoplay/find-and-match-pairs-ws"' in ui
+    assert "const multiPairMode" in ui
+    assert "1–2, 3–4" in ui
+
+
+def test_ready_start_and_quick_join_never_use_cross_role_or_blind_clicks():
+    from pathlib import Path
+
+    controller = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    assert "(wantStart) =>" in controller
+    assert "labelMatchesRole" in controller
+    assert "Không thấy nút '%s'; chỉ dùng WS helper đúng vai trò" in controller
+    quick_fn = controller.split("async def autoplay_create_table", 1)[1].split('@router.post("/api/autoplay/join-rid")', 1)[0]
+    assert "FIXED_TABLE_RIDS" in quick_fn
+    assert "JSON.stringify([3, 'Simms', Number(rid), ''])" in quick_fn
+    assert "page.mouse.click" not in quick_fn
+
+    ext_source = (Path(__file__).parents[1] / "extension" / "content_main.js").read_text(encoding="utf-8")
+    assert "executeHandshakeAction" in ext_source
+    assert "if (isAnchorMatchProfile())" in ext_source
+    assert "const matchingPair = G.__AUTOTOOL_MATCH_ROLE === \"anchor\"" in ext_source
+    assert "từ chối Ready/Start và rời bàn" in ext_source
+
+
+def test_extension_toasts_are_replaced_and_rendered_on_one_line():
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "extension" / "content.js").read_text(encoding="utf-8")
+    assert 'container.querySelectorAll(".sw-toast").forEach((oldToast) => oldToast.remove());' in source
+    assert "const oneLine = [title, bodyText]" in source
+    assert "white-space: nowrap !important;" in source

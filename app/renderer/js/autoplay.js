@@ -55,8 +55,18 @@
     // 1. Thu thập danh sách tài khoản được chọn (đa tầng dự phòng đảm bảo luôn có tài khoản hoạt động)
     let selectedProfiles = [];
 
+    // Với 4/6 profile được tick, ghép theo thứ tự hiển thị: 1-2, 3-4, 5-6.
+    // Dropdown chỉ biểu diễn được một cặp, nên không được ghi đè lựa chọn này.
+    if (isFromDashboard && window.App && App.selectedProfileIds && App.selectedProfileIds.size >= 4) {
+      const accs = App.state && App.state.accounts ? App.state.accounts : [];
+      selectedProfiles = accs
+        .filter((a) => App.selectedProfileIds.has(a.id) || App.selectedProfileIds.has(String(a.id)) || App.selectedProfileIds.has(Number(a.id)))
+        .map((a) => a.name || a.username)
+        .filter(Boolean);
+    }
+
     // Ưu tiên 1 (khi bấm từ Dashboard): Lấy trực tiếp từ 2 dropdown Chính & Phụ trên thanh Gom Bàn
-    if (isFromDashboard) {
+    if (isFromDashboard && selectedProfiles.length < 4) {
       const mainSelect = $("gcProfileMain");
       const subSelect = $("gcProfileSub");
       const mainName = mainSelect ? mainSelect.value : "";
@@ -132,10 +142,19 @@
       return;
     }
 
-    // Giới hạn tối đa 5 tài khoản
-    if (selectedProfiles.length > 5) {
-      selectedProfiles = selectedProfiles.slice(0, 5);
+    // Đa cặp nhận 4 hoặc 6 profile; tối đa 3 cặp.
+    if (selectedProfiles.length > 6) {
+      selectedProfiles = selectedProfiles.slice(0, 6);
     }
+    const multiPairMode = selectedProfiles.length >= 4;
+    if (multiPairMode && selectedProfiles.length % 2 !== 0) {
+      setStatus("⚠️ Chạy nhiều cặp cần chọn số profile chẵn: 4 hoặc 6.", "error");
+      App.toast("Chọn 4 hoặc 6 profile theo thứ tự từng cặp (1–2, 3–4).", "warn");
+      return;
+    }
+    const pairs = multiPairMode
+      ? Array.from({ length: selectedProfiles.length / 2 }, (_, i) => selectedProfiles.slice(i * 2, i * 2 + 2))
+      : [];
 
     const hostName = selectedProfiles[0];
     const clientProfiles = selectedProfiles.slice(1);
@@ -166,11 +185,12 @@
       btnSync.textContent = "⏳ ĐANG DÒ TÌM PHÒNG...";
     }
 
-    setStatus(`[1/3] Đang điều phối ${selectedProfiles.length} tài khoản (${selectedProfiles.join(", ")}) cùng quét tìm/tạo bàn trống mức $${targetBet.toLocaleString()}...`);
-    App.toast(`Bắt đầu gom bàn ${selectedProfiles.length} tài khoản: ${selectedProfiles.join(", ")}`, "info");
+    const pairLabel = multiPairMode ? pairs.map((p) => `${p[0]} → ${p[1]}`).join(" | ") : `${hostName} → ${clientProfiles[0]}`;
+    setStatus(`[1/3] Đang điều phối ${multiPairMode ? `${pairs.length} cặp` : "1 cặp"}: ${pairLabel}; cược $${targetBet.toLocaleString()}...`);
+    App.toast(`Bắt đầu ${multiPairMode ? `${pairs.length} cặp` : "gom bàn"}: ${pairLabel}`, "info");
 
     try {
-      const res = await App.api("/api/autoplay/find-and-match-ws", {
+      const res = await App.api(multiPairMode ? "/api/autoplay/find-and-match-pairs-ws" : "/api/autoplay/find-and-match-ws", {
         method: "POST",
         body: JSON.stringify({
           profiles: selectedProfiles,
@@ -186,20 +206,25 @@
           auto_xa: autoXa,
           auto_start_guest_ss: autoStartGuestSS,
           auto_leave_after: autoLeaveAfter,
+          ...(multiPairMode ? { pairs } : {}),
         }),
       });
 
       if (res && res.ok) {
         if (autoXa) {
-          setStatus(`✅ THÀNH CÔNG! Đã ghép ${selectedProfiles.join(", ")} vào chung bàn ${res.room_name || ""} ($${(res.bet || targetBet).toLocaleString()})! Đang xả bài...`, "success");
+          const roomInfo = multiPairMode
+            ? (res.pairs || []).map((p) => `Cặp ${p.pair}: ${p.room_name || "hoàn tất"}`).join(" | ")
+            : `${res.room_name || ""} ($${(res.bet || targetBet).toLocaleString()})`;
+          setStatus(`✅ THÀNH CÔNG! ${multiPairMode ? "Các cặp đã hoàn tất:" : "Đã ghép bàn"} ${roomInfo}`, "success");
         } else {
           setStatus(`✅ ĐÃ TÌM THẤY BÀN! Các nick ${selectedProfiles.join(", ")} đã ngồi chung bàn ${res.room_name || ""}. Tự động xả bài đang TẮT, dừng chờ thao tác tay.`, "success");
         }
-        App.toast("Gom bàn và ghép cặp thành công!", "success");
+        App.toast(multiPairMode ? "Các cặp đã chạy xong!" : "Gom bàn và ghép cặp thành công!", "success");
         if (window.App && window.App.refreshAccounts) window.App.refreshAccounts();
       } else {
-        setStatus(`⚠️ ${res.error || "Không tìm được bàn trống phù hợp, vui lòng thử lại"}`, "error");
-        App.toast(res.error || "Gom bàn thất bại", "warn");
+        const pairErrors = multiPairMode ? (res.pairs || []).filter((p) => !p.ok).map((p) => `Cặp ${p.pair}: ${p.error || "thất bại"}`).join(" | ") : "";
+        setStatus(`⚠️ ${pairErrors || res.error || "Không tìm được bàn trống phù hợp, vui lòng thử lại"}`, "error");
+        App.toast(pairErrors || res.error || "Gom bàn thất bại", "warn");
       }
     } catch (e) {
       if (App.state.gcRunId === runId) {
