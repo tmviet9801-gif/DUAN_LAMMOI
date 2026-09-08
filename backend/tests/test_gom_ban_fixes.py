@@ -620,3 +620,59 @@ def test_eval_page_falls_back_when_isolated_context_unsupported():
         eval_page(rich, "() => 1")
     )
     assert rich.isolated is False, "phải yêu cầu world của trang"
+
+
+def test_khong_kich_hoat_thi_khong_tu_dong_gi():
+    """Chưa bấm "GOM BÀN & XẢ" (hoặc đã Dừng) -> tool phải im hoàn toàn.
+
+    Lỗi thật người dùng gặp: mở account chơi tay, vào bàn gặp người khác thì bị
+    tự out; bấm Dừng rồi vẫn thấy chạy gom bàn.
+
+    Hai nguyên nhân cộng lại:
+    1. Khối tự động trong handler cmd 202 không có cổng kích hoạt tổng. Nhánh
+       "Sai mức cược" chỉ canh `__target_hunt_bet > 0`.
+    2. STOP_HUNT không xoá `__target_hunt_bet` / `__AUTOTOOL_AUTO_DISCARD` /
+       vai trò. Mức cược của lượt chạy trước còn nguyên -> vào bàn khác mức là
+       bị out; AUTO_DISCARD còn bật -> vẫn tự đánh bài.
+    """
+    from pathlib import Path
+
+    ext = Path(__file__).parents[1] / "extension"
+    src = (ext / "content_main.js").read_text(encoding="utf-8")
+
+    # Cổng kích hoạt tồn tại và tôn trọng cờ Dừng đã lưu
+    assert "function isAutoEngaged()" in src
+    assert 'localStorage.getItem("AUTOTOOL_STOPPED") === "1"' in src
+    assert "__AUTOTOOL_ENGAGED" in src
+
+    # Mặc định TẮT khi tab load — chỉ controller mới được bật
+    assert "G.__AUTOTOOL_ENGAGED = false;" in src
+
+    # Nhánh "Sai mức cược" phải đi qua cổng, không tự out khi chơi tay
+    assert "isAutoEngaged() ? Number(G.__target_hunt_bet || 0) : 0" in src
+
+    # Cả khối săn bàn / xử lý khách lạ phải đi qua cổng
+    assert "if (!isAutoEngaged()) {" in src
+
+    # Tự đánh bài cũng phải qua cổng
+    assert "if (!isAutoEngaged()) return;" in src
+
+    # Dừng phải dọn sạch cấu hình lượt chạy
+    assert "function clearRunConfig()" in src
+    for key in ("__target_hunt_bet", "__AUTOTOOL_AUTO_DISCARD", "__AUTOTOOL_MATCH_ROLE",
+                "__autotool_partners", "__AUTOTOOL_SUB_JOIN_TICKET"):
+        assert key in src.split("function clearRunConfig()", 1)[1][:900], f"clearRunConfig thiếu {key}"
+
+
+def test_controller_mo_va_dong_cong_kich_hoat():
+    """Controller bật cổng ở preflight và đóng lại khi Dừng."""
+    from pathlib import Path
+
+    base = Path(__file__).parents[1] / "controllers" / "auto_flow_controller"
+    matching = (base / "matching.py").read_text(encoding="utf-8")
+    lobby = (base / "lobby.py").read_text(encoding="utf-8")
+
+    assert "window.__AUTOTOOL_ENGAGED = true;" in matching, "preflight chưa mở cổng"
+    assert "window.__AUTOTOOL_ENGAGED = false;" in lobby, "_clear_hunt_state chưa đóng cổng"
+    # Và phải xoá mức cược cũ, nếu không lần chơi tay sau vẫn bị tự out
+    assert "window.__target_hunt_bet = 0;" in lobby

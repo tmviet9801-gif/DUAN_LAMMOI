@@ -238,6 +238,45 @@
     return "winner";
   }
 
+  /** CỔNG KÍCH HOẠT DUY NHẤT cho MỌI hành động tự động.
+   *
+   * Nguyên tắc: khi người dùng CHƯA bấm "GOM BÀN & XẢ", hoặc ĐÃ bấm Dừng, thì
+   * tool phải im hoàn toàn — profile hoạt động y như người thật thao tác tay.
+   * Không tự rời bàn, không tự đánh bài, không tự Sẵn sàng/Bắt đầu.
+   *
+   * Trước đây không có cổng này: các nhánh tự động nằm rải rác trong handler
+   * cmd 202, mỗi nhánh tự canh một cờ khác nhau. Hậu quả thực tế:
+   *  - Nhánh "Sai mức cược" chỉ canh `__target_hunt_bet > 0`. Mà cờ đó do một
+   *    lượt gom bàn trước đó đặt và KHÔNG được xoá khi Dừng -> người dùng mở
+   *    account chơi tay, vào bàn khác mức cược là bị tự out.
+   *  - `__AUTOTOOL_AUTO_DISCARD` cũng không được xoá khi Dừng -> vẫn tự đánh.
+   *
+   * `__AUTOTOOL_ENGAGED` do controller bật ở đầu mỗi lượt chạy và tắt khi Dừng.
+   * Hai cờ còn lại giữ để tương thích ngược với controller bản cũ.
+   */
+  function isAutoEngaged() {
+    try {
+      if (localStorage.getItem("AUTOTOOL_STOPPED") === "1") return false;
+    } catch (_) {}
+    return !!(G.__AUTOTOOL_ENGAGED || G.__AUTOTOOL_ARMED || G.__AUTOTOOL_AUTO_HUNT);
+  }
+
+  /** Xoá sạch cấu hình của một lượt gom bàn. Phải gọi khi Dừng/DISARM/đăng xuất,
+   * nếu không state cũ sẽ điều khiển hành vi ở những lần chơi tay sau đó. */
+  function clearRunConfig() {
+    G.__AUTOTOOL_ENGAGED = false;
+    G.__AUTOTOOL_AUTO_DISCARD = false;
+    G.__auto_start_guest_ss = false;
+    G.__target_hunt_bet = 0;
+    G.__target_hunt_mu = 0;
+    G.__AUTOTOOL_MATCH_ROLE = null;
+    G.__AUTOTOOL_ROLE = null;
+    G.__AUTOTOOL_PARTNER_PROFILES = [];
+    G.__autotool_partners = [];
+    G.__AUTOTOOL_SUB_JOIN_TICKET = null;
+    G.__active_room_invite = null;
+  }
+
   // Vai trò ghép bàn do backend ấn định cho từng lượt chạy.  Không suy đoán
   // bằng tên profile khi controller đã biết chính xác account nào là anchor:
   // tên nick có chữ/số "1" hoặc "2" rất dễ làm đảo chiều điều phối.
@@ -809,7 +848,7 @@
     console.warn("[AutoTool V3] ⚠️ PHÁT HIỆN TÀI KHOẢN BỊ ĐĂNG XUẤT! DỪNG TOÀN BỘ HÀNH ĐỘNG ĐỂ GIỮ PHIÊN!");
     G.__AUTOTOOL_AUTO_HUNT = false;
     G.__AUTOTOOL_ARMED = false;
-    G.__AUTOTOOL_AUTO_DISCARD = false;
+    clearRunConfig();
     G.__is_matched_locked = false;
     G.__game_in_progress = false;
     G.__is_hunt_initiator = false;
@@ -1270,6 +1309,9 @@
       clearTimeout(G.__auto_turn_timer);
       G.__auto_turn_timer = null;
     }
+    // Chua kich hoat / da Dung -> khong tu danh bai. Truoc day chi canh
+    // AUTO_DISCARD, ma co do khong duoc xoa khi Dung nen bot van danh tiep.
+    if (!isAutoEngaged()) return;
     if (!G.__AUTOTOOL_AUTO_DISCARD) return;
     if (!G.__my_cards || !G.__my_cards.length) return;
 
@@ -1621,7 +1663,9 @@
 
               // Chốt cuối ở extension: không phát lời mời/không đứng lại sai
               // mức cược dù một engine cũ hoặc frame trễ đã đưa vào nhầm RID.
-              const expectedBet = Number(G.__target_hunt_bet || 0);
+              // CHỈ áp khi đang chạy gom bàn. Chơi tay thì người dùng có
+              // quyền ngồi bất kỳ bàn nào, không được tự out.
+              const expectedBet = isAutoEngaged() ? Number(G.__target_hunt_bet || 0) : 0;
               const actualBet = Number(p.b || (G.__last_room_info && G.__last_room_info.b) || 0);
               if (expectedBet > 0 && actualBet > 0 && expectedBet !== actualBet) {
                 console.warn(`[AutoTool V3] Sai mức cược: bàn $${actualBet}, cấu hình $${expectedBet} -> rời bàn, không mời đồng đội.`);
@@ -1638,7 +1682,12 @@
               }
 
               // --- LOGIC TỰ ĐỘNG SĂN BÀN & ĐIỀU PHỐI VÀO BÀN TRỐNG CHUẨN XÁC ---
-              if (partner) {
+              // Chưa bấm "GOM BÀN & XẢ" (hoặc đã bấm Dừng) -> KHÔNG tự động gì
+              // hết: không out khi gặp khách lạ, không Sẵn sàng/Bắt đầu, không
+              // mời đồng đội. Chỉ đọc trạng thái để hiển thị.
+              if (!isAutoEngaged()) {
+                // vẫn cập nhật HUD/state ở trên, chỉ dừng phần hành động
+              } else if (partner) {
                 // 1. ĐÃ KHỚP ĐỒNG ĐỘI THÀNH CÔNG TRONG BÀN!
                 triggerVerifiedMatchReadyAndStart(partner.dn || partner.u, "cmd:202 RoomPlayers");
               } else if (hasStrangerOrFull) {
@@ -2414,6 +2463,7 @@
   // ghép bàn và chỉ định rõ anchor/sub; nhờ vậy nick phụ luôn ở sảnh lắng nghe.
   G.__AUTOTOOL_ARMED = false;
   G.__AUTOTOOL_AUTO_HUNT = false;
+  G.__AUTOTOOL_ENGAGED = false;   // chỉ controller mới được bật
   G.__autotool_partners = [];
 
   function persistStopState(stopped) {
@@ -2605,6 +2655,9 @@
       console.log("[AutoTool V3] Nhận lệnh STOP_HUNT -> Dừng chế độ săn bàn & rời bàn");
       G.__AUTOTOOL_AUTO_HUNT = false;
       G.__AUTOTOOL_ARMED = false;
+      // Xoá cấu hình lượt chạy: mức cược/vai trò/auto-xả còn sót lại sẽ tiếp
+      // tục điều khiển hành vi khi người dùng chơi tay sau đó.
+      clearRunConfig();
       persistStopState(true);
       G.__is_hunt_initiator = false;
       G.__is_matched_locked = false;

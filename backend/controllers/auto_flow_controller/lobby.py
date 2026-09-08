@@ -26,6 +26,18 @@ async def _clear_hunt_state(p):
     try:
         await eval_page(p, """() => {
             try { localStorage.setItem('AUTOTOOL_STOPPED', '1'); } catch(e) {}
+            // Đóng cổng kích hoạt + xoá cấu hình lượt chạy. Nếu còn sót
+            // __target_hunt_bet thì lần sau người dùng chơi tay, vào bàn khác
+            // mức cược sẽ bị extension tự out.
+            window.__AUTOTOOL_ENGAGED = false;
+            window.__AUTOTOOL_AUTO_DISCARD = false;
+            window.__auto_start_guest_ss = false;
+            window.__target_hunt_bet = 0;
+            window.__target_hunt_mu = 0;
+            window.__AUTOTOOL_MATCH_ROLE = null;
+            window.__AUTOTOOL_ROLE = null;
+            window.__AUTOTOOL_SUB_JOIN_TICKET = null;
+            window.__autotool_partners = [];
             window.__AUTOTOOL_AUTO_HUNT = false;
             window.__AUTOTOOL_ARMED = false;
             window.__is_hunt_initiator = false;

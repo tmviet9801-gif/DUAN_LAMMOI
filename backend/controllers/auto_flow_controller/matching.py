@@ -246,6 +246,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         # tự join lại, sau đó _prepare_lobby luôn gửi lệnh rời bàn — không dựa
         # vào nhận diện ảnh/scene vốn có thể trượt khi đang ở gameplay.
         preflight_code = f"""() => {{
+            // Mở cổng kích hoạt: từ đây extension mới được phép tự động
+            // (rời bàn khi gặp khách lạ, Sẵn sàng/Bắt đầu, tự đánh bài).
+            window.__AUTOTOOL_ENGAGED = true;
             window.__AUTOTOOL_AUTO_HUNT = false;
             window.__AUTOTOOL_ARMED = false;
             window.__target_hunt_bet = {bet_val};
