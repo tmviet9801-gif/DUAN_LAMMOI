@@ -268,12 +268,19 @@ python backend\tools\make_license.py --machine-id <guid> --days 30 --max-tabs 10
 ### 6.1. 🔴 Bắt buộc — hoàn thiện join bàn HITCLUB (đang làm)
 Đã capture được protocol thật (WS channel `Simms`):
 - **Room list**: SEND `cmd=300` `[6,"Simms","channelPlugin",{"cmd":300,"aid":"1","gid":1}]` → RECV `rs:[{rid,rn,b,uC,...}]` (`uC`=số người).
-- **Join bàn**: SEND `cmd=308` `{...,"cmd":308,"rid":<rid>}`.
-- **Xác nhận**: RECV `cmd=305/308` → `ri.rid` + `fu.u`; **danh sách người chơi thật nằm ở `cmd=202.ps[].dn`** và `cmd=100.dn` (đã sửa `_verify_same_room` dùng đúng chỗ này).
+- **Join bàn**: SEND `[3,"Simms",<rid>,""]` với `rid` **> 0** lấy từ bảng RID cố định (`FIXED_TABLE_RIDS`). Đây là frame join duy nhất dùng trong luồng tự động.
+- **Xác nhận**: RECV `cmd=305/308` → `ri.rid` + `fu.u`; **danh sách người chơi thật nằm ở `cmd=202.ps[].dn`** và `cmd=100.dn` (đã sửa `_verify_same_room` dùng đúng chỗ này). Mức cược thật của bàn đọc ở `cmd=202.b`.
+
+> ⚠️ **`cmd=308` không còn dùng để khởi tạo join tự động.** Auto-join theo `b`/`Mu`
+> đã bị bỏ: server có thể lấy state cược cũ của client và đưa vào bàn $500. Gửi 308
+> khi còn đang ngồi trong bàn cũ bị trả `[4,false,...,102]` (từ chối), spam 18 lần/2s
+> càng kẹt vĩnh viễn. `cmd=308` nay chỉ còn hai vai trò: (1) frame **RECV** báo join
+> thành công, (2) route **debug thủ công** `POST /api/autoplay/join-rid` gửi 308 kèm
+> `rid`/`b`/`Mu` tường minh. Chi tiết: [`.agents/rules/gameplay_rules.md`](.agents/rules/gameplay_rules.md).
 
 Còn lại:
 - **WS auth cho automation**: token trong `localStorage` (`1-<32hex>`) **bị server WS từ chối** khi dùng kênh phụ ("Xác nhận tài khoản thất bại"). Cần dùng **game socket sống** của account (đã làm `reconnect-ws` để bắt) thay vì mở socket riêng.
-- Xác định tọa độ click (nút tìm bàn, vào bàn, xả bài, rời bàn) từ screenshot → điền `game.clicks`.
+- ~~Xác định tọa độ click (nút tìm bàn, vào bàn, xả bài, rời bàn) → điền `game.clicks`~~ — **không làm nữa**: chọn bàn/mức cược bằng toạ độ canvas đã bị bỏ hẳn vì Cocos giữ mức cược phiên trước nên dễ lọt vào bàn sai. Nay chỉ join bằng RID xác minh; không bắt được socket thì báo lỗi/thử lại chứ không click mù. Click vật lý chỉ còn dùng cho nút Sẵn Sàng/Bắt Đầu **sau khi** Cocos hoặc OpenCV đã xác định đúng toạ độ nút.
 
 ### 6.2. 🟠 Cải tiến Auto-flow
 - Tạo room trống nếu game cho phép (thử trước khi nhảy dò)
