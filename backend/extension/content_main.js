@@ -262,8 +262,27 @@
     // 1. LƯỢT TỰ DO (Free Turn / Mở ván hoặc đối phương vừa Bỏ lượt) -> BẮT BUỘC ĐÁNH BÀI RA
     if (!tableCards || tableCards.length === 0) {
       if (role === "dump") {
+        // ĐẢO CHIỀU ƯU TIÊN so với Account chính: phụ tống lá NGUY HIỂM
+        // (Heo / lá cao) đi TỪ SỚM để cuối ván không còn gì bị phạt, chỉ giữ
+        // lại vài lá thấp nhất làm mồi cho chính đè và giành quyền dẫn.
+        // Chính thì ngược lại — chọn nhỏ nhất, giữ lá cao để còn đè được.
+        const reserve = Number.isFinite(G.__AUTOTOOL_DUMP_RESERVE)
+          ? G.__AUTOTOOL_DUMP_RESERVE : undefined;
+        const cardsApi = (typeof AutoToolCards !== "undefined") ? AutoToolCards : (G.AutoToolCards || null);
+        if (cardsApi && typeof cardsApi.chooseDumpDischarge === "function") {
+          try {
+            const discharge = cardsApi.chooseDumpDischarge(myCards, reserve);
+            if (discharge && discharge.length) {
+              console.log(`[AutoTool V3] [Role: DUMP] Xả lá nguy hiểm trước: [${discharge.join(", ")}] (giữ lại ${reserve === undefined ? cardsApi.DEFAULT_RESERVE : reserve} lá thấp để mồi).`);
+              return discharge;
+            }
+          } catch (e) {
+            console.warn("[AutoTool V3] chooseDumpDischarge lỗi, dùng lại chiến lược cũ:", e);
+          }
+        }
+        // Chỉ còn phần giữ lại -> chuyển sang chế độ MỒI lá thấp cho chính đè.
         const opening = chooseDumpOpening(myCards, combs);
-        console.log(`[AutoTool V3] [Role: DUMP] Lượt đánh bắt buộc, giữ tổ hợp: [${opening.join(", ")}].`);
+        console.log(`[AutoTool V3] [Role: DUMP] Mồi lá thấp cho Account chính: [${opening.join(", ")}].`);
         return opening;
       } else {
         const relayLead = chooseVerifiedSingleRelay(myCards, G.__partner_cards);

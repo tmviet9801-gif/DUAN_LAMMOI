@@ -239,7 +239,60 @@
     return { turns: res.turns, melds: out };
   }
 
+  // Số lá thấp nhất mà Account phụ GIỮ LẠI để mồi cho Account chính đè.
+  const DEFAULT_RESERVE = 4;
+
+  /**
+   * Nước xả cho ACCOUNT PHỤ: tống lá NGUY HIỂM đi sớm, giữ lại vài lá thấp.
+   *
+   * Bài toán: cuối ván ai còn Heo / 3 bích trên tay thì bị phạt ("thối"). Cách
+   * chắc chắn nhất để không bị phạt là đánh hết lá cao TỪ SỚM, phần còn lại tất
+   * yếu là lá thấp. Nhưng phụ vẫn phải chừa vài lá thấp để mồi cho chính đè và
+   * giành lại quyền dẫn — nên không xả sạch, mà giữ `reserveSize` lá thấp nhất.
+   *
+   * Khác hoàn toàn chiều ưu tiên của Account chính: chính chọn tổ hợp NHỎ NHẤT
+   * (giữ lá cao để còn đè được), phụ chọn tổ hợp CHỨA LÁ CAO NHẤT (tống nguy
+   * hiểm đi). Phụ không cần quyền kiểm soát nên không có gì để mất.
+   *
+   * Ưu tiên theo LÁ CAO NHẤT chứ không theo loại tổ hợp: mục tiêu là giảm phạt,
+   * không phải giảm số lượt. Cùng lá cao thì chọn nhóm nhiều lá hơn (tống được
+   * nhiều hơn trong một lượt).
+   *
+   * @returns {number[]|null} nhóm lá nên đánh, hoặc null khi chỉ còn phần giữ
+   *          lại (lúc đó gọi bên ngoài tự chuyển sang chế độ mồi lá thấp).
+   */
+  function chooseDumpDischarge(cards, reserveSize) {
+    const keep = (reserveSize === undefined || reserveSize === null)
+      ? DEFAULT_RESERVE : Math.max(0, reserveSize | 0);
+    const hand = sortCards(cards || []);
+    if (hand.length <= keep) return null;      // chỉ còn phần giữ để mồi
+
+    // Phần được phép xả = bỏ đi `keep` lá thấp nhất. Tổ hợp chỉ tìm TRONG phần
+    // này nên phần giữ lại không bao giờ bị xé.
+    const pool = hand.slice(keep);
+    const melds = enumerateMelds(pool);
+    if (!melds.length) return null;
+
+    let best = null;
+    let bestHigh = null;
+    for (const m of melds) {
+      const group = [];
+      for (let i = 0; i < pool.length; i++) if (m.mask & (1 << i)) group.push(pool[i]);
+      const high = group[group.length - 1];     // pool đã sắp tăng dần
+      if (best === null) {
+        best = group; bestHigh = high; continue;
+      }
+      const cmp = compareCards(high, bestHigh);
+      if (cmp > 0 || (cmp === 0 && group.length > best.length)) {
+        best = group; bestHigh = high;
+      }
+    }
+    return best;
+  }
+
   const api = {
+    DEFAULT_RESERVE: DEFAULT_RESERVE,
+    chooseDumpDischarge: chooseDumpDischarge,
     getCardVal: getCardVal,
     getCardSuit: getCardSuit,
     compareCards: compareCards,

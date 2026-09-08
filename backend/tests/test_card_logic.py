@@ -220,3 +220,81 @@ def test_wired_into_extension_and_manifest():
     matching = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller"
                 / "matching.py").read_text(encoding="utf-8")
     assert '("card_logic.js", "content_main.js")' in matching
+
+
+# ---------- Đảo chiều ưu tiên cho Account phụ ----------
+
+def test_dump_discharges_dangerous_cards_first():
+    """Phụ phải tống Heo / lá cao đi TRƯỚC, không giữ tới cuối ván.
+
+    Cuối ván ai còn Heo / 3 bích thì bị phạt. Đánh hết lá cao từ sớm là cách
+    chắc chắn nhất để phần còn lại tất yếu là lá thấp, không bị phạt.
+    """
+    # 3♠ 4♣ 5♠ 6♦ | 2♠ 2♣ (Heo) | K♠ K♣
+    hand = [8, 13, 16, 22, 4, 5, 48, 49]
+    res = run_js(f"""
+      let cur = {hand};
+      const out = [];
+      for (let i = 0; i < 8; i++) {{
+        const play = C.chooseDumpDischarge(cur, 4);
+        if (!play) break;
+        out.push(play.map(C.getCardVal));
+        const s = new Set(play);
+        cur = cur.filter(c => !s.has(c));
+      }}
+      console.log(JSON.stringify({{plays: out, con_lai: C.sortCards(cur).map(C.getCardVal)}}));
+    """)
+    # Heo (15) phải ra lượt đầu, K (13) lượt sau
+    assert res["plays"][0] == [15, 15], f"phải xả Heo trước, nhận {res['plays'][0]}"
+    assert res["plays"][1] == [13, 13], f"kế tiếp phải là đôi K, nhận {res['plays'][1]}"
+    # Còn lại đúng 4 lá thấp nhất làm mồi
+    assert res["con_lai"] == [3, 4, 5, 6]
+
+
+def test_dump_keeps_reserve_untouched():
+    """Phần giữ lại không bao giờ bị xé — tổ hợp chỉ tìm ngoài phần đó."""
+    res = run_js("""
+      let bad = [];
+      for (let it = 0; it < 300; it++) {
+        const deck=[...Array(52).keys()];
+        for(let i=51;i>0;i--){const j=(Math.random()*(i+1))|0;[deck[i],deck[j]]=[deck[j],deck[i]];}
+        const hand = deck.slice(0, 13);
+        const keep = 4;
+        const reserve = new Set(C.sortCards(hand).slice(0, keep));
+        const play = C.chooseDumpDischarge(hand, keep);
+        if (play) for (const c of play) if (reserve.has(c)) bad.push({hand:hand, play:play});
+      }
+      console.log(JSON.stringify(bad.slice(0, 3)));
+    """)
+    assert res == [], f"đã xé vào phần giữ lại: {res}"
+
+
+def test_dump_returns_null_when_only_reserve_left():
+    """Còn <= số lá giữ lại -> trả null để bên ngoài chuyển sang chế độ mồi."""
+    res = run_js("console.log(JSON.stringify(["
+                 " C.chooseDumpDischarge([8, 12, 16, 20], 4) === null,"
+                 " C.chooseDumpDischarge([8, 12], 4) === null,"
+                 " C.chooseDumpDischarge([], 4) === null]))")
+    assert res == [True, True, True]
+
+
+def test_dump_priority_is_opposite_of_anchor():
+    """Phụ chọn nhóm chứa lá CAO nhất; chính chọn nhóm THẤP nhất."""
+    res = run_js("""
+      const hand = [8, 12, 16, 20, 24, 48, 49, 4];   // 3 4 5 6 7 K K 2(Heo)
+      const dump = C.chooseDumpDischarge(hand, 4);
+      const anchor = C.planMinTurns(hand).melds[0];
+      console.log(JSON.stringify({
+        dump: dump.map(C.getCardVal),
+        anchorLow: Math.max.apply(null, anchor.map(C.getCardVal))
+      }));
+    """)
+    assert max(res["dump"]) >= 13, "phụ phải nhắm lá cao"
+    assert res["anchorLow"] <= 7, "chính phải bắt đầu từ nhóm thấp"
+
+
+def test_dump_discharge_wired_into_extension():
+    ext = Path(__file__).parents[1] / "extension"
+    content = (ext / "content_main.js").read_text(encoding="utf-8")
+    assert "chooseDumpDischarge" in content, "nhánh DUMP chưa gọi tới hàm xả nguy hiểm"
+    assert "__AUTOTOOL_DUMP_RESERVE" in content, "chưa cho cấu hình số lá giữ lại"
