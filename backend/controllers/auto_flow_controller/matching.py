@@ -183,6 +183,12 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         preflight_code = f"""() => {{
             // Mở cổng kích hoạt: từ đây extension mới được phép tự động
             // (rời bàn khi gặp khách lạ, Sẵn sàng/Bắt đầu, tự đánh bài).
+            // XOÁ CỜ DỪNG TRÊN MỌI TRANG. Trước đây chỉ anchor được xoá (trong
+            // khối cấu hình role), trong khi _clear_hunt_state lại SET cờ này
+            // trên TẤT CẢ trang khi bấm Dừng. Hậu quả: từ lần chạy thứ hai trở
+            // đi, nick phụ vẫn còn cờ -> isAutoEngaged() false -> phụ KHÔNG
+            // BAO GIỜ đánh bài, dù đã ghép bàn thành công.
+            try {{ localStorage.removeItem('AUTOTOOL_STOPPED'); }} catch(e) {{}}
             window.__AUTOTOOL_ENGAGED = true;
             window.__AUTOTOOL_AUTO_HUNT = false;
             window.__AUTOTOOL_ARMED = false;

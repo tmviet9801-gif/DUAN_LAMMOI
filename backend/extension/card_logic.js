@@ -319,9 +319,17 @@
       for (let i = 0; i < pool.length; i++) if (m.mask & (1 << i)) group.push(pool[i]);
       out.push(group);
     }
+    // NHÓM TO TRƯỚC, cùng cỡ thì LÁ CAO trước.
+    //
+    // Mục tiêu của phụ là còn LẠI ÍT LÁ NHẤT khi ván kết thúc. Số lượt phụ có
+    // là hữu hạn, nên mỗi lượt phải xả được nhiều lá nhất — đôi/ba/sảnh hơn hẳn
+    // một lá lẻ. Trong cùng cỡ mới xét tới việc tống lá nguy hiểm.
+    //
+    // (Bản trước xếp lá cao lên đầu, nên một lá Heo được chọn trước cả đôi K —
+    // xả được 1 lá thay vì 2. Đúng triệu chứng "không chọn tổ hợp đôi/ba/sảnh".)
     out.sort((a, b) => {
-      const cmp = compareCards(b[b.length - 1], a[a.length - 1]);  // lá cao trước
-      return cmp !== 0 ? cmp : (b.length - a.length);              // cùng lá cao: nhóm to trước
+      if (b.length !== a.length) return b.length - a.length;
+      return compareCards(b[b.length - 1], a[a.length - 1]);
     });
     return out;
   }

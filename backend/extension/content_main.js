@@ -2084,11 +2084,14 @@
                 result: p,
               }, "*");
 
-              // Fallback cho luồng extension cũ (không có controller đang theo
-              // dõi): Account phụ xả bài xong phải rời bàn. Luồng controller
-              // backend-driven vẫn tự out ở phía server, nên không bị gửi lệnh
-              // rời bàn trùng khi __AUTOTOOL_AUTO_HUNT đã tắt.
-              if (G.__AUTOTOOL_AUTO_HUNT && isSubMatchProfile()) {
+              // Account phụ xả xong PHẢI rời bàn để nhường chỗ cho khách ngoài.
+              // Trước đây canh `__AUTOTOOL_AUTO_HUNT`, nhưng controller ở chế độ
+              // backend-driven LUÔN tắt cờ đó (để không có hai engine cùng join)
+              // -> nhánh này chết, phụ ngồi lì trong bàn sau khi đánh xong.
+              // Canh cổng kích hoạt mới: đang chạy gom bàn thì phụ tự out.
+              // Controller cũng ra lệnh out ở phía server; lệnh rời bàn trùng
+              // nhau vô hại vì _do_leave_room kiểm tra đã ở sảnh thì bỏ qua.
+              if (isAutoEngaged() && isSubMatchProfile()) {
                 console.log("[AutoTool V3] Account phụ đã xả xong -> tự rời bàn về sảnh chọn bàn.");
                 setTimeout(() => G.__autotool_exec_leave(), 700);
               }

@@ -697,3 +697,36 @@ def test_ready_start_uu_tien_goi_api_component():
     # Đường cũ vẫn phải còn làm dự phòng
     assert "OpenCV phát hiện nút" in src
     assert "Không thấy nút '%s'; chỉ dùng WS helper đúng vai trò" in src
+
+
+def test_preflight_xoa_co_dung_tren_moi_trang():
+    """Cờ Dừng phải được xoá trên MỌI trang khi bắt đầu lượt chạy mới.
+
+    Lỗi thật: `_clear_hunt_state` SET localStorage AUTOTOOL_STOPPED='1' trên
+    tất cả trang khi bấm Dừng, nhưng chỉ khối cấu hình của ANCHOR mới xoá nó.
+    Từ lần chạy thứ hai trở đi, nick phụ vẫn còn cờ -> isAutoEngaged() trả
+    false -> phụ KHÔNG BAO GIỜ đánh bài dù đã ghép bàn thành công.
+    """
+    from pathlib import Path
+
+    matching = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller"
+                / "matching.py").read_text(encoding="utf-8")
+    preflight = matching.split("preflight_code = f", 1)[1].split('"""', 2)[1]
+    assert "localStorage.removeItem('AUTOTOOL_STOPPED')" in preflight, \
+        "preflight phải xoá cờ Dừng — nó là nơi duy nhất chạy trên MỌI trang"
+    assert "window.__AUTOTOOL_ENGAGED = true;" in preflight
+
+
+def test_phu_tu_out_sau_van_khong_canh_co_luon_tat():
+    """Phụ xả xong phải rời bàn để nhường chỗ khách ngoài.
+
+    Nhánh này từng canh `__AUTOTOOL_AUTO_HUNT`, mà controller ở chế độ
+    backend-driven LUÔN tắt cờ đó (để không có hai engine cùng join) -> nhánh
+    chết, phụ ngồi lì trong bàn sau khi đánh xong.
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).parents[1] / "extension" / "content_main.js").read_text(encoding="utf-8")
+    assert "if (isAutoEngaged() && isSubMatchProfile()) {" in src, \
+        "phải canh cổng kích hoạt, không canh __AUTOTOOL_AUTO_HUNT"
+    assert "G.__AUTOTOOL_AUTO_HUNT && isSubMatchProfile()" not in src

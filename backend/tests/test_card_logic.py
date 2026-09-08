@@ -535,3 +535,32 @@ def test_relay_wired_into_extension():
     # Nhánh đè của chính phải ưu tiên nước không ai chặn lại được
     assert "canAnyoneBeat(c, unseen)" in src
     assert "không ai chặn lại được" in src
+
+
+def test_dump_uu_tien_nhom_to_de_xa_nhieu_la():
+    """Mục tiêu của phụ là còn LẠI ÍT LÁ NHẤT -> mỗi lượt xả nhiều lá nhất.
+
+    Bản trước xếp lá cao lên đầu nên một lá Heo được chọn trước cả đôi K — xả
+    1 lá thay vì 2. Đúng triệu chứng "không chọn tổ hợp đôi/ba/sảnh để đánh".
+    """
+    # B: 3♠ 4♣ 5♠ 6♦ (giữ) | K♠ K♣ | 2♠(Heo)
+    B = [8, 13, 16, 22, 48, 49, 4]
+    res = run_js(f"""
+      const B = {B};
+      console.log(JSON.stringify({{
+        tuDo:  C.chooseDumpDischarge(B, 4).map(C.getCardVal),
+        deDoi: C.chooseDumpBeat(B, [32, 33], 4).map(C.getCardVal),
+      }}));
+    """)
+    assert res["tuDo"] == [13, 13], "phải chọn đôi K (2 lá) thay vì Heo lẻ (1 lá)"
+    assert res["deDoi"] == [13, 13], "đè đôi 9 bằng đôi K"
+
+
+def test_thu_tu_uu_tien_la_to_truoc_roi_moi_toi_la_cao():
+    """Cùng cỡ mới xét lá cao — kiểm tra bằng hai đôi."""
+    res = run_js("""
+      // B: 3 4 5 6 (giữ) | đôi 9 | đôi K  -> phải chọn đôi K (cùng cỡ, cao hơn)
+      const B = [8, 13, 16, 22, 32, 33, 48, 49];
+      console.log(JSON.stringify(C.chooseDumpDischarge(B, 4).map(C.getCardVal)));
+    """)
+    assert res == [13, 13]
