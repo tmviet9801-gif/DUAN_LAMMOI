@@ -6,13 +6,14 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from core.page_world import eval_page
 
 log = logging.getLogger("auto_flow_controller")
 
 
 async def _get_screen_size_util(p):
     try:
-        sz = await p.evaluate("({w: window.innerWidth, h: window.innerHeight})")
+        sz = await eval_page(p, "({w: window.innerWidth, h: window.innerHeight})")
         return int(sz.get("w") or 784), int(sz.get("h") or 505)
     except Exception:
         return 784, 505
@@ -23,7 +24,7 @@ async def _clear_hunt_state(p):
     if not p or (hasattr(p, "is_closed") and p.is_closed()):
         return
     try:
-        await p.evaluate("""() => {
+        await eval_page(p, """() => {
             try { localStorage.setItem('AUTOTOOL_STOPPED', '1'); } catch(e) {}
             window.__AUTOTOOL_AUTO_HUNT = false;
             window.__AUTOTOOL_ARMED = false;
@@ -58,7 +59,7 @@ async def _is_in_tldl_lobby_util(p):
         # TUYỆT ĐỐI KHÔNG dùng simms.readyState làm fallback: socket kết nối không đồng
         # nghĩa đang ở sảnh bàn Đếm Lá (vẫn có thể đang ở sảnh chính HitClub). Nếu hàm
         # Extension chưa được inject -> coi là CHƯA ở sảnh để buộc điều hướng.
-        in_tldl = await p.evaluate("""() => {
+        in_tldl = await eval_page(p, """() => {
             if (typeof window.__autotool_is_in_tldl_lobby === 'function') {
                 return window.__autotool_is_in_tldl_lobby();
             }
@@ -133,7 +134,7 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
 
     # 0. Kiểm tra nếu đang ở trong bàn chơi -> PHẢI rời bàn trước khi thao tác sảnh!
     try:
-        in_tbl = await p.evaluate("""() => {
+        in_tbl = await eval_page(p, """() => {
             if (typeof window.__autotool_is_inside_table === 'function') {
                 return window.__autotool_is_inside_table();
             }
@@ -150,7 +151,7 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
 
     # 0. Kiểm tra nếu đang ở màn hình đăng nhập / bị đăng xuất
     try:
-        is_on_login = await p.evaluate("""() => {
+        is_on_login = await eval_page(p, """() => {
             if (typeof window.__autotool_is_on_login_screen === 'function') {
                 return window.__autotool_is_on_login_screen();
             }
@@ -165,7 +166,7 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
     # ƯU TIÊN: dùng engine Cocos-native của Extension (__autotool_auto_enter_tldl) —
     # chính xác và nhanh hơn OpenCV template matching (vốn hay rớt khi popup/resolution lệch).
     try:
-        native_res = await p.evaluate(
+        native_res = await eval_page(p, 
             f"() => (typeof window.__autotool_auto_enter_tldl === 'function') ? window.__autotool_auto_enter_tldl({target_mu}) : null"
         )
         if isinstance(native_res, dict) and native_res.get("ok"):
@@ -244,7 +245,7 @@ async def _do_leave_room(p, name="Profile", target_mu=2):
 
     # 1. Gửi lệnh WebSocket và Cocos rời bàn tức thì chuẩn giao thức Simms
     try:
-        await p.evaluate("""(() => {
+        await eval_page(p, """(() => {
             try {
                 let sent = false;
                 if (typeof window.__autotool_exec_leave === 'function') {
@@ -281,7 +282,7 @@ async def _do_leave_room(p, name="Profile", target_mu=2):
         await p.mouse.click(int(sw * 0.085), int(sh * 0.300))
         await asyncio.sleep(0.4)
         # Xử lý nếu có popup xác nhận "Bạn có muốn rời bàn?"
-        await p.evaluate("""(() => {
+        await eval_page(p, """(() => {
             if (typeof window.__autotool_dismiss_popups === 'function') window.__autotool_dismiss_popups();
         })()""")
     except Exception as e:
@@ -294,7 +295,7 @@ async def _do_leave_room(p, name="Profile", target_mu=2):
 
     # 3. ĐẢM BẢO CUỐI CÙNG: Chỉ gọi _ensure_in_tldl_lobby_util nếu chắc chắn KHÔNG CÒN TRONG BÀN
     try:
-        in_tbl = await p.evaluate("""() => {
+        in_tbl = await eval_page(p, """() => {
             if (typeof window.__autotool_is_inside_table === 'function') return window.__autotool_is_inside_table();
             return false;
         }""")

@@ -11,6 +11,7 @@ import logging
 import re
 import time
 from pathlib import Path
+from core.page_world import eval_page
 
 log = logging.getLogger("ws_sniffer")
 
@@ -251,7 +252,7 @@ class WsSniffer:
         for url in urls:
             try:
                 # page.evaluate chỉ nhận 1 arg -> truyền 1 array rồi destructure trong JS
-                out = await page.evaluate(_SIDE_SOCK_JS, [url, access_token, cmd, connect_frame])
+                out = await eval_page(page, _SIDE_SOCK_JS, [url, access_token, cmd, connect_frame])
             except Exception as e:
                 log.warning("side_command fail url=%s: %s", url, e)
                 continue
@@ -269,13 +270,13 @@ class WsSniffer:
         injected = 0
         for f in [page] + page.frames:
             try:
-                await f.evaluate(_INJECT_JS)
+                await eval_page(f, _INJECT_JS)
                 injected += 1
             except Exception as e:
                 log.warning("inject frame fail %s: %s", (f.url or "")[:60], str(e)[:80])
         for w in list(page.workers or []):
             try:
-                await w.evaluate(_INJECT_JS)
+                await eval_page(w, _INJECT_JS)
                 injected += 1
             except Exception as e:
                 log.warning("inject worker fail: %s", str(e)[:80])
@@ -311,7 +312,7 @@ class WsSniffer:
             try:
                 if id(worker) in _WORKER_HOOKED:
                     return
-                await worker.evaluate(_INJECT_JS)
+                await eval_page(worker, _INJECT_JS)
                 _WORKER_HOOKED.add(id(worker))
                 log.info("worker ws hooked: %s", (worker.url or "")[:100])
             except Exception as e:
@@ -462,7 +463,7 @@ class WsSniffer:
         if not page:
             return 0
         try:
-            items = await page.evaluate(
+            items = await eval_page(page, 
                 "() => { const c = window.__ws_capture || []; window.__ws_capture = []; return c; }"
             )
         except Exception:
@@ -487,7 +488,7 @@ class WsSniffer:
         # 1) JS __ws_send: main frame + iframe (prototype patch bắt socket đang có)
         for f in [page] + page.frames:
             try:
-                ok = await f.evaluate(f"globalThis.__ws_send && globalThis.__ws_send({json.dumps(text)})")
+                ok = await eval_page(f, f"globalThis.__ws_send && globalThis.__ws_send({json.dumps(text)})")
                 if ok:
                     self._save({"ts": int(time.time() * 1000), "dir": "inject", "text": str(text)[:8000], "url": f"frame:{f.url[:80]}"})
                     return True
@@ -496,7 +497,7 @@ class WsSniffer:
         # 2) JS __ws_send: Web Worker
         for w in list(page.workers or []):
             try:
-                ok = await w.evaluate(f"globalThis.__ws_send && globalThis.__ws_send({json.dumps(text)})")
+                ok = await eval_page(w, f"globalThis.__ws_send && globalThis.__ws_send({json.dumps(text)})")
                 if ok:
                     self._save({"ts": int(time.time() * 1000), "dir": "inject", "text": str(text)[:8000], "url": f"worker:{w.url[:80]}"})
                     return True
@@ -515,7 +516,7 @@ class WsSniffer:
         # 1) JS __ws_send_channel (prototype patch) — main frame + iframe
         for f in [page] + page.frames:
             try:
-                ok = await f.evaluate(
+                ok = await eval_page(f, 
                     f"globalThis.__ws_send_channel && globalThis.__ws_send_channel({json.dumps(channel)}, {json.dumps(text)})"
                 )
                 if ok:

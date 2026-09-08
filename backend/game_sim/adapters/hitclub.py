@@ -39,6 +39,7 @@ from game_sim.token_store import TokenStore
 from game_sim.ws_sniffer import WsSniffer
 from models.config_model import DATA_DIR
 from platform_config import is_game_url
+from core.page_world import eval_page
 
 log = logging.getLogger("adapter.hitclub")
 
@@ -119,7 +120,7 @@ class HitClubAdapter(GameAdapter):
     async def _read_token(self, page):
         """Đọc token login (localStorage['token']) từ page."""
         try:
-            tok = await page.evaluate("localStorage.getItem('token')")
+            tok = await eval_page(page, "localStorage.getItem('token')")
             return tok if tok else ""
         except Exception:
             return ""
@@ -142,8 +143,8 @@ class HitClubAdapter(GameAdapter):
         saved = self.token_store.get(account_name)
         if saved:
             try:
-                await page.evaluate(f"localStorage.setItem('token', {json.dumps(saved)})")
-                await page.evaluate(f"localStorage.setItem('user_token', {json.dumps(saved)})")
+                await eval_page(page, f"localStorage.setItem('token', {json.dumps(saved)})")
+                await eval_page(page, f"localStorage.setItem('user_token', {json.dumps(saved)})")
                 log.info("restored fresh token for %s from token store", account_name)
             except Exception:
                 pass
@@ -425,7 +426,7 @@ class HitClubAdapter(GameAdapter):
 
     async def _game_ws_info(self, page):
         """Đọc token + danh sách URL WS thực tế từ localStorage (KHÔNG reload)."""
-        return await page.evaluate(
+        return await eval_page(page, 
             """() => {
                 const tok = localStorage.getItem('token') || localStorage.getItem('user_token') || '';
                 let raw = localStorage.getItem('appConfigLocalStore') || '';
@@ -581,13 +582,13 @@ class HitClubAdapter(GameAdapter):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                if await page.evaluate(JS_READY):
+                if await eval_page(page, JS_READY):
                     return True
             except Exception:
                 pass
             for w in list(page.workers or []):
                 try:
-                    if await w.evaluate(JS_READY):
+                    if await eval_page(w, JS_READY):
                         return True
                 except Exception:
                     pass
@@ -653,7 +654,7 @@ class HitClubAdapter(GameAdapter):
         items = _PAGE_RECV.get(id(page), []) or []
         if not items:
             try:
-                items = items + (await page.evaluate("() => (window.__ws_capture || [])") or [])
+                items = items + (await eval_page(page, "() => (window.__ws_capture || [])") or [])
             except Exception:
                 pass
         for it in reversed(items):
@@ -687,7 +688,7 @@ class HitClubAdapter(GameAdapter):
         """
         # 1. Thử đọc trực tiếp từ window.__room_players (bắt bởi JS hook)
         try:
-            players = await page.evaluate("() => window.__room_players || []")
+            players = await eval_page(page, "() => window.__room_players || []")
             if isinstance(players, list) and players:
                 return players
         except Exception:
@@ -699,7 +700,7 @@ class HitClubAdapter(GameAdapter):
         items = _PAGE_RECV.get(id(page), []) or []
         if not items:
             try:
-                items = items + (await page.evaluate("() => (window.__ws_capture || [])") or [])
+                items = items + (await eval_page(page, "() => (window.__ws_capture || [])") or [])
             except Exception:
                 pass
 
@@ -720,7 +721,7 @@ class HitClubAdapter(GameAdapter):
     async def _get_game_state(self, page):
         """Lấy trạng thái ván game (cmd=202 gS). gS=0: chờ/sẵn sàng, gS=1: đang chơi."""
         try:
-            gs = await page.evaluate("() => window.__room_state")
+            gs = await eval_page(page, "() => window.__room_state")
             if gs is not None:
                 return gs
         except Exception:
@@ -803,7 +804,7 @@ class HitClubAdapter(GameAdapter):
                 "chong_pha": bool(chong_pha),
                 "known_names": list(known_names or []),
             }
-            await page.evaluate(js, cfg)
+            await eval_page(page, js, cfg)
             return True
         except Exception as e:
             log.warning("configure_inpage_protection fail: %s", e)

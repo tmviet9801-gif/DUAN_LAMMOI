@@ -28,6 +28,10 @@ class EvalIn(BaseModel):
     name: Optional[str] = None
     js: str
     target: Optional[str] = None  # 'worker', 'main_page', or None/'all'
+    # Patchright mặc định evaluate trong world CÔ LẬP (isolated_context=True) nên
+    # KHÔNG thấy biến của trang lẫn của content_main.js (extension world MAIN).
+    # Đặt isolated=false để chạy đúng world của trang khi cần đọc __autotool_*.
+    isolated: Optional[bool] = True
 
 
 class ClickIn(BaseModel):
@@ -155,7 +159,7 @@ async def browser_eval(body: EvalIn, request: Request):
             target_frames = [session.page.main_frame] if body.target == "main_page" else session.page.frames
             for i, frame in enumerate(target_frames):
                 try:
-                    fr_res = await frame.evaluate(body.js)
+                    fr_res = await frame.evaluate(body.js, isolated_context=bool(body.isolated))
                     frames_res.append({"frame_idx": i, "url": frame.url, "result": fr_res})
                 except Exception as e:
                     frames_res.append({"frame_idx": i, "url": frame.url, "error": str(e)})

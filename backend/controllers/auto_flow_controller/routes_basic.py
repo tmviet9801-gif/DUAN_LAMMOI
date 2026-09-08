@@ -13,6 +13,7 @@ from .lobby import (
     _do_leave_room,
     _ensure_in_tldl_lobby_util,
 )
+from core.page_world import eval_page
 
 log = logging.getLogger("auto_flow_controller")
 router = APIRouter()
@@ -336,7 +337,7 @@ async def autoplay_leave_room(body: dict, request: Request):
         if s.page:
             try:
                 # Gửi lệnh WebSocket thoát phòng trực tiếp
-                await s.page.evaluate("""(() => {
+                await eval_page(s.page, """(() => {
                     try {
                         if (typeof window.__ws_send_channel === 'function') {
                             window.__ws_send_channel('Simms', '[4,"Simms",-1]');
@@ -547,7 +548,7 @@ async def autoplay_create_table(body: dict, request: Request):
         raise HTTPException(status_code=400, detail=f"Chưa có RID xác minh cho mức ${bet}, bàn {mu} người")
     joined = False
     try:
-        joined = bool(await page.evaluate("""(rid) => {
+        joined = bool(await eval_page(page, """(rid) => {
             const s = (window.__ws_get_simms && window.__ws_get_simms()) || null;
             if (!s || s.readyState !== 1) return false;
             s.send(JSON.stringify([3, 'Simms', Number(rid), '']));
@@ -569,7 +570,7 @@ async def autoplay_create_table(body: dict, request: Request):
     rid = None
     for _ in range(6):
         try:
-            val = await page.evaluate("() => (window.__last_room_info && window.__last_room_info.rid) || window.__ws_last_room_id || null")
+            val = await eval_page(page, "() => (window.__last_room_info && window.__last_room_info.rid) || window.__ws_last_room_id || null")
             if val and int(val) > 0 and int(val) != 100:
                 rid = int(val)
                 break
@@ -683,11 +684,11 @@ async def autoplay_sniffer_status(request: Request):
         page_ws = None
         if page:
             try:
-                hooked = bool(await page.evaluate("() => !!(window.__ws_hooked)"))
+                hooked = bool(await eval_page(page, "() => !!(window.__ws_hooked)"))
             except Exception:
                 pass
             try:
-                count = int(await page.evaluate("() => (window.__ws_capture || []).length") or 0)
+                count = int(await eval_page(page, "() => (window.__ws_capture || []).length") or 0)
             except Exception:
                 pass
             try:
@@ -706,7 +707,7 @@ async def autoplay_sniffer_status(request: Request):
                 frames_diag = []
                 for f in page.frames:
                     try:
-                        diag = await f.evaluate(
+                        diag = await eval_page(f, 
                             """() => {
                                 const inst = window.__ws_instances || [];
                                 const cap = window.__ws_capture || [];
@@ -779,7 +780,7 @@ async def autoplay_session_token(body: dict, request: Request):
     }
     """
     try:
-        data = await page.evaluate(js)
+        data = await eval_page(page, js)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"evaluate fail: {e}")
     # tìm token dạng 1-<32hex>
@@ -841,7 +842,7 @@ async def autoplay_reload(body: dict, request: Request):
             log.warning("reload goto fail: %s", e)
     await asyncio.sleep(float(adapter.game.get("load_wait", 4)))
     try:
-        diag["hooked_after"] = bool(await page.evaluate("() => !!(window.__ws_hooked)"))
+        diag["hooked_after"] = bool(await eval_page(page, "() => !!(window.__ws_hooked)"))
     except Exception:
         diag["hooked_after"] = "err"
     return {"ok": True, "reloaded": name, "diag": diag}
@@ -1089,8 +1090,8 @@ async def autoplay_reconnect_ws(body: dict, request: Request):
         diag["online_err"] = str(e)[:100]
     await asyncio.sleep(10)
     try:
-        diag["captured_urls"] = await page.evaluate("() => Object.keys(window.__ws_map || {})")
-        diag["instances"] = await page.evaluate("() => (window.__ws_instances || []).map(s => (s && s.url) || '').slice(0, 8)")
+        diag["captured_urls"] = await eval_page(page, "() => Object.keys(window.__ws_map || {})")
+        diag["instances"] = await eval_page(page, "() => (window.__ws_instances || []).map(s => (s && s.url) || '').slice(0, 8)")
     except Exception as e:
         diag["captured_err"] = str(e)[:100]
     return {"profile": name, "diag": diag}

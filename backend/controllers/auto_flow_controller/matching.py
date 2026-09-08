@@ -17,6 +17,7 @@ from .lobby import (
     _ensure_in_tldl_lobby_util,
     _is_in_tldl_lobby_util,
 )
+from core.page_world import eval_page
 
 log = logging.getLogger("auto_flow_controller")
 router = APIRouter()
@@ -161,7 +162,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
     async def _get_screen_size(p):
         try:
-            sz = await p.evaluate("({w: window.innerWidth, h: window.innerHeight})")
+            sz = await eval_page(p, "({w: window.innerWidth, h: window.innerHeight})")
             return int(sz.get("w") or 784), int(sz.get("h") or 505)
         except Exception:
             return 784, 505
@@ -184,7 +185,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         if not p:
             return
         try:
-            await p.evaluate(f"window.__autotool_hud_status = {_json.dumps(msg)};")
+            await eval_page(p, f"window.__autotool_hud_status = {_json.dumps(msg)};")
         except Exception:
             pass
 
@@ -214,7 +215,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     pass
                 if content_main_code:
                     try:
-                        await p.evaluate(content_main_code)
+                        await eval_page(p, content_main_code)
                     except Exception as e:
                         log.warning("Inject content_main to %s: %s", p_name, e)
         except Exception as e:
@@ -251,7 +252,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         }}"""
         for p_name, p in pages.items():
             try:
-                await p.evaluate(preflight_code)
+                await eval_page(p, preflight_code)
             except Exception:
                 pass
 
@@ -312,7 +313,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 #   join song song (nguồn gốc lỗi nhầm bàn 100->500 & join zombie sau Dừng).
                 # - Vẫn bật auto-xả bài (__AUTOTOOL_AUTO_DISCARD) theo auto_xa để đánh khi tới lượt.
                 try:
-                    await first_page.evaluate(f"""() => {{
+                    await eval_page(first_page, f"""() => {{
                         try {{ localStorage.removeItem('AUTOTOOL_STOPPED'); }} catch(e) {{}}
                         window.__AUTOTOOL_AUTO_HUNT = false;
                         window.__AUTOTOOL_ARMED = true;
@@ -340,7 +341,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     sub_p = pages.get(sub_name)
                     if sub_p:
                         try:
-                            await sub_p.evaluate("""() => {
+                            await eval_page(sub_p, """() => {
                                 window.__AUTOTOOL_AUTO_HUNT = false;
                                 window.__AUTOTOOL_ARMED = false;
                                 window.__AUTOTOOL_MATCH_ROLE = 'sub';
@@ -354,7 +355,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         # Page state phải được gán kể cả khi Extension Bridge chưa kết nối. Nếu
         # không, nick phụ có thể giữ role mặc định và không tự đánh khi tới lượt.
         try:
-            await first_page.evaluate(f"""() => {{
+            await eval_page(first_page, f"""() => {{
                 window.__AUTOTOOL_MATCH_ROLE = 'anchor';
                 window.__AUTOTOOL_ROLE = 'winner';
                 window.__AUTOTOOL_PARTNER_PROFILES = {_json.dumps(other_profiles)};
@@ -363,7 +364,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             }}""")
             for sub_name in other_profiles:
                 sub_page = pages[sub_name]
-                await sub_page.evaluate(f"""() => {{
+                await eval_page(sub_page, f"""() => {{
                     window.__AUTOTOOL_MATCH_ROLE = 'sub';
                     window.__AUTOTOOL_ROLE = 'dump';
                     window.__AUTOTOOL_PARTNER_PROFILES = {_json.dumps([first_name])};
@@ -481,7 +482,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         })"""
         for p_n, p in pages.items():
             try:
-                await p.evaluate(
+                await eval_page(p, 
                     f"() => {{ window.__autotool_exec_join = {server_join_fn};"
                     f" window.__autotool_leave_then_join = {leave_then_join_fn};"
                     f" window.__last_join_ts = 0; }}"
@@ -512,7 +513,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             # (nguyên nhân đăng xuất trước đây: bot vẫn bắn lệnh khi đã bị kick
             # -> server game đăng xuất phiên). Giữ phiên đăng nhập cho user.
             try:
-                on_login = await first_page.evaluate("""() => {
+                on_login = await eval_page(first_page, """() => {
                     if (typeof window.__autotool_is_on_login_screen === 'function') {
                         return window.__autotool_is_on_login_screen();
                     }
@@ -527,7 +528,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                                   "error", "❌ Đăng xuất")
                 for p_n, p in pages.items():
                     try:
-                        await p.evaluate("() => { if (typeof window.__autotool_check_logged_out === 'function') window.__autotool_check_logged_out(); }")
+                        await eval_page(p, "() => { if (typeof window.__autotool_check_logged_out === 'function') window.__autotool_check_logged_out(); }")
                     except Exception:
                         pass
                 return {"ok": False, "error": f"{first_name} bị đăng xuất, hãy đăng nhập lại tài khoản rồi chạy lại.", "stopped": True}
@@ -552,9 +553,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
             # Reset dữ liệu phòng cũ trên browser context để không đọc nhầm dữ liệu ván trước
             try:
-                await first_page.evaluate("() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; window.__game_in_progress = false; window.__is_matched_locked = false; window.__my_cards = []; }")
+                await eval_page(first_page, "() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; window.__game_in_progress = false; window.__is_matched_locked = false; window.__my_cards = []; }")
                 for other_p in [p for k, p in pages.items() if k != first_name]:
-                    await other_p.evaluate("() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; window.__game_in_progress = false; window.__is_matched_locked = false; window.__my_cards = []; }")
+                    await eval_page(other_p, "() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; window.__game_in_progress = false; window.__is_matched_locked = false; window.__my_cards = []; }")
             except Exception:
                 pass
 
@@ -569,7 +570,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             # khi còn ngồi bàn 500 mà gửi 308 -> game trả [4,false,...,102] từ chối,
             # spam 18 lần/2s càng làm kẹt vĩnh viễn.
             try:
-                stuck_in_old_table = await first_page.evaluate("""() => {
+                stuck_in_old_table = await eval_page(first_page, """() => {
                     if (typeof window.__autotool_is_inside_table === 'function') {
                         return window.__autotool_is_inside_table();
                     }
@@ -597,7 +598,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             # khi server ack — không để hở cửa sổ cho game tự rejoin bàn $500.
             join_res = {}
             try:
-                join_res = await first_page.evaluate(
+                join_res = await eval_page(first_page, 
                     f"() => {{ if (typeof window.__autotool_leave_then_join === 'function') return window.__autotool_leave_then_join({requested_rid or 'null'}, {bet_val}, {target_mu}); return {{ok: false, reason: 'no_fn'}}; }}"
                 ) or {}
             except Exception as e:
@@ -627,7 +628,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 if _should_stop():
                     break
                 try:
-                    r_info = await first_page.evaluate("""() => {
+                    r_info = await eval_page(first_page, """() => {
                         const pls = window.__room_players || [];
                         const info = window.__last_room_info;
                         return {
@@ -651,7 +652,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         if auto_start_guest_ss and not other_profiles and (r_info.get("guest_ready") or r_info.get("in_game")):
                             log.info("find-and-match: ⚡ PHÁT HIỆN KHÁCH LẠ ĐÃ SẴN SÀNG! Kích hoạt BẮT ĐẦU VÁN NGAY!")
                             guest_ss_triggered = True
-                            await first_page.evaluate("() => { if (typeof window.__autotool_exec_start === 'function') window.__autotool_exec_start(); }")
+                            await eval_page(first_page, "() => { if (typeof window.__autotool_exec_start === 'function') window.__autotool_exec_start(); }")
                             w_p, h_p = await _get_screen_size(first_page)
                             await first_page.mouse.click(int(w_p * 0.500), int(h_p * 0.525))
                             break
@@ -669,7 +670,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 for _ in range(60):
                     if _should_stop():
                         break
-                    in_g = await first_page.evaluate("() => !!window.__game_in_progress")
+                    in_g = await eval_page(first_page, "() => !!window.__game_in_progress")
                     if not in_g:
                         break
                     await asyncio.sleep(1.0)
@@ -709,7 +710,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 if _should_stop():
                     break
                 try:
-                    val = await anchor_page.evaluate("() => (window.__last_room_info && window.__last_room_info.rid) || window.__ws_last_room_id || null")
+                    val = await eval_page(anchor_page, "() => (window.__last_room_info && window.__last_room_info.rid) || window.__ws_last_room_id || null")
                     if val and int(val) > 0 and int(val) != 100:
                         int_val = int(val)
                         if int_val <= 28:
@@ -743,7 +744,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             # (Sửa bug: cấu hình bàn 100 nhưng game tự đưa vào bàn 500 -> phải out ngay, không mời B.)
             wrong_bet = False
             try:
-                room_b = await anchor_page.evaluate("() => (window.__last_room_info && window.__last_room_info.b) || null")
+                room_b = await eval_page(anchor_page, "() => (window.__last_room_info && window.__last_room_info.b) || null")
                 if room_b is not None:
                     try:
                         room_b_int = int(float(str(room_b).replace(",", "").replace(".", "").strip()))
@@ -781,7 +782,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             # Lấy định danh username, display name và uid của Account 1
             anchor_user_info = {}
             try:
-                anchor_user_info = await anchor_page.evaluate("""() => ({
+                anchor_user_info = await eval_page(anchor_page, """() => ({
                     u: window.__my_u || (window.__user_info && window.__user_info.u) || window.__my_username || '',
                     dn: window.__my_dn || (window.__user_info && (window.__user_info.dn || window.__user_info.name)) || '',
                     uid: window.__my_uid || (window.__user_info && window.__user_info.uid) || ''
@@ -798,7 +799,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             still_alone = False
             for _ in range(5):
                 try:
-                    alive_check = await anchor_page.evaluate("""() => ({
+                    alive_check = await eval_page(anchor_page, """() => ({
                         player_count: (window.__room_players || []).length,
                         has_stranger: !!(window.__last_room_info && window.__last_room_info.has_stranger),
                         in_game: !!window.__game_in_progress
@@ -837,7 +838,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     
                     sub_user_info = {}
                     try:
-                        sub_user_info = await sub_p.evaluate("""() => ({
+                        sub_user_info = await eval_page(sub_p, """() => ({
                             u: window.__my_u || (window.__user_info && window.__user_info.u) || window.__my_username || '',
                             dn: window.__my_dn || (window.__user_info && (window.__user_info.dn || window.__user_info.name)) || '',
                             uid: window.__my_uid || (window.__user_info && window.__user_info.uid) || ''
@@ -850,10 +851,10 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     p_info_sub = {"dn": sub_dn, "u": sub_u, "uid": sub_uid, "profile_name": sub_name}
 
                     # 1. Nạp Account 1 vào Account 2
-                    await sub_p.evaluate(f"() => {{ if (!window.__autotool_partners) window.__autotool_partners = []; window.__autotool_partners.push({_json.dumps(p_info_anchor)}); if (typeof globalThis !== 'undefined') globalThis.__autotool_partners = window.__autotool_partners; }}")
+                    await eval_page(sub_p, f"() => {{ if (!window.__autotool_partners) window.__autotool_partners = []; window.__autotool_partners.push({_json.dumps(p_info_anchor)}); if (typeof globalThis !== 'undefined') globalThis.__autotool_partners = window.__autotool_partners; }}")
                     
                     # 2. Nạp Account 2 vào Account 1 (ĐỂ ACCOUNT 1 NHẬN BIẾT ACCOUNT 2 LÀ ĐỒNG ĐỘI, KHÔNG COI LÀ KHÁCH LẠ)
-                    await anchor_page.evaluate(f"() => {{ if (!window.__autotool_partners) window.__autotool_partners = []; window.__autotool_partners.push({_json.dumps(p_info_sub)}); if (typeof globalThis !== 'undefined') globalThis.__autotool_partners = window.__autotool_partners; }}")
+                    await eval_page(anchor_page, f"() => {{ if (!window.__autotool_partners) window.__autotool_partners = []; window.__autotool_partners.push({_json.dumps(p_info_sub)}); if (typeof globalThis !== 'undefined') globalThis.__autotool_partners = window.__autotool_partners; }}")
 
                     if ext_hub:
                         if ext_hub.is_connected(sub_name):
@@ -867,7 +868,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 # người duy nhất ở đúng RID đã chọn. Nếu khách lạ chen vào,
                 # tuyệt đối không cho Account 2 join vào bàn đó.
                 try:
-                    anchor_gate = await anchor_page.evaluate("""() => ({
+                    anchor_gate = await eval_page(anchor_page, """() => ({
                         rid: Number((window.__last_room_info && window.__last_room_info.rid) || window.__ws_last_room_id || 0),
                         bet: Number((window.__last_room_info && window.__last_room_info.b) || 0),
                         players: (window.__room_players || []).length,
@@ -890,7 +891,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 # Cấp vé trước mọi command tới Sub. JOIN_ROOM của Hub chỉ là
                 # thông báo; lệnh WS thật bên dưới chỉ chạy khi vé hợp lệ.
                 try:
-                    await sub_p.evaluate(f"""() => {{
+                    await eval_page(sub_p, f"""() => {{
                         window.__AUTOTOOL_SUB_JOIN_TICKET = {{
                             rid: {int(selected_rid)}, bet: {bet_val}, mu: {target_mu},
                             anchor: {_json.dumps(anchor_name)}, used: false,
@@ -919,7 +920,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     # không tự out khi bàn trống chưa thấy chủ (fix: gặp nhau nhưng out nhầm,
                     # không kịp ready/start/xả). Đồng thời seed expected anchor cho isPartner
                     # và cấp VÉ JOIN dùng một lần: phụ không có quyền tự vào bàn.
-                    await sub_p.evaluate(f"""() => {{
+                    await eval_page(sub_p, f"""() => {{
                         try {{
                             const _inv = {_json.dumps({"rid": int(selected_rid), "ts": "PLACEHOLDER"})};
                             _inv.ts = Date.now();
@@ -939,7 +940,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 # Phụ đang đứng sẵn ở sảnh (trường hợp thường) đi nhánh
                 # 'already_lobby' -> bắn join ngay, không chậm thêm nhịp nào.
                 try:
-                    join_res = await sub_p.evaluate(f"""() => {{
+                    join_res = await eval_page(sub_p, f"""() => {{
                         window.__last_join_ts = 0;
                         const _rid = {int(selected_rid)};
                         if (typeof window.__autotool_leave_then_join !== 'function') return {{ok: false, reason: 'no_join_fn'}};
@@ -961,7 +962,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     # Lấy định danh và danh sách người chơi trong phòng của Account 2 và Account 1
                     sub_user_info = {}
                     try:
-                        sub_user_info = await sub_p.evaluate("""() => ({
+                        sub_user_info = await eval_page(sub_p, """() => ({
                             u: window.__my_u || (window.__user_info && window.__user_info.u) || window.__my_username || '',
                             dn: window.__my_dn || (window.__user_info && (window.__user_info.dn || window.__user_info.name)) || '',
                             uid: window.__my_uid || (window.__user_info && window.__user_info.uid) || ''
@@ -974,13 +975,13 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
                     sub_pls = []
                     try:
-                        sub_pls = await sub_p.evaluate("() => window.__room_players || []")
+                        sub_pls = await eval_page(sub_p, "() => window.__room_players || []")
                     except Exception:
                         pass
 
                     anchor_pls = []
                     try:
-                        anchor_pls = await anchor_page.evaluate("() => window.__room_players || []")
+                        anchor_pls = await eval_page(anchor_page, "() => window.__room_players || []")
                     except Exception:
                         pass
 
@@ -1093,7 +1094,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             # 1. Quét qua JS Cocos Scene
             js_res = {}
             try:
-                js_res = await p.evaluate("""(wantStart) => {
+                js_res = await eval_page(p, """(wantStart) => {
                     try {
                         const canvas = document.querySelector("canvas");
                         const rect = canvas ? canvas.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
@@ -1265,7 +1266,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
             # 3. Kiểm tra xem ván bài đã chia bài chưa
             try:
-                in_game = await anchor_page.evaluate("() => Boolean(window.__game_in_progress || (window.__my_cards && window.__my_cards.length > 0))")
+                in_game = await eval_page(anchor_page, "() => Boolean(window.__game_in_progress || (window.__my_cards && window.__my_cards.length > 0))")
                 if in_game:
                     match_started = True
                     log.info("find-and-match: >>> ĐÃ NHẬN TÍN HIỆU CHIA BÀI & BẮT ĐẦU VÁN THÀNH CÔNG (sau %d lượt kiểm tra)! <<<", tick)
@@ -1301,8 +1302,8 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 break
             game_done = False
             try:
-                in_prog = await anchor_page.evaluate("() => Boolean(window.__game_in_progress)")
-                cards_cnt = await anchor_page.evaluate("() => (window.__my_cards || []).length")
+                in_prog = await eval_page(anchor_page, "() => Boolean(window.__game_in_progress)")
+                cards_cnt = await eval_page(anchor_page, "() => (window.__my_cards || []).length")
                 if not in_prog and cards_cnt == 0:
                     game_done = True
             except Exception:
@@ -1331,7 +1332,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 if _should_stop():
                     break
                 try:
-                    pls = await anchor_page.evaluate("() => window.__room_players || []")
+                    pls = await eval_page(anchor_page, "() => window.__room_players || []")
                     guest_ss = any(pl.get("aRd") is True or pl.get("ss") is True for pl in pls if pl.get("dn") not in pages and pl.get("u") not in pages)
                     if guest_ss:
                         log.info("find-and-match: ⚡ PHÁT HIỆN KHÁCH LẠ SẴN SÀNG! Kích hoạt BẮT ĐẦU NGAY!")
@@ -1355,7 +1356,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             if ext_hub:
                 ext_hub.set_room_share(False)
             try:
-                await anchor_page.evaluate("""() => {
+                await eval_page(anchor_page, """() => {
                     window.__AUTOTOOL_AUTO_HUNT = false;
                     window.__AUTOTOOL_ARMED = false;
                     window.__AUTOTOOL_AUTO_DISCARD = false;

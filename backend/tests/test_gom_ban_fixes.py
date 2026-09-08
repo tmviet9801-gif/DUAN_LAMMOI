@@ -272,7 +272,10 @@ def test_is_in_tldl_lobby_dropped_simms_fallback():
     from controllers.auto_flow_controller import _is_in_tldl_lobby_util
 
     src = inspect.getsource(_is_in_tldl_lobby_util)
-    m = re.search(r'evaluate\("""(\(\) => \{.*?\})"""\)', src, re.DOTALL)
+    # Khớp khối JS trong ngoặc ba nháy, không phụ thuộc hàm gọi là
+    # `page.evaluate(...)` hay `eval_page(page, ...)`. JS chạy ở world nào là
+    # chuyện khác; nội dung khối JS mới là thứ test này canh.
+    m = re.search(r'"""(\(\) => \{.*?\})"""', src, re.DOTALL)
     assert m, "Không tìm thấy khối JS trong _is_in_tldl_lobby_util"
     js = m.group(1)
     assert "simms" not in js
@@ -542,3 +545,78 @@ def test_anchor_leaves_and_joins_in_one_beat_against_client_auto_rejoin():
     # 4. Chống flood khi đã có RID cụ thể phải là 1200ms — 2500ms còn rộng hơn
     #    chu kỳ auto-rejoin của game nên tự khoá chính mình.
     assert "< 1200" in source
+
+
+def test_game_facing_code_never_uses_isolated_evaluate():
+    """Mọi JS chạm state game phải chạy trong world CỦA TRANG.
+
+    Patchright đặt `isolated_context=True` mặc định cho page/frame.evaluate: JS
+    chạy trong world riêng, KHÔNG thấy global của trang lẫn của content script
+    `world: "MAIN"` (content_main.js). Mà toàn bộ giao tiếp của tool dựa trên
+    `window.__autotool_*` / `window.__ws_*` do content_main.js tạo ra.
+
+    Hậu quả khi gọi nhầm world (đã gặp thật):
+    - `__autotool_is_in_tldl_lobby` undefined -> _is_in_tldl_lobby_util luôn
+      False -> "Không đưa được các profile vào sảnh bàn Đếm Lá".
+    - `__ws_get_simms()` trả null -> không gửi được lệnh join nào.
+    - `p.evaluate(content_main_code)` chỉ tạo BẢN SAO extension trong world cô
+      lập; bản sao đó patch WebSocket của chính nó nên không thấy socket thật.
+
+    Bằng chứng: Hub báo balance/dn sống (chỉ content_main.js đọc được) trong khi
+    page.evaluate thấy window.WebSocket vẫn native chưa patch.
+    """
+    import re
+    from pathlib import Path
+
+    backend = Path(__file__).parents[1]
+    targets = [
+        backend / "controllers" / "auto_flow_controller" / "lobby.py",
+        backend / "controllers" / "auto_flow_controller" / "matching.py",
+        backend / "controllers" / "auto_flow_controller" / "routes_basic.py",
+        backend / "game_sim" / "adapters" / "hitclub.py",
+        backend / "game_sim" / "ws_sniffer.py",
+    ]
+    offenders = []
+    for f in targets:
+        src = f.read_text(encoding="utf-8")
+        assert "from core.page_world import eval_page" in src, f"{f.name} thiếu import eval_page"
+        for i, line in enumerate(src.split("\n"), start=1):
+            # `x.evaluate(` trần = dùng world cô lập -> sai. Phải qua eval_page().
+            if re.search(r"\b[A-Za-z_][\w.]*\.evaluate\(", line):
+                offenders.append(f"{f.name}:{i}: {line.strip()[:90]}")
+    assert not offenders, "Còn evaluate() chạy world cô lập:\n" + "\n".join(offenders)
+
+
+def test_eval_page_falls_back_when_isolated_context_unsupported():
+    """Playwright thuần / page giả không có tham số isolated_context."""
+    import asyncio
+
+    from core.page_world import eval_page
+
+    class OnlyPlainEvaluate:
+        def __init__(self):
+            self.calls = []
+
+        async def evaluate(self, expression):   # không nhận isolated_context
+            self.calls.append(expression)
+            return "ok"
+
+    class SupportsIsolated:
+        def __init__(self):
+            self.isolated = None
+
+        async def evaluate(self, expression, arg=None, isolated_context=True):
+            self.isolated = isolated_context
+            return "ok"
+
+    plain = OnlyPlainEvaluate()
+    assert asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        eval_page(plain, "() => 1")
+    ) == "ok"
+    assert plain.calls == ["() => 1"]
+
+    rich = SupportsIsolated()
+    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        eval_page(rich, "() => 1")
+    )
+    assert rich.isolated is False, "phải yêu cầu world của trang"
