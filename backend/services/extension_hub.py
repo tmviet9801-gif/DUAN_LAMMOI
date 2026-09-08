@@ -28,7 +28,10 @@ class ExtensionHubManager:
         self._lock = asyncio.Lock()
         # Khi user bấm Dừng: tắt chia sẻ bàn (chặn mọi JOIN_ROOM tự động do anchor
         # báo "bàn trống" phát ra trễ) cho tới khi bắt đầu gom bàn lại.
-        self._room_share_enabled = True
+        # Hub không được tự quyết định RID/mức cược từ frame của extension.
+        # Luồng đó từng chuyển rid=4 ($500) dù UI đã cấu hình $100. Controller
+        # là nơi duy nhất được quyền ghép bàn và hiện luôn giữ cờ này tắt.
+        self._room_share_enabled = False
 
     def set_room_share(self, enabled: bool):
         """Bật/tắt cơ chế tự động chia sẻ bàn trống giữa các profile."""
@@ -536,6 +539,11 @@ class ExtensionHubManager:
                     # User đã bấm Dừng -> chặn mọi lệnh mời tự động phát ra trễ (zombie gom bàn)
                     log.info("ExtensionHub V3: room_share ĐANG TẮT (đã Dừng) -> bỏ qua phát lệnh mời bàn #%s từ '%s'", rid, profile_name)
                 elif is_verified_empty and not partner_found:
+                    # Deprecated safety path: Hub không còn được gửi JOIN_ROOM.
+                    # Controller là nguồn duy nhất cấp join ticket sau khi check
+                    # anchor một mình + đúng RID/mức cược; tránh B vào trước A.
+                    log.warning("ExtensionHub V3: bỏ qua auto-forward bàn #%s từ '%s'; chỉ controller được phép mời Account phụ.", rid, profile_name)
+                    return
                     # BÀN TRỐNG THỰC SỰ ĐÃ XÁC MINH (Chỉ 1 mình Anchor) -> Gọi đồng đội vào ngay tức thời (<2ms)!
                     last_rid = getattr(self, "_last_broadcast_rid", None)
                     now_t = time.time()

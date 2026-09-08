@@ -152,6 +152,83 @@
     return { straights, quads, triples, pairs, singles };
   }
 
+  // Account phụ không được bẻ một tổ hợp chỉ để đánh nhanh một lá.  Khi có
+  // lá lẻ thật sự thì mồi lá lẻ nhỏ nhất; nếu không có (ví dụ chỉ còn đôi 10)
+  // thì đánh nguyên tổ hợp nhỏ nhất để chắc chắn có một lượt đánh hợp lệ.
+  function chooseDumpOpening(myCards, combs) {
+    const sorted = sortCards(myCards);
+    const rankCounts = new Map();
+    for (const card of sorted) {
+      const rank = getCardVal(card);
+      rankCounts.set(rank, Number(rankCounts.get(rank) || 0) + 1);
+    }
+
+    // Một lá nằm trong sảnh cũng được xem là lá cần giữ, không coi là rác.
+    const looseSingle = getLooseSingles(sorted, combs, rankCounts)[0];
+    if (looseSingle !== undefined) return [looseSingle];
+
+    const lowestGroup = (groups) => groups.slice().sort((left, right) => {
+      const leftSorted = sortCards(left);
+      const rightSorted = sortCards(right);
+      const leftHigh = leftSorted[leftSorted.length - 1];
+      const rightHigh = rightSorted[rightSorted.length - 1];
+      return compareCards(leftHigh, rightHigh);
+    })[0];
+
+    // Không lấy pair được suy ra từ bộ ba/tứ quý, vì như vậy lại xé tổ hợp.
+    const exactGroups = (groups, exactSize) => groups.filter((group) =>
+      rankCounts.get(getCardVal(group[0])) === exactSize
+    );
+    // Đôi trước là tình huống quan trọng: đôi 10 phải đánh thành đôi 10,
+    // không tách thành một lá 10 khiến Account phụ thối bài.
+    if (exactGroups(combs.pairs, 2).length) return lowestGroup(exactGroups(combs.pairs, 2));
+    if (exactGroups(combs.triples, 3).length) return lowestGroup(exactGroups(combs.triples, 3));
+    if (combs.straights.length) return lowestGroup(combs.straights);
+    // Giữ tứ quý tới cuối để không tự tạo một lượt chặt/phạt không cần thiết.
+    if (combs.quads.length) return lowestGroup(combs.quads);
+    return [sorted[0]];
+  }
+
+  function getLooseSingles(cards, combs, knownRankCounts) {
+    const sorted = sortCards(cards);
+    const rankCounts = knownRankCounts || new Map();
+    if (!knownRankCounts) {
+      for (const card of sorted) {
+        const rank = getCardVal(card);
+        rankCounts.set(rank, Number(rankCounts.get(rank) || 0) + 1);
+      }
+    }
+    const protectedCards = new Set();
+    for (const group of [...combs.straights, ...combs.quads, ...combs.triples, ...combs.pairs]) {
+      for (const card of group) protectedCards.add(card);
+    }
+    return sorted.filter((card) =>
+      rankCounts.get(getCardVal(card)) === 1 && !protectedCards.has(card)
+    );
+  }
+
+  // Chỉ Account chính mới mở chuỗi lá lẻ khi đọc được bài của Account phụ và
+  // chứng minh được đường chuyển lượt: Anchor thấp < Phụ < Anchor cao hơn.
+  // Nếu thiếu bất kỳ mắt xích nào, trả null để dùng lại chiến lược tổ hợp.
+  function chooseVerifiedSingleRelay(myCards, partnerCards) {
+    if (!Array.isArray(partnerCards) || partnerCards.length === 0) return null;
+    const myCombs = findCombinations(myCards);
+    const partnerCombs = findCombinations(partnerCards);
+    const myLoose = getLooseSingles(myCards, myCombs);
+    const partnerLoose = getLooseSingles(partnerCards, partnerCombs);
+
+    for (const lead of myLoose) {
+      const partnerReply = partnerLoose.find((card) => canBeat([card], [lead]));
+      if (partnerReply === undefined) continue;
+      const anchorCover = myLoose.find((card) => card !== lead && canBeat([card], [partnerReply]));
+      if (anchorCover !== undefined) {
+        console.log(`[AutoTool V3] [RELAY] Xác minh chuỗi lá lẻ ${lead} < ${partnerReply} < ${anchorCover}.`);
+        return [lead];
+      }
+    }
+    return null;
+  }
+
   function getMyRole() {
     if (G.__AUTOTOOL_ROLE) return G.__AUTOTOOL_ROLE;
     const pName = ((G.__my_dn || "") + " " + (getProfileName() || "")).toLowerCase();
@@ -185,11 +262,12 @@
     // 1. LƯỢT TỰ DO (Free Turn / Mở ván hoặc đối phương vừa Bỏ lượt) -> BẮT BUỘC ĐÁNH BÀI RA
     if (!tableCards || tableCards.length === 0) {
       if (role === "dump") {
-        // Account 2 (Phụ): LUÔN LUÔN ĐÁNH 1 LÁ RÁC NHỎ NHẤT TRÊN TAY ĐỂ MỒI CHO ACCOUNT 1 ĐÈ & GIÀNH LƯỢT!
-        const sorted = sortCards(myCards);
-        console.log(`[AutoTool V3] [Role: DUMP] Mồi lá rác nhỏ nhất: [${sorted[0]}]`);
-        return [sorted[0]];
+        const opening = chooseDumpOpening(myCards, combs);
+        console.log(`[AutoTool V3] [Role: DUMP] Lượt đánh bắt buộc, giữ tổ hợp: [${opening.join(", ")}].`);
+        return opening;
       } else {
+        const relayLead = chooseVerifiedSingleRelay(myCards, G.__partner_cards);
+        if (relayLead) return relayLead;
         // Account 1 (Chính): XẢ SẠCH BÀI VỀ NHẤT! Ưu tiên tổ hợp dài: Sảnh -> Tứ quý -> Ba -> Đôi -> Rác nhỏ
         if (combs.straights.length > 0) return combs.straights[0];
         if (combs.quads.length > 0) return combs.quads[0];
@@ -210,7 +288,10 @@
         if (!hasPlayedThisRound) {
           const tLen = tableCards.length;
           let cands = [];
-          if (tLen === 1) cands = combs.singles;
+          // Ở relay lá lẻ chỉ dùng lá không thuộc tổ hợp. Nếu không có lá phù
+          // hợp thì bỏ lượt để giữ đôi/ba/sảnh, rồi dùng nhánh tổ hợp ở lượt
+          // có cùng số lá.
+          if (tLen === 1) cands = getLooseSingles(myCards, combs).map((card) => [card]);
           else if (tLen === 2) cands = combs.pairs;
           else if (tLen === 3) cands = combs.triples;
           else if (tLen >= 3 && isStraight(tableCards)) cands = combs.straights.filter((s) => s.length === tLen);
@@ -1133,8 +1214,10 @@
     if (!G.__AUTOTOOL_AUTO_DISCARD) return;
     if (!G.__my_cards || !G.__my_cards.length) return;
 
-    // GAUSSIAN TIMING (#7): Phân phối chuẩn Gaussian 450ms - 950ms mô phỏng người thật
-    const delay = humanDelay(450, 950);
+    // Không bấm dồn ngay khi có frame cmd=251. Account phụ chậm hơn một nhịp
+    // để state bàn/turn ổn định trước khi quyết định đè hoặc bỏ lượt.
+    const roleForDelay = getMyRole();
+    const delay = roleForDelay === "dump" ? humanDelay(1150, 1900) : humanDelay(850, 1450);
     G.__auto_turn_timer = setTimeout(() => {
       if (!G.__my_cards || !G.__my_cards.length) return;
       const role = getMyRole();
@@ -1477,6 +1560,24 @@
               // Phân định vai trò: Anchor (Chủ bàn) hay Sub (Phụ / Khách vào theo lệnh)
               const isSubProfile = isSubMatchProfile();
 
+              // Chốt cuối ở extension: không phát lời mời/không đứng lại sai
+              // mức cược dù một engine cũ hoặc frame trễ đã đưa vào nhầm RID.
+              const expectedBet = Number(G.__target_hunt_bet || 0);
+              const actualBet = Number(p.b || (G.__last_room_info && G.__last_room_info.b) || 0);
+              if (expectedBet > 0 && actualBet > 0 && expectedBet !== actualBet) {
+                console.warn(`[AutoTool V3] Sai mức cược: bàn $${actualBet}, cấu hình $${expectedBet} -> rời bàn, không mời đồng đội.`);
+                if (!isSubProfile) {
+                  window.postMessage({
+                    type: "AUTOTOOL_CANCEL_ROOM_INVITE",
+                    profile_name: getProfileName(),
+                    rid: targetRid,
+                    reason: `Sai mức cược $${actualBet}, yêu cầu $${expectedBet}`,
+                  }, "*");
+                }
+                setTimeout(() => G.__autotool_exec_leave(), 150);
+                return;
+              }
+
               // --- LOGIC TỰ ĐỘNG SĂN BÀN & ĐIỀU PHỐI VÀO BÀN TRỐNG CHUẨN XÁC ---
               if (partner) {
                 // 1. ĐÃ KHỚP ĐỒNG ĐỘI THÀNH CÔNG TRONG BÀN!
@@ -1804,6 +1905,15 @@
                 result: p,
               }, "*");
 
+              // Fallback cho luồng extension cũ (không có controller đang theo
+              // dõi): Account phụ xả bài xong phải rời bàn. Luồng controller
+              // backend-driven vẫn tự out ở phía server, nên không bị gửi lệnh
+              // rời bàn trùng khi __AUTOTOOL_AUTO_HUNT đã tắt.
+              if (G.__AUTOTOOL_AUTO_HUNT && isSubMatchProfile()) {
+                console.log("[AutoTool V3] Account phụ đã xả xong -> tự rời bàn về sảnh chọn bàn.");
+                setTimeout(() => G.__autotool_exec_leave(), 700);
+              }
+
               // VÒNG LẶP CHƠI TIẾP TỰ ĐỘNG (CONTINUOUS LOOP):
               if (G.__AUTOTOOL_AUTO_HUNT) {
                 // 1. Tự động gửi Sẵn Sàng sau 1.5s
@@ -1923,7 +2033,26 @@
     }
     const cleanBet = Number(bet || 100);
     const cleanMu = Number(mu || 2);
-    const specificRid = (rid && !isNaN(Number(rid)) && Number(rid) > 28) ? Number(rid) : null;
+    // RID 1..28 cũng là RID bàn cố định hợp lệ. Trước đây chỉ coi >28 là
+    // direct RID nên rid=2 ($100) rơi xuống cmd=308 auto-join và có thể quay
+    // lại bàn $500 của phiên trước.
+    const specificRid = (rid && !isNaN(Number(rid)) && Number(rid) > 0) ? Number(rid) : null;
+
+    // Account phụ không được tự join theo bất kỳ command/room event nào. Chỉ
+    // controller mới cấp vé ngắn hạn ngay sau khi đã xác minh Anchor đang một
+    // mình ở đúng bàn trống. Vé dùng một lần để chặn JOIN_ROOM trễ/zombie.
+    if (isSubMatchProfile()) {
+      const ticket = G.__AUTOTOOL_SUB_JOIN_TICKET;
+      const validTicket = ticket && !ticket.used &&
+        Number(ticket.rid) === Number(specificRid) &&
+        Number(ticket.bet) === cleanBet && Number(ticket.mu || 2) === cleanMu &&
+        Number(ticket.expires_at || 0) > Date.now();
+      if (!validTicket) {
+        console.warn(`[AutoTool V3] CHẶN Account phụ join rid=${rid}: không có vé xác nhận từ Account chính.`);
+        return false;
+      }
+      ticket.used = true;
+    }
 
     // CHỐNG FLOOD JOIN (bằng chứng ws_capture: 18 cặp LEAVE+308 trong 2s -> server
     // trả [4,false,...,102] từ chối liên tục, kẹt vĩnh viễn ở bàn cũ):
@@ -1944,6 +2073,21 @@
     }
 
     const doJoin = () => {
+      // Frame thật đã capture khi click tay bàn $100: [3,"Simms",2,""] .
+      // Không gửi cmd=308 hoặc frame room-id kiểu cũ, vì game sẽ tự chọn lại
+      // mức cược theo state trước đó (nguồn gốc vào nhầm $500).
+      if (specificRid) {
+        const fixedJoin = JSON.stringify([3, "Simms", specificRid, ""]);
+        try {
+          simms.send(fixedJoin);
+          push("inject", fixedJoin);
+          console.log(`[AutoTool V3] Đã gửi FIXED JOIN rid=${specificRid} ($${cleanBet}): ${fixedJoin}`);
+          return true;
+        } catch (e) {
+          console.error("[AutoTool V3] Lỗi gửi fixed join:", e);
+          return false;
+        }
+      }
       const payload308 = {
         cmd: 308,
         aid: 1,
@@ -1954,9 +2098,6 @@
         inc: false,
         pwd: "",
       };
-      if (specificRid) {
-        payload308.rid = specificRid;
-      }
       const msg308 = JSON.stringify([6, "Simms", "channelPlugin", payload308]);
 
       let sent = false;
@@ -1969,14 +2110,6 @@
         console.error("[AutoTool V3] Lỗi gửi lệnh cmd 308:", e);
       }
 
-      // Nếu có ID phòng cụ thể (> 28), gửi bổ sung lệnh direct join
-      if (specificRid) {
-        try {
-          const directJoin = JSON.stringify([3, "Simms", 1, String(specificRid)]);
-          simms.send(directJoin);
-          push("inject", directJoin);
-        } catch (_) {}
-      }
       return sent;
     };
 
@@ -2286,6 +2419,13 @@
         triggerVerifiedMatchReadyAndStart(partner, "Hub Confirm");
       }
     } else if (action === "PARTNER_CARDS_SHARED" && data && Array.isArray(data.cards)) {
+      const expectedPartners = Array.isArray(G.__AUTOTOOL_PARTNER_PROFILES) ? G.__AUTOTOOL_PARTNER_PROFILES : [];
+      const compact = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const sharedBy = compact(data.source_profile);
+      if (expectedPartners.length && !expectedPartners.some((name) => compact(name) === sharedBy)) {
+        console.log(`[AutoTool V3] Bỏ qua bài của profile không cùng cặp: ${data.source_profile}`);
+        return;
+      }
       G.__partner_cards = data.cards;
       console.log(`[AutoTool V3] 👥 Nhận bài đồng đội (${data.cards.length} lá):`, data.cards);
       window.postMessage({
@@ -2294,6 +2434,13 @@
         cards: data.cards,
       }, "*");
     } else if (action === "JOIN_ROOM" && data && data.rid) {
+      const ticket = G.__AUTOTOOL_SUB_JOIN_TICKET;
+      const hasValidTicket = ticket && !ticket.used && Number(ticket.rid) === Number(data.rid) &&
+        Number(ticket.expires_at || 0) > Date.now();
+      if (isSubMatchProfile() && !hasValidTicket) {
+        console.warn(`[AutoTool V3] Bỏ JOIN_ROOM rid=${data.rid}: Account phụ chỉ nhận lệnh có vé controller.`);
+        return;
+      }
       // KIỂM TRA ĐIỀU KIỆN CHẶN: Chỉ bỏ qua nếu THỰC SỰ đang ngồi trong ván (>= 2 người và đang chơi)
       const currentPlayersCount = (G.__room_players || []).length;
       if (currentPlayersCount < 2) {

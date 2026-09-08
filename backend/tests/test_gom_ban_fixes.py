@@ -158,13 +158,14 @@ async def test_hub_room_share_disabled_blocks_zombie_join_after_stop():
     b_actions = [c.get("action") for c in ws_b.sent]
     assert "JOIN_ROOM" not in b_actions
 
-    # 2. Bắt đầu gom bàn lại -> B nhận JOIN_ROOM bình thường
+    # 2. Bật lại room_share không khôi phục auto-forward; controller phải cấp
+    # vé join sau khi xác minh Anchor để tránh B vào trước A.
     hub.set_room_share(True)
     ws_b.sent.clear()
     hub.handle_message("ProfileA", anchor_msg)
     await asyncio.sleep(0.01)
     b_actions = [c.get("action") for c in ws_b.sent]
-    assert "JOIN_ROOM" in b_actions
+    assert "JOIN_ROOM" not in b_actions
 
 
 @pytest.mark.anyio
@@ -368,6 +369,7 @@ def test_sub_has_explicit_dump_role_and_auto_discard():
     source = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
     assert "window.__AUTOTOOL_ROLE = 'dump';" in source
     assert "window.__AUTOTOOL_AUTO_DISCARD" in source
+    assert "window.__AUTOTOOL_PARTNER_PROFILES" in source
 
 
 def test_fixed_table_join_frame_preserves_small_rid():
@@ -379,6 +381,10 @@ def test_fixed_table_join_frame_preserves_small_rid():
     assert 'const isChongVay = !rid || Number(rid) === -1 || String(rid) === "100";' in source
     assert '"500_2": 4, "500_4": 3' in source
     assert "Number(rid) > 0" in source
+    assert 'JSON.stringify([3, "Simms", specificRid, ""])' in source
+    assert "RID 1..28 cũng là RID bàn cố định hợp lệ" in source
+    assert "Sai mức cược: bàn" in source
+    assert "expectedBet !== actualBet" in source
 
 
 def test_dump_policy_avoids_blank_loss_and_sub_leaves_after_verified_round():
@@ -388,12 +394,41 @@ def test_dump_policy_avoids_blank_loss_and_sub_leaves_after_verified_round():
     assert "Giảm thua trắng" in ext_source
     assert "__autotool_round_play_count" in ext_source
     assert "Không dùng tứ quý" in ext_source
+    assert "function chooseDumpOpening" in ext_source
+    assert "đôi 10 phải đánh thành đôi 10" in ext_source
+    assert 'humanDelay(1150, 1900)' in ext_source
+    assert "function chooseVerifiedSingleRelay" in ext_source
+    assert "Anchor thấp < Phụ < Anchor cao hơn" in ext_source
+    assert "getLooseSingles(myCards, combs)" in ext_source
 
     controller = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
     assert "game_completed = False" in controller
     assert "if game_completed:" in controller
     assert "Account phụ đã rời bàn về sảnh chọn bàn" in controller
     assert "không tự out Account phụ" in controller
+    assert "Account phụ đã xả xong -> tự rời bàn về sảnh chọn bàn" in ext_source
+    assert "kill engine/timer, giữ Account chính trong phòng" in controller
+    assert "window.__AUTOTOOL_AUTO_DISCARD = false;" in controller
+    assert "auto_start_guest_ss and not game_completed" in controller
+
+
+def test_hub_never_auto_forwards_unverified_bet_room():
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "services" / "extension_hub.py").read_text(encoding="utf-8")
+    assert "self._room_share_enabled = False" in source
+    assert "Hub không được tự quyết định RID/mức cược" in source
+    assert "chỉ controller được phép mời Account phụ" in source
+
+
+def test_sub_join_requires_controller_ticket_after_anchor_verification():
+    from pathlib import Path
+
+    ext = (Path(__file__).parents[1] / "extension" / "content_main.js").read_text(encoding="utf-8")
+    controller = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    assert "__AUTOTOOL_SUB_JOIN_TICKET" in ext
+    assert "không có vé xác nhận từ Account chính" in ext
+    assert "expires_at: Date.now() + 8000" in controller
 
 
 def test_multiple_pairs_are_isolated_and_stop_cancels_every_pair_task():
@@ -429,6 +464,16 @@ def test_ready_start_and_quick_join_never_use_cross_role_or_blind_clicks():
     assert "if (isAnchorMatchProfile())" in ext_source
     assert "const matchingPair = G.__AUTOTOOL_MATCH_ROLE === \"anchor\"" in ext_source
     assert "từ chối Ready/Start và rời bàn" in ext_source
+
+
+def test_match_preflight_always_leaves_stale_table_before_lobby_check():
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller.py").read_text(encoding="utf-8")
+    assert "PRE-FLIGHT BẮT BUỘC" in source
+    assert "window.__AUTOTOOL_AUTO_HUNT = false;" in source
+    assert "Gửi leave một lần ngay cả khi extension không nhìn ra table" in source
+    assert "const ws = window.__ws_instances.find" in source
 
 
 def test_extension_toasts_are_replaced_and_rendered_on_one_line():

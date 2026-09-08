@@ -560,10 +560,18 @@ async def _do_leave_room(p, name="Profile", target_mu=2):
     try:
         await p.evaluate("""(() => {
             try {
+                let sent = false;
                 if (typeof window.__autotool_exec_leave === 'function') {
-                    window.__autotool_exec_leave();
-                } else if (typeof window.__ws_send === 'function') {
+                    sent = window.__autotool_exec_leave() !== false;
+                }
+                if (!sent && typeof window.__ws_send === 'function') {
                     window.__ws_send('[4,"Simms",-1]');
+                    sent = true;
+                }
+                // Fallback cuối cho extension/script cũ chưa export helper.
+                if (!sent && Array.isArray(window.__ws_instances)) {
+                    const ws = window.__ws_instances.find((item) => item && item.readyState === 1);
+                    if (ws) ws.send('[4,"Simms",-1]');
                 }
             } catch(e) {}
         })()""")
@@ -1734,6 +1742,25 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     request.app.state.active_match_task = current_match_task
 
     try:
+        # PRE-FLIGHT BẮT BUỘC: phiên trước có thể còn ngồi trong một bàn sai
+        # cược (ví dụ $500). Tắt engine cũ trước khi kiểm tra sảnh để nó không
+        # tự join lại, sau đó _prepare_lobby luôn gửi lệnh rời bàn — không dựa
+        # vào nhận diện ảnh/scene vốn có thể trượt khi đang ở gameplay.
+        preflight_code = f"""() => {{
+            window.__AUTOTOOL_AUTO_HUNT = false;
+            window.__AUTOTOOL_ARMED = false;
+            window.__target_hunt_bet = {bet_val};
+            window.__target_hunt_mu = {target_mu};
+            if (window.__hunt_retry_timer) {{ clearTimeout(window.__hunt_retry_timer); window.__hunt_retry_timer = null; }}
+            if (window.__hunt_wait_timer) {{ clearTimeout(window.__hunt_wait_timer); window.__hunt_wait_timer = null; }}
+            if (window.__start_retry_timer) {{ clearInterval(window.__start_retry_timer); window.__start_retry_timer = null; }}
+        }}"""
+        for p_name, p in pages.items():
+            try:
+                await p.evaluate(preflight_code)
+            except Exception:
+                pass
+
         # Đảm bảo TẤT CẢ tài khoản tham gia (Account chính + nick phụ) đều vào đúng
         # sảnh Tiến Lên Đếm Lá TRƯỚC khi bắt đầu tìm bàn. Điều hướng OpenCV có thể
         # flaky (popup chặn, template match rớt) -> retry nhiều lần trước khi abort,
@@ -1741,6 +1768,10 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         async def _prepare_lobby(p_name, p):
             """Đưa một profile vào sảnh chọn bàn và chỉ xác nhận khi đã vào thật."""
             entered = False
+            # Gửi leave một lần ngay cả khi extension không nhìn ra table. Đây
+            # là điều kiện cần để thoát bàn $500 còn sót trước khi chọn bàn $100.
+            await _do_leave_room(p, name=p_name, target_mu=target_mu)
+            await asyncio.sleep(0.7)
             deadline = time.time() + 45.0
             while time.time() < deadline:
                 if _should_stop():
@@ -1832,6 +1863,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             await first_page.evaluate(f"""() => {{
                 window.__AUTOTOOL_MATCH_ROLE = 'anchor';
                 window.__AUTOTOOL_ROLE = 'winner';
+                window.__AUTOTOOL_PARTNER_PROFILES = {_json.dumps(other_profiles)};
                 window.__AUTOTOOL_AUTO_DISCARD = {_json.dumps(auto_xa)};
                 window.__AUTOTOOL_AUTO_HUNT = false;
             }}""")
@@ -1840,6 +1872,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 await sub_page.evaluate(f"""() => {{
                     window.__AUTOTOOL_MATCH_ROLE = 'sub';
                     window.__AUTOTOOL_ROLE = 'dump';
+                    window.__AUTOTOOL_PARTNER_PROFILES = {_json.dumps([first_name])};
                     window.__AUTOTOOL_AUTO_DISCARD = {_json.dumps(auto_xa)};
                     window.__AUTOTOOL_AUTO_HUNT = false;
                     window.__AUTOTOOL_ARMED = false;
@@ -2272,6 +2305,44 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 except Exception as e:
                     log.warning("find-and-match: Lỗi đồng bộ định danh 2 chiều: %s", e)
 
+                # Chốt lần cuối ngay trước khi cấp vé: Account 1 phải vẫn là
+                # người duy nhất ở đúng RID đã chọn. Nếu khách lạ chen vào,
+                # tuyệt đối không cho Account 2 join vào bàn đó.
+                try:
+                    anchor_gate = await anchor_page.evaluate("""() => ({
+                        rid: Number((window.__last_room_info && window.__last_room_info.rid) || window.__ws_last_room_id || 0),
+                        bet: Number((window.__last_room_info && window.__last_room_info.b) || 0),
+                        players: (window.__room_players || []).length,
+                        in_game: !!window.__game_in_progress,
+                        stranger: !!(window.__last_room_info && window.__last_room_info.has_stranger)
+                    })""")
+                    gate_rid = int(anchor_gate.get("rid") or 0)
+                    gate_bet = int(anchor_gate.get("bet") or 0)
+                    gate_players = int(anchor_gate.get("players") or 0)
+                    if gate_rid != int(selected_rid) or gate_bet != int(bet_val) or gate_players != 1 or anchor_gate.get("in_game") or anchor_gate.get("stranger"):
+                        log.warning("find-and-match: HỦY vé join %s — Anchor không còn một mình đúng bàn (rid=%s/$%s, players=%s).",
+                                    sub_name, gate_rid, gate_bet, gate_players)
+                        if ext_hub and ext_hub.is_connected(sub_name):
+                            await ext_hub.send_command(sub_name, "LEAVE_ROOM", {"reason": "Anchor không còn một mình ở bàn trống"})
+                        continue
+                except Exception as e:
+                    log.warning("find-and-match: Không xác minh được Anchor ngay trước khi cấp vé: %s", e)
+                    continue
+
+                # Cấp vé trước mọi command tới Sub. JOIN_ROOM của Hub chỉ là
+                # thông báo; lệnh WS thật bên dưới chỉ chạy khi vé hợp lệ.
+                try:
+                    await sub_p.evaluate(f"""() => {{
+                        window.__AUTOTOOL_SUB_JOIN_TICKET = {{
+                            rid: {int(selected_rid)}, bet: {bet_val}, mu: {target_mu},
+                            anchor: {_json.dumps(anchor_name)}, used: false,
+                            expires_at: Date.now() + 8000
+                        }};
+                    }}""")
+                except Exception:
+                    log.warning("find-and-match: Không cấp được vé join cho %s", sub_name)
+                    continue
+
                 # V3: Bắn lệnh tức thời qua Extension Hub (<2ms) — DÙNG GÓI CHUẨN DUY NHẤT (không send_raw gói rác)
                 ext_hub = getattr(request.app.state, "ext_hub", None)
                 if ext_hub and ext_hub.is_connected(sub_name):
@@ -2288,7 +2359,8 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 try:
                     # Đặt cờ "đang theo lời mời của chủ bàn" NGAY TRƯỚC khi join để nick phụ
                     # không tự out khi bàn trống chưa thấy chủ (fix: gặp nhau nhưng out nhầm,
-                    # không kịp ready/start/xả). Đồng thời seed expected anchor cho isPartner.
+                    # không kịp ready/start/xả). Đồng thời seed expected anchor cho isPartner
+                    # và cấp VÉ JOIN dùng một lần: phụ không có quyền tự vào bàn.
                     await sub_p.evaluate(f"""() => {{
                         try {{
                             const _inv = {_json.dumps({"rid": int(selected_rid), "ts": "PLACEHOLDER"})};
@@ -2691,7 +2763,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             start_y = int(start_sh * 0.525)
         except Exception:
             pass
-        if auto_start_guest_ss:
+        if auto_start_guest_ss and not game_completed:
             log.info("find-and-match: Chế độ 'Bắt đầu nếu khách SS' đang bật, chủ bàn canh 5 giây xem có khách...")
             for _ in range(10):
                 if _should_stop():
@@ -2714,6 +2786,26 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         # chỉ out khi người dùng bật auto_leave_after; như vậy UI/log thể hiện
         # chính xác nick nào đã rời bàn và không tự rời khi ván bị timeout.
         if game_completed:
+            # KILL quy trình xả/gom sau khi ván kết thúc nhưng giữ Anchor trong
+            # phòng: tắt toàn bộ timer săn bàn, timer bắt đầu lại và auto-xả;
+            # tuyệt đối không dùng STOP_HUNT cho Anchor vì lệnh đó có LEAVE.
+            log.info("find-and-match: Ván đã xong -> kill engine/timer, giữ Account chính trong phòng cho khách ngoài.")
+            if ext_hub:
+                ext_hub.set_room_share(False)
+            try:
+                await anchor_page.evaluate("""() => {
+                    window.__AUTOTOOL_AUTO_HUNT = false;
+                    window.__AUTOTOOL_ARMED = false;
+                    window.__AUTOTOOL_AUTO_DISCARD = false;
+                    window.__is_hunt_initiator = false;
+                    if (window.__hunt_retry_timer) { clearTimeout(window.__hunt_retry_timer); window.__hunt_retry_timer = null; }
+                    if (window.__hunt_wait_timer) { clearTimeout(window.__hunt_wait_timer); window.__hunt_wait_timer = null; }
+                    if (window.__start_retry_timer) { clearInterval(window.__start_retry_timer); window.__start_retry_timer = null; }
+                    if (window.__auto_turn_timer) { clearTimeout(window.__auto_turn_timer); window.__auto_turn_timer = null; }
+                    window.__autotool_hud_status = 'Đã xả bài xong — Account chính giữ phòng, chờ khách ngoài.';
+                }""")
+            except Exception as e:
+                log.warning("find-and-match: không kill được timer Anchor sau khi xả: %s", e)
             log.info("find-and-match: Ván xả bài hoàn tất -> đưa các nick phụ về sảnh bàn Đếm Lá...")
             await asyncio.sleep(0.5)
             for p_name in other_profiles:
@@ -2730,7 +2822,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         s.room_id = -1
                         s.log = "Đã xả bài xong — Account phụ đã rời bàn về sảnh chọn bàn"
             await _notify_all(ext_hub,
-                              f"✅ Xả bài hoàn tất: {', '.join(other_profiles) or 'Account phụ'} đã rời bàn và về sảnh chọn bàn.",
+                              f"✅ Xả bài hoàn tất: {', '.join(other_profiles) or 'Account phụ'} đã out; Account chính giữ phòng chờ khách ngoài.",
                               "success", "✅ Account phụ đã out")
 
             if auto_leave_after:
@@ -2744,7 +2836,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                             s.room_id = -1
                             s.log = "Đã hoàn tất xả bài, đang ở sảnh chọn bàn"
             else:
-                await _set_hud_status(first_page, "Đã xả bài xong — Account phụ đã rời bàn.")
+                await _set_hud_status(first_page, "Đã xả bài xong — Account phụ đã out, Account chính giữ phòng chờ khách ngoài.")
         elif not _should_stop():
             log.warning("find-and-match: Hết thời gian theo dõi ván; không tự out Account phụ để tránh mất trạng thái chưa xác minh.")
             await _notify_all(ext_hub,
