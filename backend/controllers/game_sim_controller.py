@@ -1,6 +1,5 @@
 """Controller: GameSim (mô phỏng vòng đời phòng game)."""
 import asyncio
-import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -12,25 +11,9 @@ log = logging.getLogger("game_sim_controller")
 router = APIRouter()
 
 
-def _gs_config_file():
-    return config_model.DATA_DIR / "game_sim_config.json"
-
-
-def _load_saved() -> dict:
-    try:
-        return json.loads(_gs_config_file().read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _save_saved(cfg: dict):
-    _gs_config_file().write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 def _default_config() -> dict:
     accounts = load_accounts()
     names = [a["name"] for a in accounts if a.get("name")]
-    saved = _load_saved()
     group = {}
     if names:
         group = {"main": names[0], "supports": names[1:10] or [names[0]]}
@@ -54,13 +37,6 @@ def _default_config() -> dict:
             "reset_timeout": 10, "cooldown": 5, "retry_max": 3,
         },
     }
-    # Ghi đè bằng cấu hình nhóm đã lưu (nếu có)
-    if saved.get("groups"):
-        base["groups"] = saved["groups"]
-    if saved.get("scenario"):
-        base["scenario"] = saved["scenario"]
-    if saved.get("rounds"):
-        base["rounds"] = saved["rounds"]
     return base
 
 
@@ -72,33 +48,6 @@ async def gamesim_default_config():
 @router.get("/api/gamesim/config")
 async def gamesim_get_config():
     return _default_config()
-
-
-@router.post("/api/gamesim/config")
-async def gamesim_save_config(body: dict):
-    """Lưu cấu hình nhóm (main + supports) cho Game Test."""
-    groups = body.get("groups")
-    if groups is None:
-        raise HTTPException(status_code=400, detail="Thiếu 'groups'")
-    # Chuẩn hóa: chỉ giữ group có main hợp lệ
-    cleaned = {}
-    for name, g in groups.items():
-        if not name or not name.strip():
-            continue
-        main = (g or {}).get("main") or ""
-        supports = [s for s in (g or {}).get("supports") or [] if s]
-        cleaned[name.strip()] = {"main": main, "supports": supports}
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="Ít nhất 1 nhóm hợp lệ")
-    saved = _load_saved()
-    saved["groups"] = cleaned
-    if body.get("scenario"):
-        saved["scenario"] = body["scenario"]
-    if body.get("rounds"):
-        saved["rounds"] = int(body["rounds"])
-    _save_saved(saved)
-    log.info("saved game_sim groups: %s", list(cleaned))
-    return {"ok": True, "groups": cleaned}
 
 
 @router.post("/api/gamesim/start")

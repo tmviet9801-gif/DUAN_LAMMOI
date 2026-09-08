@@ -1,5 +1,5 @@
 (function () {
-  // Menu bar kiểu VS Code: Game | Trang chủ | Cấu hình | Nhóm | Hệ thống
+  // Menu bar kiểu VS Code: Game | Trang chủ | Cấu hình | Hệ thống
   const App = (window.App = window.App || {});
   const $ = App.$;
   const state = App.state;
@@ -16,7 +16,6 @@
     document.querySelectorAll(".menu-item[data-view]").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === view)
     );
-    if (view === "groups" && window.App.groupsLoad) window.App.groupsLoad();
     if (view === "proxy" && window.App.proxyLoad) window.App.proxyLoad();
     if (view === "config" && window.App.licenseRefresh) window.App.licenseRefresh();
     closeAllMenus();

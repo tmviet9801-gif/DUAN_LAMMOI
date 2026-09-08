@@ -727,66 +727,6 @@ button.danger:hover { background: var(--danger); color: var(--btn-text); }
   white-space: nowrap;
 }
 
-/* ---- Cấu hình nhóm ---- */
-.group-row {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px;
-  margin-bottom: 12px;
-}
-
-.group-row-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.group-row-head .gname {
-  font-weight: 600;
-  max-width: 220px;
-}
-
-.group-row-body {
-  display: grid;
-  grid-template-columns: 1fr 1.6fr;
-  gap: 16px;
-}
-
-.group-row-body .field label {
-  margin-bottom: 6px;
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.chip {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.chip:hover {
-  border-color: var(--accent);
-  color: var(--text);
-}
-
-.chip.on {
-  background: rgba(56, 189, 248, 0.16);
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 600;
-}
-
 /* ---- Pagination ---- */
 .pagination {
   display: flex;

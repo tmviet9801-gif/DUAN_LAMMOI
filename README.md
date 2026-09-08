@@ -118,7 +118,7 @@ tìm RID/bàn riêng, chỉ nhận diện partner trong chính cặp đó và t�
 (6 profile). Số profile phải là số chẵn; nút **Dừng** hủy toàn bộ các cặp.
 
 ### 2.7. UI
-- **Menubar kiểu VS Code**: `Game | Trang chủ | Proxy | Cấu hình | Nhóm | Hệ thống`
+- **Menubar kiểu VS Code**: `Trang chủ | Proxy | Cấu hình | Hệ thống`
 - **Game là màn hình chính** (mặc định mở Game)
 - **Light/Dark theme** (lưu localStorage), font hiện đại, màu tươi
 - **Đồng hồ thời gian thực** góc dưới, giao diện tối giản (ít padding, ít ghi chú)

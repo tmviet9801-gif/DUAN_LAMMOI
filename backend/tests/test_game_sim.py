@@ -79,35 +79,3 @@ class TestGameSimRun:
         r = client.post("/api/gamesim/stop")
         assert r.status_code == 200
         assert client.get("/api/gamesim/status").json()["running"] is False
-
-
-class TestGameSimGroups:
-    def test_save_config(self, client, tmp_config):
-        r = client.post("/api/gamesim/config", json={
-            "groups": {"A": {"main": "MainA", "supports": ["S1"]}},
-        })
-        assert r.status_code == 200
-        assert r.json()["ok"] is True
-
-    def test_get_config_returns_saved_groups(self, client, tmp_config):
-        client.post("/api/gamesim/config", json={
-            "groups": {"X": {"main": "M1", "supports": ["S1", "S2"]}},
-        })
-        r = client.get("/api/gamesim/config")
-        assert r.status_code == 200
-        groups = r.json()["groups"]
-        assert "X" in groups
-        assert groups["X"]["main"] == "M1"
-        assert "S1" in groups["X"]["supports"]
-
-    def test_start_uses_saved_groups(self, client, tmp_config):
-        client.post("/api/gamesim/config", json={
-            "groups": {"A": {"main": "MainA", "supports": ["S1", "S2"]}},
-        })
-        default = client.get("/api/gamesim/default-config").json()
-        assert "A" in default["groups"]
-        assert default["groups"]["A"]["main"] == "MainA"
-
-    def test_empty_groups_rejected(self, client):
-        r = client.post("/api/gamesim/config", json={"groups": {}})
-        assert r.status_code == 400
