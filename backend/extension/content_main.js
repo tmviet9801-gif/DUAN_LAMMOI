@@ -628,6 +628,22 @@
   }
 
   // ===== CÁC HÀM TIỆN ÍCH ĐIỀU HƯỚNG SẢNH COCOS NATIVE (0MS, TRỰC TIẾP ENGINE) =====
+  /** Node có THỰC SỰ hiển thị không.
+
+   * Cocos ẩn UI bằng cách tắt node CHA (vd TLMNScene.active=false), còn node
+   * con vẫn giữ active=true/opacity=255. Chỉ xét `node.active` sẽ nhận nhầm:
+   * khi đứng ở SẢNH chọn bàn, cây scene đã dựng sẵn HUD bàn chơi nên các label
+   * "BẮT ĐẦU"/"SẴN SÀNG" vẫn "active" -> isInsideGameTable() báo đang trong
+   * bàn -> isAlreadyInTLDLLobby() luôn False -> "Không đưa được profile vào
+   * sảnh" và vòng gom bàn không bao giờ gửi được lệnh join.
+   * `activeInHierarchy` của Cocos đã tính sẵn cả chuỗi cha. */
+  function isNodeVisible(node) {
+    if (!node) return false;
+    const alive = (node.activeInHierarchy !== undefined) ? node.activeInHierarchy : node.active;
+    if (!alive) return false;
+    return node.opacity === undefined || node.opacity > 0;
+  }
+
   function getCocosNodeText(node) {
     if (!node) return "";
     try {
@@ -978,7 +994,7 @@
                 name === "btn_begin" || name === "btnbegin" ||
                 name === "btn_ready" || name === "btnready" ||
                 name === "table" || name === "table_view" || name === "gameplay") {
-              if (node.active && (node.opacity === undefined || node.opacity > 0)) {
+              if (isNodeVisible(node)) {
                 foundTable = true;
                 return;
               }
@@ -1016,14 +1032,18 @@
             const name = (node.name || "").toLowerCase();
             const text = getCocosNodeText(node).toUpperCase();
 
-            if (text === "GAME BÀI" || text === "SLOTS" || text === "MINI GAME" || text === "QUAY SỐ") {
-              hasMainLobbyButtons = true;
-            }
+            // Chỉ tính node ĐANG HIỂN THỊ THẬT: scene giữ sẵn cả UI sảnh chính
+            // lẫn UI bàn chơi ở trạng thái tắt, nếu không lọc sẽ nhận nhầm màn.
+            if (isNodeVisible(node)) {
+              if (text === "GAME BÀI" || text === "SLOTS" || text === "MINI GAME" || text === "QUAY SỐ") {
+                hasMainLobbyButtons = true;
+              }
 
-            if (name.includes("roomselect") || name.includes("room_select") ||
-                text === "SOLO" || text === "4 NGƯỜI" || text.includes("ĐẾM LÁ BÀN") ||
-                name === "btn_solo" || name === "btn_4nguoi") {
-              hasTLDLScene = true;
+              if (name.includes("roomselect") || name.includes("room_select") ||
+                  text === "SOLO" || text === "4 NGƯỜI" || text.includes("ĐẾM LÁ BÀN") ||
+                  name === "btn_solo" || name === "btn_4nguoi") {
+                hasTLDLScene = true;
+              }
             }
 
             const children = node.children || [];
