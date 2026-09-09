@@ -350,7 +350,9 @@ def test_leave_command_never_rejoins_default_bet_table():
     from pathlib import Path
 
     source = (Path(__file__).parents[1] / "extension" / "content_main.js").read_text(encoding="utf-8")
-    leave_fn = source.split("G.__autotool_exec_leave = function () {", 1)[1].split("G.__autotool_exec_ready = function () {", 1)[0]
+    # Cắt theo TÊN hàm, không theo chữ ký: hàm đã nhận thêm tham số
+    # `buocNgay` (rời ngay, bỏ qua chốt "đang giữa ván").
+    leave_fn = source.split("G.__autotool_exec_leave = function", 1)[1]                      .split("G.__autotool_exec_ready = function", 1)[0]
     assert '"cmd":203' in leave_fn
     assert '"cmd":308' not in leave_fn
 

@@ -1621,9 +1621,14 @@
                       profile_name: getProfileName(),
                       reason: `Thấy khách lạ: ${strangerName}`,
                     }, "*");
-                    // Out an toàn (350 - 550ms) để server xử lý xong trạng thái
+                    // Out an toàn (350 - 550ms) để server xử lý xong trạng thái.
+                    // Giữ handle: nếu ván kịp chia bài, hoặc khách lạ tự rời
+                    // đi trong khoảng đó, thì phải HUỶ — nếu không sẽ rời bàn
+                    // giữa ván (mất cược) hoặc rời khỏi một bàn đã sạch.
                     const leaveDelay = 350 + Math.floor(Math.random() * 200);
-                    setTimeout(() => {
+                    if (G.__stranger_leave_timer) clearTimeout(G.__stranger_leave_timer);
+                    G.__stranger_leave_timer = setTimeout(() => {
+                      G.__stranger_leave_timer = null;
                       G.__autotool_exec_leave();
                     }, leaveDelay);
                   }
@@ -1632,6 +1637,13 @@
                 // Người rời bàn
                 if (G.__room_players) {
                   G.__room_players = G.__room_players.filter((x) => String(x.uid || x.dn) !== String(player.uid || player.dn));
+                }
+                // Khách lạ tự rời đi -> bàn lại sạch, huỷ lệnh rời đang hẹn.
+                if (!isPartner(player) && !isMe(player) && G.__stranger_leave_timer
+                    && !(G.__room_players || []).some((x) => !isMe(x) && !isPartner(x))) {
+                  clearTimeout(G.__stranger_leave_timer);
+                  G.__stranger_leave_timer = null;
+                  console.log("[AutoTool V3] Khách lạ đã rời -> huỷ lệnh out, giữ bàn.");
                 }
                 if (isPartner(player) && !G.__game_in_progress) {
                   console.log(`[AutoTool V3] [cmd 200] Đồng đội ${player.dn || player.u} đã rời bàn.`);
@@ -2030,6 +2042,15 @@
                 G.__game_in_progress = true;
                 G.__last_table_cards = null;
                 G.__last_table_player = null;
+                // Ván đã chia bài -> tiền đã đặt. Huỷ lệnh rời bàn đang hẹn:
+                // rời giữa ván là mất cược, đắt hơn nhiều so với đánh hết ván
+                // rồi mới ra.
+                if (G.__stranger_leave_timer) {
+                  clearTimeout(G.__stranger_leave_timer);
+                  G.__stranger_leave_timer = null;
+                  G.__leave_after_round = true;
+                  console.warn("[AutoTool V3] Đã chia bài -> hoãn rời bàn tới cuối ván.");
+                }
                 console.log(`[AutoTool V3] 🃏 ĐÃ NHẬN BÀI CHIA (${cards.length} lá): [${cards.join(", ")}]`);
                 window.postMessage({
                   type: "AUTOTOOL_CARDS_DEALT",
@@ -2124,6 +2145,13 @@
                 winner: winner,
                 result: p,
               }, "*");
+
+              // Lệnh rời bàn bị hoãn vì đang giữa ván -> giờ mới thực hiện.
+              if (G.__leave_after_round) {
+                G.__leave_after_round = false;
+                console.log("[AutoTool V3] Ván đã kết thúc -> thực hiện lệnh rời bàn đã hoãn.");
+                setTimeout(() => { G.__autotool_exec_leave(true); }, 400);
+              }
 
               // Account phụ xả xong PHẢI rời bàn để nhường chỗ cho khách ngoài.
               // Trước đây canh `__AUTOTOOL_AUTO_HUNT`, nhưng controller ở chế độ
@@ -2439,7 +2467,16 @@
     return clicked;
   }
 
-  G.__autotool_exec_leave = function () {
+  G.__autotool_exec_leave = function (buocNgay) {
+    // Ván đã đặt cược rồi thì ĐÁNH HẾT VÁN rẻ hơn bỏ giữa chừng nhiều: bỏ
+    // giữa ván là mất cược và bị phạt bài. Hoãn tới khi kết ván (cmd 252).
+    if (!buocNgay && (G.__game_in_progress
+        || (G.__my_cards && G.__my_cards.length > 0))) {
+      G.__leave_after_round = true;
+      console.warn("[AutoTool V3] Đang trong ván -> HOÃN rời bàn tới cuối ván (bỏ giữa chừng là mất cược).");
+      return false;
+    }
+    G.__leave_after_round = false;
     console.log("[AutoTool V3] Thực thi lệnh RỜI BÀN về sảnh...");
 
     // 1. Quét Cocos tìm nút Rời Bàn / Menu
@@ -2476,17 +2513,32 @@
     return true;
   };
 
+  /** Có được phép Sẵn Sàng / Bắt đầu lúc này không.
+   *
+   * Cùng một lớp gác cho CẢ HAI hàm. Trước đây chỉ `exec_ready` có nó, còn
+   * `exec_start` thì trống — mà `exec_start` có tới bốn đường gọi, trong đó
+   * đường từ khung `cmd 363` (khách lạ bấm Sẵn Sàng) đi thẳng vào, không qua
+   * `exec_ready`. Đặt gác ở nút thắt thay vì rải ở từng chỗ gọi.
+   *
+   * Điều kiện: đang trong lượt ghép cặp VÀ trong bàn có người không phải đồng
+   * đội. KHÔNG được chặn cứng theo "MATCH_ROLE khác null" —
+   * `triggerVerifiedMatchReadyAndStart` cũng gọi `exec_start` và luôn chạy với
+   * MATCH_ROLE khác null; chặn cứng là nick chính không bao giờ bắt đầu được
+   * ván hợp lệ.
+   */
+  function khongDuocBatDauVoiNguoiLa() {
+    const partner = (G.__room_players || []).find(isPartner);
+    const matchingPair = G.__AUTOTOOL_MATCH_ROLE === "anchor" || G.__AUTOTOOL_MATCH_ROLE === "sub";
+    return !partner && G.__room_players && G.__room_players.length > 1
+      && (matchingPair || !G.__auto_start_guest_ss);
+  }
+
   G.__autotool_exec_ready = function () {
     // KHÔNG gửi lệnh khi tài khoản đã bị đăng xuất (giữ phiên đăng nhập)
     if (typeof checkAndHandleLoggedOut === "function" && checkAndHandleLoggedOut()) {
       return false;
     }
-    // BẢO VỆ CHẶN: Trong một lượt ghép cặp, tuyệt đối không Ready với khách
-    // lạ. `auto_start_guest_ss` chỉ dành cho luồng chơi khách độc lập, không
-    // được cho phép Account chính/phụ Start trước khi xác minh đồng đội.
-    const partner = (G.__room_players || []).find(isPartner);
-    const matchingPair = G.__AUTOTOOL_MATCH_ROLE === "anchor" || G.__AUTOTOOL_MATCH_ROLE === "sub";
-    if (!partner && G.__room_players && G.__room_players.length > 1 && (matchingPair || !G.__auto_start_guest_ss)) {
+    if (khongDuocBatDauVoiNguoiLa()) {
       console.warn("[AutoTool V3] BẢO VỆ CHẶN: Trong lượt ghép cặp bàn có khách lạ, không có đồng đội -> từ chối Ready/Start và rời bàn.");
       G.__autotool_exec_leave();
       return false;
@@ -2522,6 +2574,14 @@
   };
 
   G.__autotool_exec_start = function () {
+    // NÚT THẮT: mọi đường gọi Bắt đầu đều đi qua đây. Cửa sổ đua ~1 giây giữa
+    // lúc xác minh "anchor còn một mình" và lúc nick phụ ngồi xuống đủ để một
+    // người chơi thật chiếm ghế còn lại rồi bấm Sẵn Sàng; khung cmd 363 tới
+    // trong ~200ms, TRƯỚC khi hẹn giờ rời bàn kịp chạy.
+    if (khongDuocBatDauVoiNguoiLa()) {
+      console.warn("[AutoTool V3] BẢO VỆ CHẶN: từ chối BẮT ĐẦU — trong bàn có người không phải đồng đội.");
+      return false;
+    }
     console.log("[AutoTool V3] Thực thi lệnh BẮT ĐẦU VÁN (Cocos + cmd 5)...");
     execCocosReadyOrStart();
     const p = '[5,"Simms",-1,{"cmd":5}]';
