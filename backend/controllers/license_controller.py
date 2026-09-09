@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 import license as lic
-from platform_config import OWNER_TOKEN
+from platform_config import ALLOW_LEGACY_HMAC, OWNER_TOKEN
 
 log = logging.getLogger("license_controller")
 router = APIRouter()
@@ -65,7 +65,17 @@ async def license_deactivate():
 
 @router.post("/api/license/make")
 async def license_make(body: dict):
-    """Sinh license key cho khách (cần owner_token)."""
+    """Sinh license key HMAC đời cũ ngay trong app (cần owner_token).
+
+    Chỉ còn dùng được khi ALLOW_LEGACY_HMAC=True. Bản thương mại phải cấp key
+    từ portal: app không giữ khoá ký Ed25519, nên tự nó không sinh nổi key —
+    đó chính là điều làm cho việc unpack exe trở nên vô dụng.
+    """
+    if not ALLOW_LEGACY_HMAC:
+        raise HTTPException(
+            status_code=410,
+            detail="Bản này không tự sinh key được nữa. Hãy cấp license từ trang quản trị.",
+        )
     token = (body.get("owner_token") or "").strip()
     if not token or token != OWNER_TOKEN:
         raise HTTPException(status_code=403, detail="Sai token — chỉ owner mới sinh được key")

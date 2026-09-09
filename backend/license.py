@@ -25,15 +25,19 @@ import time
 from pathlib import Path
 
 from platform_config import (
+    ALLOW_LEGACY_HMAC,
     LICENSE_CHECK_INTERVAL,
     LICENSE_OFFLINE_GRACE_DAYS,
+    LICENSE_PUBLIC_KEY,
     LICENSE_SERVER_URL,
     data_dir,
 )
 
 log = logging.getLogger("license")
 
-# SECRET đổi khi phát hành riêng (owner giữ). Đừng commit secret thật.
+# SECRET của scheme HMAC đời cũ (v1). Đối xứng: khoá này vừa ký vừa kiểm tra,
+# mà nó nằm ngay trong file exe gửi khách — ai unpack được exe là tự sinh key
+# vô hạn. Đó là lý do có v2 (Ed25519). Chỉ còn dùng khi ALLOW_LEGACY_HMAC=True.
 SECRET = b"AutoToolLicenseSecret_ChangeMe_2026"
 
 LICENSE_FILE = data_dir() / "license.json"
@@ -56,7 +60,11 @@ def _sign(payload: str) -> str:
 
 
 def make_key(machine_id: str, days: int, max_tabs: int, features: str = "game") -> str:
-    """Sinh license key cho 1 máy (dùng bởi owner)."""
+    """Sinh license key HMAC đời cũ.
+
+    CHỈ còn dùng cho test và cho panel owner khi ALLOW_LEGACY_HMAC=True.
+    Bản thương mại phải cấp key từ portal (Ed25519) — app không giữ khoá ký.
+    """
     expiry = int(time.time()) + days * 86400
     payload = f"{machine_id}|{expiry}|{max_tabs}|{features}"
     sig = _sign(payload)
@@ -64,23 +72,86 @@ def make_key(machine_id: str, days: int, max_tabs: int, features: str = "game") 
     return f"AUTO-{sig}-{b64}"
 
 
-def parse_key(key: str) -> dict | None:
+def _b64url_decode(text: str) -> bytes:
+    """base64url không padding -> bytes (tự bù dấu '=')."""
+    pad = "=" * (-len(text) % 4)
+    return base64.urlsafe_b64decode(text + pad)
+
+
+def _split_payload(payload: str) -> dict | None:
+    parts = payload.split("|")
+    if len(parts) != 4:
+        return None
+    machine_id, expiry, max_tabs, features = parts
     try:
-        rest = key.strip().split("-", 1)[1]  # bỏ "AUTO-"
-        sig = rest[:16]                       # sig luôn 16 ký tự hex
-        b64 = rest[17:]                       # bỏ dấu "-" ngăn cách
-        payload = base64.urlsafe_b64decode(b64.encode()).decode()
-        machine_id, expiry, max_tabs, features = payload.split("|")
-        if not hmac.compare_digest(_sign(payload), sig):
-            return None
         return {
             "machine_id": machine_id,
             "expiry": int(expiry),
             "max_tabs": int(max_tabs),
             "features": features,
         }
+    except ValueError:
+        return None
+
+
+def _parse_key_v1(key: str) -> dict | None:
+    """AUTO-<sig16>-<base64url(payload)> — HMAC-SHA256, khoá đối xứng."""
+    if not ALLOW_LEGACY_HMAC:
+        return None
+    try:
+        rest = key.strip().split("-", 1)[1]  # bỏ "AUTO-"
+        sig = rest[:16]                       # sig luôn 16 ký tự hex
+        b64 = rest[17:]                       # bỏ dấu "-" ngăn cách
+        payload = base64.urlsafe_b64decode(b64.encode()).decode()
+        data = _split_payload(payload)
+        if not data:
+            return None
+        if not hmac.compare_digest(_sign(payload), sig):
+            return None
+        return {**data, "algo": "hmac"}
     except Exception:
         return None
+
+
+def _parse_key_v2(key: str) -> dict | None:
+    """AUTO2.<base64url(payload)>.<base64url(chữ ký 64 byte)> — Ed25519."""
+    if not LICENSE_PUBLIC_KEY:
+        return None
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    except ImportError:
+        log.error("thiếu thư viện 'cryptography' — không kiểm tra được key Ed25519")
+        return None
+
+    try:
+        parts = key.strip().split(".")
+        if len(parts) != 3 or parts[0] != "AUTO2":
+            return None
+        _, payload_b64, sig_b64 = parts
+
+        public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(LICENSE_PUBLIC_KEY))
+        # Chữ ký ký trên CHUỖI base64url của payload, không phải payload thô.
+        public_key.verify(_b64url_decode(sig_b64), payload_b64.encode())
+
+        data = _split_payload(_b64url_decode(payload_b64).decode())
+        return {**data, "algo": "ed25519"} if data else None
+    except InvalidSignature:
+        return None
+    except Exception:
+        return None
+
+
+def parse_key(key: str) -> dict | None:
+    """Đọc key, nhận cả hai định dạng, tự nhận dạng theo tiền tố."""
+    text = (key or "").strip()
+    if not text:
+        return None
+    if text.startswith("AUTO2."):
+        return _parse_key_v2(text)
+    if text.startswith("AUTO-"):
+        return _parse_key_v1(text)
+    return None
 
 
 def validate_key(key: str, machine_id: str | None = None) -> dict:
@@ -248,6 +319,7 @@ def status() -> dict:
         "max_tabs": result.get("max_tabs", PLATFORM_DEFAULT_MAX_TABS),
         "features": result.get("features", "game"),
         "key": lic.get("key", ""),
+        "key_algo": result.get("algo") or ("ed25519" if lic["key"].startswith("AUTO2.") else "hmac"),
         "server_enabled": server_enabled(),
     }
 

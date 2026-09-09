@@ -44,6 +44,23 @@ DEFAULT_PROFILE_URL = PLATFORM_GAME_URL
 # CHỈ owner biết; đổi trước khi build. Nếu để trống, panel sinh license tắt.
 OWNER_TOKEN = "AutoToolOwner@2026"
 
+# ---- Khoá kiểm tra license (Ed25519) ----
+# Khoá CÔNG KHAI, base64 32 byte. Sinh bằng: node tools/gen-keypair.mjs bên portal.
+# Nhúng khoá này vào bản build là AN TOÀN: nó chỉ kiểm tra được chữ ký, không ký
+# được. Khoá riêng chỉ nằm trên portal, nên dịch ngược exe cũng không sinh nổi key.
+LICENSE_PUBLIC_KEY = ""
+
+# Còn chấp nhận key HMAC đời cũ (AUTO-...) không?
+#
+# ĐỂ False khi phát hành bản thương mại. Bật True chỉ có ý nghĩa trong lúc chuyển
+# đổi, và phải hiểu rằng khi bật thì SECRET vẫn nằm trong file exe — mà SECRET
+# vừa dùng để kiểm tra vừa dùng để ký, nên ai lấy được nó vẫn tự sinh key vô hạn.
+# Nói cách khác: bật True là Ed25519 mất tác dụng bảo vệ.
+#
+# Quy trình chuyển đổi đúng: portal bấm "Cấp lại toàn bộ key sang Ed25519" ->
+# gửi key mới cho khách -> rồi mới phát hành bản app có LEGACY = False.
+ALLOW_LEGACY_HMAC = True
+
 # ---- Máy chủ license (portal quản trị) ----
 # Key là HMAC tự chứa hạn dùng nên app kiểm tra được offline; nhưng thu hồi
 # license CHỈ có hiệu lực nếu app hỏi lại máy chủ. Điền URL portal vào đây để bật.
