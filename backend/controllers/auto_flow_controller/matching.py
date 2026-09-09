@@ -9,12 +9,14 @@ from models.config_model import load_accounts
 
 from core.page_world import eval_page
 
+from .constants import BET_RATIOS
 from .context import (
     MatchContext,
     danh_sach_dong_doi,
     load_extension_scripts,
     resolve_profile_name,
 )
+from .preflight import loc_profile_du_dieu_kien, so_du_toi_thieu
 from .deps import _build_adapter, _notify_all
 from .lobby import _clear_hunt_state, _do_leave_room
 from .rounds import check_and_click_ready_or_start
@@ -98,7 +100,12 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     if len(profiles_input) < 2 and len(open_acc_names) >= 2:
         profiles_input = open_acc_names[:5]
     if not profiles_input:
-        profiles_input = ["Account 01", "Account 02"]
+        # KHÔNG tự chọn thay người dùng. Bản trước lùi về ["Account 01",
+        # "Account 02"] — chạy trên hai tài khoản có tiền thật mà không ai yêu cầu.
+        raise HTTPException(
+            status_code=400,
+            detail="Chưa chọn profile nào. Hãy tích ít nhất 2 profile trên bảng danh sách.",
+        )
 
     accounts = load_accounts()
     profiles_input = [resolve_profile_name(p, accounts) for p in profiles_input]
@@ -116,6 +123,57 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     profile_b = profiles_input[1] if len(profiles_input) > 1 else ""
 
     adapter = _build_adapter(request, {"game": {"adapter": "hitclub", "clicks": {}}})
+
+    # ---- KIỂM ĐIỀU KIỆN TRƯỚC KHI MỞ CHROME ----
+    # Mở profile rồi mới phát hiện hết tiền / token hết hạn là quá muộn: lúc đó
+    # đã ngồi vào bàn. Account thiếu tiền còn bị server đá ra giữa chừng, để
+    # account giữ tiền ngồi lại một mình với người lạ.
+    # Kiểm bằng token + WebSocket, KHÔNG mở Chrome (profile đang mở thì đọc
+    # thẳng từ trang).
+    _bet_kiem = int(body.get("target_bet", 100) or 100)
+    if _bet_kiem not in BET_RATIOS:
+        _bet_kiem = 100
+    _ext_hub = getattr(request.app.state, "ext_hub", None)
+
+    if body.get("kiem_truoc", True):
+        _theo_ten = {str(a.get("name") or "").strip().lower(): a
+                     for a in accounts if isinstance(a, dict)}
+        _chon = [_theo_ten[p.strip().lower()] for p in profiles_input
+                 if p.strip().lower() in _theo_ten]
+
+        _dat, _bi_loai = await loc_profile_du_dieu_kien(
+            adapter, _ext_hub, _chon, _bet_kiem)
+
+        if _bi_loai:
+            log.warning("preflight: loại %d/%d profile — %s",
+                        len(_bi_loai), len(_chon),
+                        "; ".join(f"{x['profile']}: {x['ly_do']}" for x in _bi_loai))
+
+        _ten_dat = [str(a.get("name")) for a in _dat]
+        if profile_a not in _ten_dat:
+            _vi_sao = next((x["ly_do"] for x in _bi_loai if x["profile"] == profile_a),
+                           "không đủ điều kiện")
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Account giữ tiền {profile_a} không vào bàn được: {_vi_sao}. "
+                        f"Bàn ${_bet_kiem:,} cần tối thiểu "
+                        f"{so_du_toi_thieu(_bet_kiem):,}.").replace(",", "."),
+            )
+        if len(_ten_dat) < 2:
+            _ds = "; ".join(f"{x['profile']}: {x['ly_do']}" for x in _bi_loai)
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Chỉ còn {len(_ten_dat)} profile đủ điều kiện, cần ít nhất 2. "
+                        f"Bị loại — {_ds}"),
+            )
+
+        # Giữ nguyên thứ tự người dùng đã tích, chỉ bỏ những cái không đạt.
+        profiles_input = [p for p in profiles_input if p in _ten_dat]
+        # Tên in-game vừa đọc được tươi hơn bản trong database -> dùng cho
+        # bước bơm danh sách đồng đội ở preflight bên dưới.
+        _moi = {str(a.get("name")): a for a in _dat}
+        accounts = [_moi.get(str(a.get("name")), a) for a in accounts]
+
     page_a = await adapter._page(profile_a)
     if not page_a:
         raise HTTPException(status_code=400, detail=f"Không mở được profile {profile_a}")

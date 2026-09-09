@@ -20,6 +20,21 @@
     return ids.map((id) => theoId.get(String(id))).filter(Boolean);
   }
 
+  // Số dư tối thiểu để ngồi được bàn — ĐO từ trường `mM` của khung cmd 300,
+  // không phải phỏng đoán. Bàn $100 chỉ cần 5x; từ $500 trở lên là 10x.
+  // Bảng này phải khớp backend (controllers/auto_flow_controller/preflight.py).
+  function soDuToiThieu(bet) {
+    const b = Number(bet) || 0;
+    if (b <= 0) return 0;
+    return b === 100 ? 500 : b * 10;
+  }
+
+  function mucCuocDangChon() {
+    const el = $("gcBetSelect");
+    const v = parseInt((el && el.value) || "100", 10);
+    return Number.isFinite(v) && v > 0 ? v : 100;
+  }
+
   /** Vẽ danh sách profile sẽ chạy. Thứ tự chip = thứ tự gửi xuống backend. */
   function renderProfiles() {
     const hop = $("gcSelectedChips");
@@ -30,17 +45,35 @@
       return;
     }
     hop.innerHTML = "";
+    const bet = mucCuocDangChon();
+    const can = soDuToiThieu(bet);
     chon.forEach((a, i) => {
       const ten = a.name || a.username || "(không tên)";
       const tenGame = (a.character_name || "").trim();
+      const soDu = typeof a.balance === "number" ? a.balance : null;
+      // Backend chặn ngay trước khi mở Chrome; báo trước ở đây để người dùng
+      // không phải bấm rồi mới biết.
+      const thieuTien = soDu !== null && can > 0 && soDu < can;
       const el = document.createElement("span");
-      el.className = "gc-chip" + (i === 0 ? " anchor" : "") + (tenGame ? "" : " thieu-ten");
+      el.className = "gc-chip" + (i === 0 ? " anchor" : "")
+        + (tenGame && !thieuTien ? "" : " thieu-ten");
       el.textContent = `${i === 0 ? "💰 " : ""}${ten}`;
-      // Đối chiếu đồng đội dùng TÊN IN-GAME. Thiếu nó thì extension không nhận
-      // ra nhau (isPartner trả false) -> đánh như người thường.
-      el.title = tenGame
-        ? `${i === 0 ? "Account giữ tiền. " : ""}Tên in-game: ${tenGame}`
-        : "Chưa có tên in-game — chạy Check Live trước, nếu không sẽ không nhận ra đồng đội";
+
+      const chu = [];
+      if (i === 0) chu.push("Account giữ tiền.");
+      chu.push(tenGame
+        ? `Tên in-game: ${tenGame}`
+        : "Chưa có tên in-game — chạy Check Live, nếu không sẽ không nhận ra đồng đội");
+      if (soDu === null) {
+        chu.push("Chưa biết số dư — chạy Check Live.");
+      } else if (thieuTien) {
+        chu.push(`Số dư ${soDu.toLocaleString()} < tối thiểu ${can.toLocaleString()} `
+                 + `của bàn $${bet.toLocaleString()} — sẽ KHÔNG được mở.`);
+      } else {
+        chu.push(`Số dư ${soDu.toLocaleString()} (bàn $${bet.toLocaleString()} `
+                 + `cần ${can.toLocaleString()}).`);
+      }
+      el.title = chu.join(" ");
       const idx = document.createElement("span");
       idx.className = "gc-chip-idx";
       idx.textContent = `${i + 1}.`;
@@ -206,6 +239,11 @@
   // Bind Buttons (chỉ còn 1 cặp nút trên Dashboard: GOM BÀN & XẢ / Dừng)
   if ($("btnGcSyncMatch")) $("btnGcSyncMatch").onclick = () => start();
   if ($("btnGcStopSync")) $("btnGcStopSync").onclick = stop;
+
+  // Đổi mức cược thì ngưỡng số dư đổi theo -> vẽ lại cảnh báo.
+  if ($("gcBetSelect")) {
+    $("gcBetSelect").addEventListener("change", () => renderProfiles());
+  }
 
   App.autoplayRenderProfiles = renderProfiles;
   App.profilesDaChon = profilesDaChon;

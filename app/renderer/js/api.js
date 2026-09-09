@@ -9,7 +9,20 @@
       headers: { "Content-Type": "application/json" },
       ...options,
     });
-    if (!res.ok) throw new Error((await res.text()) || res.statusText);
+    if (!res.ok) {
+      // FastAPI trả {"detail": "..."} — ném nguyên JSON ra thì người dùng đọc
+      // được cái vỏ chứ không đọc được lý do.
+      const raw = await res.text();
+      let msg = raw || res.statusText;
+      try {
+        const j = JSON.parse(raw);
+        if (j && typeof j.detail === "string") msg = j.detail;
+        else if (j && Array.isArray(j.detail)) {
+          msg = j.detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+        }
+      } catch (_) {}
+      throw new Error(msg);
+    }
     return res.json();
   };
 
