@@ -530,6 +530,26 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         except Exception as e:
             log.warning("find-and-match: Không gán được role/xả bài rõ ràng: %s", e)
 
+        # ĐỌC LẠI để xác minh. Ba khối gán ở trên đều bọc try/except nuốt lỗi và
+        # không đọc lại lần nào. Từ khi extension bỏ đường đoán theo tên profile
+        # (vai_tro_ban.js), vai trò là điều kiện CẦN DUY NHẤT để nick phụ tự rời
+        # bàn sau khi xả — gán hụt một trang là trang đó ngồi lì, im lặng.
+        vai_tro_loi = []
+        for p_name, p_page in pages.items():
+            mong_doi = "anchor" if p_name == first_name else "sub"
+            try:
+                thuc_te = await eval_page(p_page, "() => window.__AUTOTOOL_MATCH_ROLE || null")
+            except Exception:
+                thuc_te = None
+            if thuc_te != mong_doi:
+                vai_tro_loi.append(f"{p_name}: cần {mong_doi}, thực tế {thuc_te}")
+        if vai_tro_loi:
+            log.error("find-and-match: vai trò không đặt được -> dừng lượt chạy: %s", vai_tro_loi)
+            await dong_luot_chay(pages, "không đặt được vai trò")
+            return {"ok": False,
+                    "error": "Không đặt được vai trò anchor/sub trên mọi trang: "
+                             + "; ".join(vai_tro_loi)}
+
         log.info("find-and-match: Khởi động tìm kiếm bàn: Account 1 (%s) tìm bàn, %d nick phụ (%s) đợi ở sảnh (Cược $%s)", 
                  first_name, len(other_profiles), other_profiles, bet_val)
         await _notify_all(ext_hub,
@@ -708,9 +728,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
             # Reset dữ liệu phòng cũ trên browser context để không đọc nhầm dữ liệu ván trước
             try:
-                await eval_page(first_page, "() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; window.__game_in_progress = false; window.__is_matched_locked = false; window.__my_cards = []; }")
+                await eval_page(first_page, "() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; window.__game_in_progress = false; window.__is_matched_locked = false; window.__my_cards = []; window.__leave_after_round = false; }")
                 for other_p in [p for k, p in pages.items() if k != first_name]:
-                    await eval_page(other_p, "() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; window.__game_in_progress = false; window.__is_matched_locked = false; window.__my_cards = []; }")
+                    await eval_page(other_p, "() => { window.__last_room_info = null; window.__ws_last_room_id = null; window.__room_players = []; window.__game_in_progress = false; window.__is_matched_locked = false; window.__my_cards = []; window.__leave_after_round = false; }")
             except Exception:
                 pass
 

@@ -103,7 +103,7 @@ def load_extension_scripts():
         from models.bundled_model import get_extension_dir
         ext_dir = get_extension_dir()
         fallback_dir = Path(__file__).resolve().parent.parent / "extension"
-        for fname in ("card_logic.js", "partner_id.js", "content_main.js"):
+        for fname in ("card_logic.js", "partner_id.js", "vai_tro_ban.js", "content_main.js"):
             f = Path(ext_dir or "") / fname
             if not f.exists():
                 f = fallback_dir / fname

@@ -284,6 +284,7 @@
     G.__autotool_partners = [];
     G.__AUTOTOOL_SUB_JOIN_TICKET = null;
     G.__active_room_invite = null;
+    G.__leave_after_round = false;
   }
 
   // Vai trò ghép bàn do backend ấn định cho từng lượt chạy.  Không suy đoán
@@ -312,18 +313,33 @@
     }
   }
 
+  // Vai trò CHỈ đọc từ giá trị do controller đặt — xem vai_tro_ban.js.
+  //
+  // Bản cũ đoán theo hình dạng tên profile khi thiếu vai trò: `includes("1")`
+  // là chính, `includes("2")` là phụ. Với tên thật (`nicktestxxabai1` /
+  // `nicktestxxabai2`) thì một profile tên `Account 12` thoả CẢ HAI, còn tên
+  // không có chữ số nào thì KHÔNG AI là phụ -> không ai rời bàn sau khi xả.
+  // Đúng hai triệu chứng của cơ chế bầu chọn phân tán bên Sunwin, nhưng bên
+  // mình có trọng tài tập trung nên bịt được dứt điểm.
+  function vaiTroApi() {
+    return (typeof AutoToolVaiTro !== "undefined") ? AutoToolVaiTro : (G.AutoToolVaiTro || null);
+  }
+
   function isSubMatchProfile() {
-    if (G.__AUTOTOOL_MATCH_ROLE === "anchor") return false;
-    if (G.__AUTOTOOL_MATCH_ROLE === "sub") return true;
-    const pName = (getProfileName() || "").toLowerCase();
-    return pName.includes("2") || pName.includes("sub") || pName.includes("phu") ||
-      pName.includes("xabai2") || pName.includes("dump") || getMyRole() === "dump";
+    const M = vaiTroApi();
+    if (M && typeof M.laVaiPhu === "function") return M.laVaiPhu(G.__AUTOTOOL_MATCH_ROLE);
+    // Dự phòng phải CÙNG LUẬT với module, không được rơi về đoán tên.
+    return G.__AUTOTOOL_MATCH_ROLE === "sub";
   }
 
   function isAnchorMatchProfile() {
+    const M = vaiTroApi();
+    if (M && typeof M.laVaiChinh === "function") {
+      return M.laVaiChinh(G.__AUTOTOOL_MATCH_ROLE, G.__is_hunt_initiator);
+    }
     if (G.__AUTOTOOL_MATCH_ROLE === "anchor") return true;
     if (G.__AUTOTOOL_MATCH_ROLE === "sub") return false;
-    return (getProfileName() || "").toLowerCase().includes("1") || !!G.__is_hunt_initiator;
+    return !!G.__is_hunt_initiator;
   }
 
   function findBestPlay(myCards, tableCards, role, isPartnerTurn) {
@@ -2357,6 +2373,13 @@
               G.__ws_last_room_id = null;
               G.__ws_pending_rid = null;
               G.__is_matched_locked = false;
+              // Đã ra khỏi phòng thì lệnh rời đang hoãn không còn nghĩa. Giữ
+              // lại thì lần vào bàn kế tiếp, cmd 252 sẽ rời bàn oan.
+              G.__leave_after_round = false;
+              if (G.__leave_verify_timer) {
+                clearTimeout(G.__leave_verify_timer);
+                G.__leave_verify_timer = null;
+              }
               // Dọn sạch Expected Anchor nếu không có lời mời bàn gần đây (< 5s)
               if (!G.__active_room_invite || (Date.now() - G.__active_room_invite.ts) > 5000) {
                 G.__expected_anchor_dn  = null;
@@ -2562,6 +2585,10 @@
               G.__my_cards = [];
               G.__last_table_cards = null;
               G.__last_table_player = null;
+              // Chốt trước khi nhánh dưới xoá cờ: hai nhánh cùng hẹn lệnh rời
+              // (400ms cho lệnh hoãn, 700ms cho nick phụ) là hai lần rời chồng
+              // nhau, mỗi lần lại phát ba cú click mù lên canvas.
+              const coLenhHoan = !!G.__leave_after_round;
               const winner = p.fP ? (p.fP.dn || p.fP.u || "Người thắng") : "Kết thúc ván";
               console.log(`[AutoTool V3] 🏆 VÁN BÀI KẾT THÚC! Người thắng: ${winner}`);
               window.postMessage({
@@ -2574,8 +2601,16 @@
               // Lệnh rời bàn bị hoãn vì đang giữa ván -> giờ mới thực hiện.
               if (G.__leave_after_round) {
                 G.__leave_after_round = false;
-                console.log("[AutoTool V3] Ván đã kết thúc -> thực hiện lệnh rời bàn đã hoãn.");
-                setTimeout(() => { G.__autotool_exec_leave(true); }, 400);
+                // Cổng kích hoạt: cờ này có thể còn sót từ một lượt chạy trước
+                // (đặt ở cmd 250 và ở exec_leave khi gặp giữa ván). Người dùng
+                // đã bấm Dừng rồi mà vẫn tự rời bàn thì đúng bằng lỗi mà
+                // `dong_luot_chay` được viết ra để chặn.
+                if (isAutoEngaged()) {
+                  console.log("[AutoTool V3] Ván đã kết thúc -> thực hiện lệnh rời bàn đã hoãn.");
+                  setTimeout(() => { G.__autotool_exec_leave(true); }, 400);
+                } else {
+                  console.log("[AutoTool V3] Có lệnh rời hoãn nhưng lượt chạy đã tắt -> bỏ qua.");
+                }
               }
 
               // Account phụ xả xong PHẢI rời bàn để nhường chỗ cho khách ngoài.
@@ -2586,8 +2621,37 @@
               // Controller cũng ra lệnh out ở phía server; lệnh rời bàn trùng
               // nhau vô hại vì _do_leave_room kiểm tra đã ở sảnh thì bỏ qua.
               if (isAutoEngaged() && isSubMatchProfile()) {
-                console.log("[AutoTool V3] Account phụ đã xả xong -> tự rời bàn về sảnh chọn bàn.");
-                setTimeout(() => G.__autotool_exec_leave(), 700);
+                if (coLenhHoan) {
+                  console.log("[AutoTool V3] Lệnh rời đã hoãn vừa chạy -> không hẹn thêm lệnh rời.");
+                } else {
+                  console.log("[AutoTool V3] Account phụ đã xả xong -> tự rời bàn về sảnh chọn bàn.");
+                  setTimeout(() => G.__autotool_exec_leave(), 700);
+
+                  // Xác minh bằng khẳng định DƯƠNG ("đang ở sảnh chọn bàn"),
+                  // không phải khẳng định âm ("không còn trong bàn") — cái sau
+                  // đọc `__room_players` vốn chỉ được dọn khi có cmd 203.
+                  //
+                  // CHỈ BÁO, không gọi lại `exec_leave`: mỗi lần gọi phát ba cú
+                  // click mù lên canvas, mà ở sảnh thì góc trên bên trái chính
+                  // là nút Back văng ra sảnh chính (lobby.py đã ghi rõ).
+                  if (G.__leave_verify_timer) clearTimeout(G.__leave_verify_timer);
+                  G.__leave_verify_timer = setTimeout(() => {
+                    G.__leave_verify_timer = null;
+                    let oSanh = false;
+                    try {
+                      oSanh = typeof G.__autotool_is_in_tldl_lobby === "function"
+                              && G.__autotool_is_in_tldl_lobby();
+                    } catch (_) {}
+                    if (!oSanh) {
+                      console.warn("[AutoTool V3] Sau 2.7s vẫn chưa thấy sảnh chọn bàn -> báo lên controller.");
+                      window.postMessage({
+                        type: "AUTOTOOL_AUTO_LEAVING",
+                        profile_name: getProfileName(),
+                        reason: "Rời bàn chưa xong sau khi xả",
+                      }, "*");
+                    }
+                  }, 2700);
+                }
               }
 
               // VÒNG LẶP CHƠI TIẾP TỰ ĐỘNG (CONTINUOUS LOOP):
@@ -3266,6 +3330,10 @@
       G.__last_room_info = null;
       G.__room_players = [];
       G.__active_room_invite = null;
+      if (G.__leave_verify_timer) {
+        clearTimeout(G.__leave_verify_timer);
+        G.__leave_verify_timer = null;
+      }
       if (G.__start_retry_timer) {
         clearInterval(G.__start_retry_timer);
         G.__start_retry_timer = null;
@@ -3294,6 +3362,10 @@
       G.__last_room_info = null;
       G.__room_players = [];
       G.__active_room_invite = null;
+      if (G.__leave_verify_timer) {
+        clearTimeout(G.__leave_verify_timer);
+        G.__leave_verify_timer = null;
+      }
       if (G.__start_retry_timer) {
         clearInterval(G.__start_retry_timer);
         G.__start_retry_timer = null;
