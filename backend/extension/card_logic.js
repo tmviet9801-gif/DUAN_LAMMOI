@@ -284,6 +284,108 @@
     return false;
   }
 
+  // ===================== SINH ỨNG VIÊN ĐÈ =====================
+
+  /** MỌI nhóm trong `hand` có thể đè được `table`, xếp TĂNG DẦN theo lá cao nhất.
+   *
+   * Vì sao cần: `findCombinations` trong content_main.js dựng sảnh bằng
+   * `valMap[v][0]` — lá chất THẤP NHẤT của mỗi bậc. Lá chốt sảnh vì thế luôn là
+   * chất thấp nhất, nên có nước đè hợp lệ mà nó báo không đè được.
+   *
+   * Ví dụ tái hiện được: bàn ra 3♠ 4♠ 5♦, tay có 3♣ 4♣ 5♣ 5♥.
+   *   - dựng theo chất thấp nhất -> [3♣ 4♣ 5♣], chốt 5♣ < 5♦ -> báo PASS
+   *   - nhưng [3♣ 4♣ 5♥] đè được thật.
+   * Đo bằng vét cạn: khoảng 0,6% số tình huống có sảnh trên bàn.
+   *
+   * `canBeat` chỉ so LÁ ĐỈNH của sảnh, nên chỉ cần thử mọi chất ở bậc đỉnh;
+   * các bậc giữa giữ chất thấp nhất là đủ và rẻ hơn.
+   *
+   * Xếp TĂNG DẦN — ngược với công cụ Sunwin (nó xếp giảm dần và luôn đè bằng
+   * nước to nhất). Đè bằng nước nhỏ nhất giữ lại quân mạnh để còn giành quyền
+   * dẫn; người gọi có thể chọn khác dựa trên đếm bài.
+   */
+  function beatCandidates(hand, table) {
+    const ra = [];
+    if (!hand || !hand.length || !table || !table.length) return ra;
+
+    const theoBac = {};
+    for (const c of hand) {
+      const v = getCardVal(c);
+      (theoBac[v] = theoBac[v] || []).push(c);
+    }
+    for (const v of Object.keys(theoBac)) theoBac[v] = sortCards(theoBac[v]);
+
+    const n = table.length;
+
+    // 1 lá trên bàn: mọi lá đơn, và mọi tứ quý (luật chặt Heo đơn nằm trong canBeat)
+    if (n === 1) {
+      for (const c of hand) ra.push([c]);
+      for (const v of Object.keys(theoBac)) {
+        if (theoBac[v].length >= 4) ra.push(theoBac[v].slice(0, 4));
+      }
+    }
+
+    // 2/3/4 lá cùng bậc: mọi tổ hợp chập n trong từng bậc
+    if (n >= 2 && n <= 4) {
+      for (const v of Object.keys(theoBac)) {
+        const nhom = theoBac[v];
+        if (nhom.length < n) continue;
+        const chon = [];
+        (function toHop(bd, cur) {
+          if (cur.length === n) { chon.push(cur.slice()); return; }
+          for (let i = bd; i < nhom.length; i++) {
+            cur.push(nhom[i]);
+            toHop(i + 1, cur);
+            cur.pop();
+          }
+        })(0, []);
+        for (const g of chon) ra.push(g);
+      }
+    }
+
+    // Sảnh: mọi đoạn bậc liên tiếp cùng độ dài, thử MỌI chất ở bậc ĐỈNH
+    if (n >= 3 && isStraight(table)) {
+      const bac = Object.keys(theoBac).map(Number)
+        .filter((v) => v < 15)              // Heo không vào sảnh
+        .sort((a, b) => a - b);
+      for (let i = 0; i + n <= bac.length; i++) {
+        const doan = bac.slice(i, i + n);
+        let lienTiep = true;
+        for (let k = 1; k < doan.length; k++) {
+          if (doan[k] !== doan[k - 1] + 1) { lienTiep = false; break; }
+        }
+        if (!lienTiep) continue;
+        const than = doan.slice(0, -1).map((v) => theoBac[v][0]);
+        for (const dinh of theoBac[doan[doan.length - 1]]) {
+          ra.push(than.concat([dinh]));
+        }
+      }
+    }
+
+    return ra.filter((g) => canBeat(g, table))
+             .sort((a, b) => {
+               const sa = sortCards(a), sb = sortCards(b);
+               return compareCards(sa[sa.length - 1], sb[sb.length - 1]);
+             });
+  }
+
+  /** Nước ĐÈ cho account giữ tiền: ưu tiên nước KHÔNG AI CHẶN LẠI ĐƯỢC.
+   *
+   * Đè xong mà bị đè tiếp là mất đúng thứ đang cần giành — quyền dẫn. Trong số
+   * nước đè được, nếu có nước mà tập lá còn ẩn không chặn nổi thì chọn nó;
+   * không thì lấy nước NHỎ NHẤT, giữ quân mạnh lại.
+   */
+  function chooseWinnerBeat(hand, table, playedCards) {
+    const cands = beatCandidates(hand, table);
+    if (!cands.length) return null;
+    try {
+      const unseen = unseenCards(hand, playedCards || []);
+      const chac = cands.find((c) => !canAnyoneBeat(c, unseen));
+      if (chac) return chac;
+    } catch (e) {}
+    return cands[0];
+  }
+
   /**
    * Nước xả cho ACCOUNT PHỤ: tống lá NGUY HIỂM đi sớm, giữ lại vài lá thấp.
    *
@@ -304,15 +406,28 @@
    *          lại (lúc đó gọi bên ngoài tự chuyển sang chế độ mồi lá thấp).
    */
   /** Mọi nhóm xả được (ngoài phần giữ), xếp theo lá cao GIẢM DẦN. */
-  function dischargeCandidates(cards, reserveSize) {
+  /** Phần bài ĐƯỢC PHÉP xả = bỏ đi `reserveSize` lá thấp nhất.
+   *
+   * Tách riêng để `chooseDumpBeat` dùng chung đúng một định nghĩa; trước đây nó
+   * suy ra phần này bằng cách `.flat()` danh sách tổ hợp, đúng nhưng vòng vo.
+   */
+  function phanDuocXa(cards, reserveSize) {
     const keep = (reserveSize === undefined || reserveSize === null)
       ? DEFAULT_RESERVE : Math.max(0, reserveSize | 0);
     const hand = sortCards(cards || []);
-    if (hand.length <= keep) return [];        // chỉ còn phần giữ để mồi
+    return hand.length <= keep ? [] : hand.slice(keep);
+  }
 
-    // Phần được phép xả = bỏ đi `keep` lá thấp nhất. Tổ hợp chỉ tìm TRONG phần
-    // này nên phần giữ lại không bao giờ bị xé.
-    const pool = hand.slice(keep);
+  /** Xếp theo mục tiêu của nick phụ: NHÓM TO TRƯỚC, cùng cỡ thì LÁ CAO trước. */
+  function xepTheoKieuXa(a, b) {
+    if (b.length !== a.length) return b.length - a.length;
+    return compareCards(b[b.length - 1], a[a.length - 1]);
+  }
+
+  function dischargeCandidates(cards, reserveSize) {
+    // Tổ hợp chỉ tìm TRONG phần được xả nên phần giữ lại không bao giờ bị xé.
+    const pool = phanDuocXa(cards, reserveSize);
+    if (!pool.length) return [];               // chỉ còn phần giữ để mồi
     const out = [];
     for (const m of enumerateMelds(pool)) {
       const group = [];
@@ -327,10 +442,7 @@
     //
     // (Bản trước xếp lá cao lên đầu, nên một lá Heo được chọn trước cả đôi K —
     // xả được 1 lá thay vì 2. Đúng triệu chứng "không chọn tổ hợp đôi/ba/sảnh".)
-    out.sort((a, b) => {
-      if (b.length !== a.length) return b.length - a.length;
-      return compareCards(b[b.length - 1], a[a.length - 1]);
-    });
+    out.sort(xepTheoKieuXa);
     return out;
   }
 
@@ -352,8 +464,15 @@
    */
   function chooseDumpBeat(cards, tableCards, reserveSize, partnerCards) {
     if (!tableCards || !tableCards.length) return null;
-    const cands = dischargeCandidates(cards, reserveSize)
-      .filter((g) => canBeat(g, tableCards));
+    // Nguồn ứng viên: `beatCandidates` (sinh ĐỦ, kể cả sảnh đổi chất ở lá đỉnh),
+    // rồi mới lọc theo phần được xả. Bản trước lọc từ `dischargeCandidates` nên
+    // thừa hưởng luôn lỗ hổng sảnh chất thấp.
+    const duocXa = new Set(phanDuocXa(cards, reserveSize));
+    const cands = beatCandidates(cards, tableCards)
+      .filter((g) => g.every((c) => duocXa.has(c)))
+      // `beatCandidates` xếp TĂNG DẦN cho nick chính (giữ quân mạnh). Nick phụ
+      // cần chiều ngược lại: mượn lượt đồng đội để tống lá nguy hiểm đi.
+      .sort(xepTheoKieuXa);
     if (!cands.length) return null;             // đã về phần giữ / không đè được
     return preferPartnerBeatable(cands, partnerCards);
   }
@@ -550,6 +669,8 @@
     canAnyoneBeat: canAnyoneBeat,
     analyzeControl: analyzeControl,
     canBeat: canBeat,
+    beatCandidates: beatCandidates,
+    chooseWinnerBeat: chooseWinnerBeat,
     chooseDumpDischarge: chooseDumpDischarge,
     chooseDumpBeat: chooseDumpBeat,
     getCardVal: getCardVal,

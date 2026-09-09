@@ -536,9 +536,15 @@ def test_relay_wired_into_extension():
     # Cả hai nhánh của phụ phải truyền bài đồng đội
     assert "chooseDumpDischarge(myCards, reserve, G.__partner_cards)" in src
     assert "chooseDumpBeat(myCards, tableCards, reserveBeat, G.__partner_cards)" in src
-    # Nhánh đè của chính phải ưu tiên nước không ai chặn lại được
-    assert "canAnyoneBeat(c, unseen)" in src
-    assert "không ai chặn lại được" in src
+    # Nhánh đè của chính phải ưu tiên nước không ai chặn lại được.
+    #
+    # Phép ưu tiên này đã dời vào `chooseWinnerBeat` của card_logic.js — khoá ở
+    # đây là chỗ GỌI, còn tính chất thì kiểm bằng bài thật ở
+    # test_uu_tien_nuoc_khong_ai_chan_lai_duoc.
+    assert "api.chooseWinnerBeat(myCards, tableCards" in src
+    logic = (ext / "card_logic.js").read_text(encoding="utf-8")
+    than = logic[logic.index("function chooseWinnerBeat"):][:600]
+    assert "canAnyoneBeat(c, unseen)" in than
 
 
 def test_dump_uu_tien_nhom_to_de_xa_nhieu_la():

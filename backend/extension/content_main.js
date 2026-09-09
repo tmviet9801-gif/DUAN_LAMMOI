@@ -463,47 +463,49 @@
         return null;
       } else {
         // Account 1 (Chính): BẮT BUỘC ĐÈ BÀI ĐỒNG ĐỘI ĐỂ GIÀNH LƯỢT ĐI TỰ DO!
+        //
+        // Nguồn ứng viên chuyển sang card_logic.js (chooseWinnerBeat).
+        // `findCombinations` ngay trong file này dựng sảnh bằng `valMap[v][0]`
+        // — lá chất THẤP NHẤT của mỗi bậc — nên lá chốt sảnh luôn là chất thấp
+        // nhất và có nước đè hợp lệ bị bỏ sót. Tái hiện được: bàn ra
+        // 3 bích - 4 bích - 5 rô, tay có 3 chuồn - 4 chuồn - 5 chuồn - 5 cơ:
+        // bản cũ báo PASS trong khi [3 chuồn, 4 chuồn, 5 cơ] đè được thật.
+        // Vét cạn đo được: ~0,6% số tình huống có sảnh trên bàn.
+        //
+        // Luật tứ quý chặt Heo đơn đã nằm trong `canBeat` nên nhánh riêng bên
+        // dưới chỉ còn ở đường dự phòng.
+        const api = (typeof AutoToolCards !== "undefined") ? AutoToolCards : (G.AutoToolCards || null);
+        if (api && typeof api.chooseWinnerBeat === "function") {
+          try {
+            const nuoc = api.chooseWinnerBeat(myCards, tableCards, G.__cards_played || []);
+            if (nuoc && nuoc.length) {
+              console.log(`[AutoTool V3] [Role: WINNER] Đè bài đồng đội bằng [${nuoc.join(", ")}] để giành lượt.`);
+              return nuoc;
+            }
+            console.log("[AutoTool V3] [Role: WINNER] Không có bài đè được -> Bỏ lượt.");
+            return null;
+          } catch (e) {
+            console.warn("[AutoTool V3] chooseWinnerBeat lỗi, dùng lại đường cũ:", e);
+          }
+        }
+
+        // Dự phòng khi card_logic.js chưa nạp được (giữ nguyên hành vi cũ)
         const tLen = tableCards.length;
         let cands = [];
-        if (tLen === 1) {
-          cands = combs.singles;
-        } else if (tLen === 2) {
-          cands = combs.pairs;
-        } else if (tLen === 3) {
-          cands = combs.triples;
-        } else if (tLen >= 3 && isStraight(tableCards)) {
-          cands = combs.straights.filter((s) => s.length === tLen);
-        }
+        if (tLen === 1) cands = combs.singles;
+        else if (tLen === 2) cands = combs.pairs;
+        else if (tLen === 3) cands = combs.triples;
+        else if (tLen >= 3 && isStraight(tableCards)) cands = combs.straights.filter((s) => s.length === tLen);
 
         const beatable = cands.filter((c) => canBeat(c, tableCards));
-
-        // ĐẾM BÀI: trong số nước đè được, ưu tiên nước KHÔNG AI CHẶN LẠI ĐƯỢC.
-        // Đè xong mà bị người khác đè tiếp thì mất quyền dẫn — đúng thứ đang
-        // cần giành. Nhóm bất khả chặn bảo đảm giữ được lượt.
         if (beatable.length) {
-          const api = (typeof AutoToolCards !== "undefined") ? AutoToolCards : (G.AutoToolCards || null);
-          if (api && typeof api.canAnyoneBeat === "function") {
-            try {
-              const unseen = api.unseenCards(myCards, G.__cards_played || []);
-              const safe = beatable.find((c) => !api.canAnyoneBeat(c, unseen));
-              if (safe) {
-                console.log(`[AutoTool V3] [Role: WINNER] Đè bằng [${safe.join(", ")}] — không ai chặn lại được, chắc giữ quyền dẫn.`);
-                return safe;
-              }
-            } catch (e) {
-              console.warn("[AutoTool V3] canAnyoneBeat lỗi ở nhánh đè:", e);
-            }
-          }
-          console.log(`[AutoTool V3] [Role: WINNER] Đè bài đồng đội bằng [${beatable[0].join(", ")}] để giành lượt!`);
+          console.log(`[AutoTool V3] [Role: WINNER] (dự phòng) Đè bằng [${beatable[0].join(", ")}].`);
           return beatable[0];
         }
-
-        // Tứ quý chặt Heo đơn nếu đồng đội lỡ đánh Heo
         if (tLen === 1 && getCardVal(tableCards[0]) === 15 && combs.quads.length > 0) {
-          console.log("[AutoTool V3] [Role: WINNER] Dùng Tứ quý chặt Heo đơn đồng đội để giành lượt!");
+          console.log("[AutoTool V3] [Role: WINNER] (dự phòng) Tứ quý chặt Heo đơn.");
           return combs.quads[0];
         }
-
         console.log("[AutoTool V3] [Role: WINNER] Không có bài đè được -> Bỏ lượt.");
         return null;
       }
@@ -1792,6 +1794,21 @@
   G.__exec_cocos_ready_or_start = execCocosReadyOrStart;
   G.__trigger_verified_match_ready_and_start = triggerVerifiedMatchReadyAndStart;
 
+  // Số thứ tự LƯỢT: tăng 1 mỗi lần server báo tới lượt mình.
+  //
+  // Dùng để chống gửi hai lệnh trong cùng một lượt (server phát lại frame 251
+  // sau khi kết nối lại, hoặc cả cmd 250 lẫn cmd 251 cùng báo tôi đi trước).
+  // Công cụ Sunwin chặn việc này bằng khoảng cách thời gian cố định; khoá theo
+  // số lượt đúng hơn — hai người bỏ lượt liên tiếp thật sự thì cách nhau vài
+  // chục mili-giây và sẽ bị một bộ đếm thời gian nuốt mất.
+  G.__turn_seq = G.__turn_seq || 0;
+  if (typeof G.__turn_da_gui !== "number") G.__turn_da_gui = -1;
+
+  function moiLuotCuaToi() {
+    G.__turn_seq = (G.__turn_seq || 0) + 1;
+    handleAutoTurn();
+  }
+
   function handleAutoTurn() {
     if (G.__auto_turn_timer) {
       clearTimeout(G.__auto_turn_timer);
@@ -1807,8 +1824,19 @@
     // để state bàn/turn ổn định trước khi quyết định đè hoặc bỏ lượt.
     const roleForDelay = getMyRole();
     const delay = roleForDelay === "dump" ? humanDelay(1150, 1900) : humanDelay(850, 1450);
+    const seq = G.__turn_seq || 0;
     G.__auto_turn_timer = setTimeout(() => {
       if (!G.__my_cards || !G.__my_cards.length) return;
+      // Lượt mới đã tới trong lúc chờ -> bỏ quyết định cũ đi.
+      if ((G.__turn_seq || 0) !== seq) {
+        console.warn(`[AutoTool V3] Bỏ nước đã hẹn của lượt ${seq}: đã sang lượt ${G.__turn_seq}.`);
+        return;
+      }
+      // Đã gửi lệnh cho đúng lượt này rồi -> không gửi lần hai.
+      if (G.__turn_da_gui === seq) {
+        console.warn(`[AutoTool V3] Đã gửi lệnh cho lượt ${seq} rồi -> bỏ qua.`);
+        return;
+      }
       const role = getMyRole();
       const hasTableCards = Array.isArray(G.__last_table_cards) && G.__last_table_cards.length > 0;
       const isPartnerActor = (hasTableCards && G.__last_table_player) ? isPartner(G.__last_table_player) : false;
@@ -1823,9 +1851,11 @@
           return p ? p.name : c;
         }).join(" ");
         console.log(`[AutoTool V3] >>> TỰ ĐỘNG ĐÁNH BÀI: [${cardLabels}] (cmd 253) <<<`);
+        G.__turn_da_gui = seq;
         G.__autotool_exec_play(play);
       } else {
         console.log("[AutoTool V3] >>> TỰ ĐỘNG BỎ LƯỢT / PASS (cmd 254) <<<");
+        G.__turn_da_gui = seq;
         G.__autotool_exec_pass();
       }
     }, delay);
@@ -2456,7 +2486,7 @@
                 // Nếu mình là người được chỉ định đi trước
                 if (p.tP && isMe(p.tP)) {
                   console.log("[AutoTool V3] >>> TÔI ĐƯỢC CHỈ ĐỊNH ĐI TRƯỚC! Chuẩn bị đánh bài... <<<");
-                  handleAutoTurn();
+                  moiLuotCuaToi();
                 }
               }
             }
@@ -2518,7 +2548,7 @@
               // Kiểm tra xem có phải tới lượt của mình không
               if (tp && isMe(tp)) {
                 console.log(`[AutoTool V3] >>> TỚI LƯỢT CỦA TÔI! Bài trên tay: ${G.__my_cards ? G.__my_cards.length : 0} lá <<<`);
-                handleAutoTurn();
+                moiLuotCuaToi();
               }
             }
 
