@@ -83,37 +83,32 @@ _INJECT_JS = r"""
           const p = (Array.isArray(arr) && arr.length > 1 && typeof arr[1] === "object") ? arr[1] : (arr.length > 3 && typeof arr[3] === "object" ? arr[3] : null);
           if (p) {
             if (p.cmd === 202) {
-              G.__room_players = p.ps || [];
-              G.__room_state = p.gS;
-              G.__last_room_202 = p;
-
-              // Tự động kiểm tra và phản ứng tức thời với khách lạ (out_guest)
-              if (G.__auto_protect && G.__auto_protect.out_guest) {
-                const known = (G.__auto_protect.known_names || []).map((x) => String(x).toLowerCase().trim());
-                const ps = p.ps || [];
-                let hasStranger = false;
-                for (const ply of ps) {
-                  const dn = String(ply.dn || "").toLowerCase().trim();
-                  const u = String(ply.u || "").toLowerCase().trim();
-                  const isKnown = known.some((k) => k && (k === dn || k === u || dn.indexOf(k) !== -1 || k.indexOf(dn) !== -1));
-                  if (!isKnown && (dn || u)) {
-                    hasStranger = true;
-                    break;
-                  }
-                }
-                if (hasStranger) {
-                  G.__stranger_detected = true;
-                  try {
-                    if (typeof G.__ws_send_channel === "function") {
-                      G.__ws_send_channel("Simms", '[4,"Simms",-1]');
-                    } else if (typeof G.__ws_send === "function") {
-                      G.__ws_send('[4,"Simms",-1]');
-                    }
-                  } catch (_) {}
-                }
+              // Chi ghi khi content_main.js CHUA nap. Hai script cung ghi mot
+              // bien la sinh dua: gia tri cuoi cung phu thuoc thu tu goi ham
+              // hook, khong phai thu tu goi tin.
+              if (!G.__ws_main_hooked) {
+                G.__room_players = p.ps || [];
+                G.__room_state = p.gS;
               }
-            } else if (p.cmd === 308 || p.cmd === 305) {
+              G.__ws_sniffer_last_202 = p;
+              G.__last_room_202 = p;
+            } else if (p.cmd === 308) {
+              // CHI cmd 308 — phan hoi join CUA CHINH minh — moi la nguon hop
+              // le cho thong tin phong dang ngoi.
               if (p.ri && p.ri.rid) G.__last_room_info = p.ri;
+            } else if (p.cmd === 305) {
+              // cmd 305 la QUANG BA danh sach ban cua MOI game trong sanh
+              // (Phom gid=8 cuoc 2.000, Chinese Poker...). Ghi no vao
+              // __last_room_info lam:
+              //   - vong trich rid nhan rid 142 cua ban Phom lam "phong that"
+              //     -> nick phu bi ban [3,"Simms",142,""] vao mot ban PHOM
+              //     muc $2.000;
+              //   - cong kiem muc cuoc doc b=2000 != 100 -> anchor tu out khoi
+              //     ban $100 hoan toan dung, lap vo han;
+              //   - va nguoc lai: dang o ban $500 ma 305 ve la DemLa b=100 thi
+              //     cong CHO QUA -> ca nhom danh o muc $500.
+              // Do chinh la trieu chung "chon 100 vao 500".
+              if (p.ri && p.ri.rid) G.__ws_sniffer_broadcast_room = p.ri;
             }
           }
         } catch (_) {}

@@ -793,14 +793,14 @@ class HitClubAdapter(GameAdapter):
             u = str(p.get("u") or "").strip()
             all_players.append({"dn": dn, "u": u, "raw": p})
 
-            # So khớp dn và u với known_names
+            # Khớp CHÍNH XÁC. Bản trước dùng thêm `k in dn_lower or dn_lower in k`
+            # — cùng lỗi so-chuỗi-con đã bị loại khỏi `isPartner`. Nó sai theo
+            # CẢ HAI chiều: một người chơi lạ tên chứa chuỗi con của tên quen
+            # thì được coi là NGƯỜI QUEN (tool ngồi lại xả bài cho họ), còn tên
+            # quen viết khác đi một chút thì bị coi là KHÁCH LẠ (tự out oan).
             dn_lower = dn.lower()
             u_lower = u.lower()
-            is_known = False
-            for k in norm_known:
-                if k and (k == dn_lower or k == u_lower or k in dn_lower or dn_lower in k):
-                    is_known = True
-                    break
+            is_known = bool(norm_known & {dn_lower, u_lower} - {""})
             if not is_known and (dn or u):
                 strangers.append(dn or u)
 
