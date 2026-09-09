@@ -52,14 +52,37 @@ SO_DU_TOI_THIEU_DO_DUOC = {
 HE_SO_DU_PHONG = 10          # mức cược lạ -> dùng hệ số phổ biến nhất
 
 
-def so_du_toi_thieu(bet) -> int:
-    """Số dư tối thiểu để ngồi được bàn mức `bet`."""
+def _tu_danh_muc(bet, gid=1):
+    """Số dư tối thiểu từ danh mục bàn ĐỌC TỪ SERVER, nếu đã lưu được."""
+    try:
+        from game_sim import room_catalog
+        from models.config_model import DATA_DIR
+
+        muc = room_catalog.nap(DATA_DIR, gid=gid)
+        if muc:
+            v = (muc.get("so_du_toi_thieu") or {}).get(str(int(bet)))
+            if isinstance(v, int) and v >= 0:
+                return v
+    except Exception:
+        pass
+    return None
+
+
+def so_du_toi_thieu(bet, gid=1) -> int:
+    """Số dư tối thiểu để ngồi được bàn mức `bet`.
+
+    Ưu tiên trường `mM` server trả trong khung cmd 300 (lưu lại từ lượt chạy
+    gần nhất); bảng đo sẵn chỉ là dự phòng khi chưa từng đọc được.
+    """
     try:
         bet = int(bet or 0)
     except (TypeError, ValueError):
         return 0
     if bet <= 0:
         return 0
+    song = _tu_danh_muc(bet, gid=gid)
+    if song is not None:
+        return song
     if bet in SO_DU_TOI_THIEU_DO_DUOC:
         return SO_DU_TOI_THIEU_DO_DUOC[bet]
     return bet * HE_SO_DU_PHONG

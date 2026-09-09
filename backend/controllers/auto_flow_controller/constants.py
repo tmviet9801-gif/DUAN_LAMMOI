@@ -18,8 +18,17 @@ BET_RATIOS = {
     1000000: (0.700, 0.820),  # Hàng 4 - Cột 3 ($1M)
 }
 
-# Bảng RID từ frame cmd=300. Các route quick/manual cũng phải dùng cùng map,
-# không được click theo toạ độ vì UI canvas có thể đã đổi mức đang chọn.
+# ẢNH CHỤP bảng RID, lấy từ khung cmd=300 thật (28 phòng, đối chiếu không lệch
+# một dòng nào). Đây là bản DỰ PHÒNG: luồng gom bàn đọc bảng THẬT từ server lúc
+# chạy (`game_sim.room_catalog`) và chỉ lùi về đây khi không hỏi được.
+#
+# Vì sao không thể chỉ dựa vào bảng này: server thêm một mức cược hoặc đổi thứ
+# tự danh sách là rid 2 thôi không còn là "$100 Solo" — và tool không có cách
+# nào biết. Nó vẫn gửi [3,"Simms",2,""] rồi quay vòng vô tận vì không ai sửa
+# bảng.
+#
+# Các route quick/manual cũng phải dùng cùng map, không được click theo toạ độ
+# vì UI canvas có thể đã đổi mức đang chọn.
 FIXED_TABLE_RIDS = {
     "100_2": 2, "100_4": 1, "500_2": 4, "500_4": 3,
     "1000_2": 6, "1000_4": 5, "2000_2": 8, "2000_4": 7,

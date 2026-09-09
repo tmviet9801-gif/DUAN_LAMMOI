@@ -17,6 +17,7 @@ from .context import (
     resolve_profile_name,
 )
 from .preflight import loc_profile_du_dieu_kien, so_du_toi_thieu
+from game_sim import room_catalog
 from .deps import _build_adapter, _notify_all
 from .lobby import (
     _clear_hunt_state,
@@ -248,6 +249,44 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     ctx = MatchContext(request, adapter, pages, profiles_input, body)
     # Dùng mốc chụp lúc VÀO hàm, không phải mốc tại thời điểm này.
     ctx.stop_epoch = stop_epoch_vao
+
+    # ---- BẢNG RID ĐỌC TỪ SERVER, không tin ảnh chụp chép cứng ----
+    try:
+        from models.config_model import DATA_DIR as _DD
+
+        _dm = await room_catalog.doc_tu_server(
+            page_a, adapter.sniffer, adapter.proto.build_room_list_msg(ctx.gid),
+            gid=ctx.gid)
+        if _dm.get("rid"):
+            _lech = room_catalog.doi_chieu(_dm["rid"], FIXED_TABLE_RIDS)
+            if _lech:
+                # Đây chính là kịch bản mà bảng chép cứng không tự phát hiện
+                # được: gửi rid cũ -> vào bàn khác mức cược -> out -> lặp mãi.
+                log.warning("DANH MỤC BÀN ĐÃ ĐỔI so với bảng chép cứng: %s",
+                            "; ".join(_lech))
+                await _notify_all(_ext_hub,
+                                  "⚠️ Danh sách bàn của server đã đổi so với bảng "
+                                  "trong tool — đang dùng bảng ĐỌC TỪ SERVER.",
+                                  "warn", "⚠️ Bảng bàn đổi")
+            _rid_song = _dm["rid"]
+            room_catalog.luu(_DD, _dm, gid=ctx.gid)
+        else:
+            _rid_song = None
+            log.warning("không đọc được danh mục bàn (%s) -> dùng bảng chép cứng.",
+                        _dm.get("loi"))
+    except Exception as e:
+        _rid_song = None
+        log.warning("đọc danh mục bàn lỗi: %s -> dùng bảng chép cứng.", e)
+
+    if _rid_song:
+        _rid_moi = _rid_song.get(f"{ctx.bet_val}_{ctx.target_mu}")
+        if _rid_moi:
+            ctx.requested_rid = int(_rid_moi)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Server không có bàn ${ctx.bet_val:,} {ctx.target_mu} chỗ "
+                        f"cho game này.").replace(",", "."))
 
     # Bí danh cục bộ trỏ vào ctx. Nhờ đó THÂN VÒNG LẶP bên dưới giữ nguyên
     # từng ký tự so với bản trước khi tách — không có chỗ nào để lọt lỗi.
