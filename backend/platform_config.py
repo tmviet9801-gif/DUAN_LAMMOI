@@ -48,7 +48,7 @@ OWNER_TOKEN = "AutoToolOwner@2026"
 # Khoá CÔNG KHAI, base64 32 byte. Sinh bằng: node tools/gen-keypair.mjs bên portal.
 # Nhúng khoá này vào bản build là AN TOÀN: nó chỉ kiểm tra được chữ ký, không ký
 # được. Khoá riêng chỉ nằm trên portal, nên dịch ngược exe cũng không sinh nổi key.
-LICENSE_PUBLIC_KEY = ""
+LICENSE_PUBLIC_KEY = "MyACHl4vi3ZVli3R73UaORqr1orXAIvaH9dOhOiS2o4="
 
 # Còn chấp nhận key HMAC đời cũ (AUTO-...) không?
 #
@@ -65,7 +65,7 @@ ALLOW_LEGACY_HMAC = True
 # Key là HMAC tự chứa hạn dùng nên app kiểm tra được offline; nhưng thu hồi
 # license CHỈ có hiệu lực nếu app hỏi lại máy chủ. Điền URL portal vào đây để bật.
 # Để TRỐNG = tắt hoàn toàn, app chạy y như trước (thuần offline).
-LICENSE_SERVER_URL = ""
+LICENSE_SERVER_URL = "https://license-admin.baccarat-license-server.workers.dev"
 
 # Máy chủ không gọi được (mất mạng, sập server) thì app vẫn chạy bằng kết quả
 # kiểm tra lần trước, trong tối đa từng này ngày. Quá hạn đó mới khoá.
