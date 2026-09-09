@@ -26,3 +26,6 @@ scratch/
 backend/scratch/
 backend/scratch_analyze.py
 .pytest_cache/
+
+# Worktree cua cac phien lam viec song song — khong bao gio commit
+.claude/worktrees/
