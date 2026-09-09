@@ -997,19 +997,23 @@
     if (typeof cc === "undefined" || !cc.director) return null;
     const scene = cc.director.getScene();
     if (!scene) return null;
-    let thay = null;
+    const khop = [];
     (function quet(node, depth) {
-      if (!node || thay || depth > (sauMax || 30)) return;
+      if (!node || depth > (sauMax || 30)) return;
       if (!isNodeVisible(node)) return;          // cha tắt -> cả nhánh bỏ qua
       const text = getCocosNodeText(node);
       if (!laSanhKhac(text) && hopLe(chuanNhan(text), String(node.name || "").toLowerCase())) {
-        thay = node;
-        return;
+        khop.push(node);
       }
       const ch = node.children || [];
-      for (let i = 0; i < ch.length && !thay; i++) quet(ch[i], depth + 1);
+      for (let i = 0; i < ch.length; i++) quet(ch[i], depth + 1);
     })(scene, 0);
-    return thay;
+    if (!khop.length) return null;
+    // Ưu tiên node TRONG khung hình — xem chú thích ở `timTheoSprite`.
+    for (let i = 0; i < khop.length; i++) {
+      if (viTriNodeTrenCanvas(khop[i])) return khop[i];
+    }
+    return khop[0];
   }
 
   /** Vị trí TÂM của node trên canvas, dạng tỉ lệ 0..1.
@@ -1153,10 +1157,156 @@
     return dispatchCanvasClick(vt.nx, vt.ny);
   }
 
+  /** Tên scene hiện tại, đã chuẩn hoá.
+   *
+   * ĐO ĐƯỢC — đây là dấu hiệu dứt khoát nhất, khỏi phải đoán qua chữ:
+   *     "LobbyNew"   -> sảnh chính (các tab ALL GAMES / GAME BÀI / SLOTS...)
+   *     "TLDLScene"  -> khu Tiến Lên Đếm Lá (sảnh chọn bàn, hoặc đang trong bàn)
+   */
+  function tenScene() {
+    try {
+      const sc = cc.director.getScene();
+      return String((sc && sc.name) || "").trim().toLowerCase();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  /** Có node ĐANG HIỂN THỊ tên khớp `hopLe(tenDaThuongHoa)` không. */
+  function coNodeTen(hopLe) {
+    if (typeof cc === "undefined" || !cc.director) return false;
+    const scene = cc.director.getScene();
+    if (!scene) return false;
+    let co = false;
+    (function quet(n, d) {
+      if (!n || co || d > 30 || !isNodeVisible(n)) return;
+      if (hopLe(String(n.name || "").toLowerCase())) { co = true; return; }
+      const ch = n.children || [];
+      for (let i = 0; i < ch.length && !co; i++) quet(ch[i], d + 1);
+    })(scene, 0);
+    return co;
+  }
+
+  /** Tên ảnh (sprite frame) của node, đã chuẩn hoá.
+   *
+   * ĐO TRÊN MÀN GAME BÀI THẬT: các ô game KHÔNG có nhãn chữ — tên game là
+   * HÌNH VẼ. Thứ nhận diện được là tên sprite:
+   *     vgcg_1  -> "tien-len-dem-la@2x"      (ô cần bấm)
+   *     vgcg_11 -> "tielenmiennam@2x"        (ô Tiến Lên Miền Nam, phải tránh)
+   *     vgcg_4  -> "mau-binh@2x", vgcg_8 -> "phom@2x", ...
+   * Vì thế mọi phép kiểm dựa trên `getCocosNodeText` đều trả rỗng ở màn này —
+   * đó là lý do hàm kiểm "đã vào màn Game Bài chưa" luôn báo CHƯA.
+   */
+  function tenSprite(node) {
+    try {
+      const c = node && node.getComponent && node.getComponent("cc.Sprite");
+      const f = c && (c.spriteFrame || c._spriteFrame);
+      const t = f && (f.name || f._name);
+      return t ? String(t).toLowerCase().replace(/@\dx$/, "").replace(/[^a-z0-9]/g, "") : "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  /** Node có sprite khớp `hopLe`, ƯU TIÊN node đang nằm TRONG KHUNG HÌNH.
+   *
+   * Danh sách game là một ScrollView ngang (`view > Content > NodeSpines`)
+   * chứa nhiều mục hơn số ô nhìn thấy. Đo thực tế: cùng một lúc có ô Đếm Lá ở
+   * `nx = 0.286` (đang hiện) và các mục khác ở `nx = 2.2`, `3.7`, `4.1` — nằm
+   * ngoài màn về bên phải. `activeInHierarchy` của chúng vẫn TRUE, nên lấy
+   * "node khớp đầu tiên" có thể vớ phải ô ngoài khung hình rồi bấm ra ngoài.
+   *
+   * Vì thế: gom HẾT node khớp, chọn cái nằm trong khung hình. Không có cái nào
+   * trong khung thì trả cái đầu để người gọi báo đúng lý do "ngoài khung hình"
+   * (ô có tồn tại nhưng cần cuộn tới).
+   */
+  function timTheoSprite(hopLe) {
+    if (typeof cc === "undefined" || !cc.director) return null;
+    const scene = cc.director.getScene();
+    if (!scene) return null;
+    const khop = [];
+    (function quet(n, d) {
+      if (!n || d > 30 || !isNodeVisible(n)) return;
+      const sp = tenSprite(n);
+      if (sp && hopLe(sp)) khop.push(n);
+      const ch = n.children || [];
+      for (let i = 0; i < ch.length; i++) quet(ch[i], d + 1);
+    })(scene, 0);
+    if (!khop.length) return null;
+    for (let i = 0; i < khop.length; i++) {
+      if (viTriNodeTrenCanvas(khop[i])) return khop[i];   // trả null nếu ngoài khung
+    }
+    return khop[0];
+  }
+
+  // Mục điều hướng -> cách tìm node. Tách khỏi phần bấm để Python hỏi được
+  // "ô này ở đâu" rồi tự bấm bằng chuột THẬT.
+  const MUC_DIEU_HUONG = {
+    tab_game_bai: () => timNodeHien((t, n) => t === "GAME BÀI" || n === "gamebai"),
+    // "demla" chỉ có ở ô cần bấm; ô Tiến Lên Miền Nam là "tielenmiennam".
+    o_dem_la: () => timTheoSprite((sp) => sp.includes("demla")),
+    // ĐO ĐƯỢC ở sảnh chọn bàn: node `lblSolo` chữ "BÀN SOLO (280)" và
+    // `lbl4Nguoi` chữ "BÀN 4 NGƯỜI (6)" — KHÔNG phải "SOLO" / "4 NGƯỜI" trần
+    // như bản trước tìm. Chữ còn kèm số đếm nên phải khớp theo TIỀN TỐ.
+    tab_solo: () => timNodeHien((t, n) => n === "lblsolo" || t.startsWith("BÀN SOLO")),
+    tab_4nguoi: () => timNodeHien((t, n) => n === "lbl4nguoi" || t.startsWith("BÀN 4 NGƯỜI")),
+  };
+
+  /** Vị trí (tỉ lệ 0..1) để bấm một mục điều hướng.
+   *
+   * KHÔNG tự bấm. Đo được trên sảnh thật: sự kiện chuột/cảm ứng TỔNG HỢP bằng
+   * JS không tới được Cocos — đã thử năm kiểu (mouse trên canvas, touch,
+   * pointer kiểu touch, mouse trên document, emit thẳng vào node) và không
+   * kiểu nào chuyển được tab. Chỉ chuột THẬT của Playwright mới ăn. Nên JS chỉ
+   * tính vị trí, Python bấm.
+   */
+  G.__autotool_vi_tri_muc = function (muc) {
+    try {
+      const tim = MUC_DIEU_HUONG[muc];
+      if (!tim) return { ok: false, loi: "mục không biết: " + muc };
+      const node = tim();
+      if (!node) return { ok: false, loi: "không thấy mục đang hiển thị" };
+      const vt = viTriNodeTrenCanvas(node);
+      if (!vt) return { ok: false, loi: "không tính được vị trí (ngoài khung hình?)" };
+      const de = deLenSanhKhac(vt.nx, vt.ny);
+      if (de) return { ok: false, loi: 'điểm bấm nằm trong ô "' + de + '"' };
+      return { ok: true, nx: vt.nx, ny: vt.ny,
+               node: node.name || "", sprite: tenSprite(node) };
+    } catch (e) {
+      return { ok: false, loi: String(e) };
+    }
+  };
+
+  /** Đang ở màn hình nào. Dùng để XÁC MINH sau mỗi bước điều hướng. */
+  G.__autotool_man_hinh = function () {
+    try {
+      const sc = tenScene();
+      // Khu Tiến Lên Đếm Lá: scene riêng. Trong đó phân biệt sảnh chọn bàn với
+      // đang ngồi trong bàn bằng các node mốc đo được (`lblMucCuoc` là nhãn mức
+      // cược trên từng ô bàn; `lblSolo`/`lbl4Nguoi` là ba tab đầu màn).
+      if (sc.includes("tldl")) {
+        if (coNodeTen((n) => n === "lblmuccuoc" || n === "lblsolo" || n === "lbl4nguoi")) {
+          return "chon_ban";
+        }
+        if (isInsideGameTable()) return "trong_ban";
+        return "tldl_khac";
+      }
+      if (isInsideGameTable()) return "trong_ban";
+      // Màn chọn game bài: nhận bằng SPRITE, vì ô game không có nhãn chữ.
+      if (timTheoSprite((sp) => sp.includes("demla") || sp.includes("maubinh")
+                             || sp.includes("phom"))) return "game_bai";
+      return "sanh_chinh";
+    } catch (e) {
+      return "?";
+    }
+  };
+
   /** Đang ở màn chọn game bài chưa (đã bấm đúng tab GAME BÀI). */
   function dangOManGameBai() {
-    return !!timNodeHien((t) => t.includes("ĐẾM LÁ") || t.includes("PHỎM")
-      || t.includes("MẬU BINH") || t.includes("SÂM LỐC") || t.includes("XÌ DÁCH"));
+    // Nhận bằng SPRITE, không phải chữ: ô game là hình vẽ, không có nhãn chữ.
+    // Bản trước dò chữ nên luôn báo CHƯA, kể cả khi màn đã mở.
+    return !!timTheoSprite((sp) => sp.includes("demla") || sp.includes("maubinh")
+      || sp.includes("phom") || sp.includes("xizach") || sp.includes("lieng"));
   }
   G.__autotool_o_man_game_bai = dangOManGameBai;
 
@@ -1413,6 +1563,15 @@
 
       // Popup che màn -> chưa thao tác được -> CHƯA sẵn sàng.
       if (hasBlockingPopup()) return false;
+
+      // ĐƯỜNG CHẮC CHẮN NHẤT, đo được: khu Đếm Lá là scene RIÊNG ("TLDLScene"),
+      // sảnh chính là "LobbyNew". Trong scene đó, sảnh chọn bàn có các node mốc
+      // `lblMucCuoc` / `lblSolo` / `lbl4Nguoi`.
+      // Phép dò theo chữ bên dưới giữ làm dự phòng: nhãn thật là "BÀN SOLO (280)"
+      // chứ không phải "SOLO", nên nó vốn đã mong manh.
+      if (tenScene().includes("tldl")) {
+        return coNodeTen((n) => n === "lblmuccuoc" || n === "lblsolo" || n === "lbl4nguoi");
+      }
 
       // ĐÃ BỎ đường "socket đang nối + thấy node giống sảnh chọn bàn -> true".
       // Socket nối KHÔNG đồng nghĩa đang ở sảnh chọn bàn: vẫn có thể đang ở

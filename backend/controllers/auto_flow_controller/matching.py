@@ -24,6 +24,7 @@ from .lobby import (
     _do_leave_room,
     dong_luot_chay,
     ly_do_chua_o_sanh,
+    man_hinh_hien_tai,
 )
 from .rounds import check_and_click_ready_or_start
 
@@ -402,7 +403,18 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         )
         if _should_stop():
             return {"ok": False, "error": "Đã dừng chu trình gom bàn theo lệnh của bạn.", "stopped": True}
-        not_ready = [p_name for p_name, entered in lobby_results if not entered]
+        # XÁC MINH LẠI trên từng trang, không tin giá trị trả về của bước trước.
+        # Yêu cầu: MỌI account phải dẹp xong popup, vào được màn Game Bài, chọn
+        # Tiến Lên Đếm Lá và ĐỨNG Ở SẢNH CHỌN BÀN — rồi mới bắt đầu join.
+        # Một nick còn kẹt ngoài sảnh chính là cả lượt chạy hỏng: nick giữ tiền
+        # vào bàn rồi ngồi đó một mình với người lạ.
+        not_ready = []
+        for p_name, entered in lobby_results:
+            man = await man_hinh_hien_tai(pages.get(p_name)) if entered else "?"
+            if not entered or man != "chon_ban":
+                not_ready.append(p_name)
+            else:
+                log.info("find-and-match: %s đã đứng ở sảnh chọn bàn.", p_name)
         if not_ready:
             # Nói RÕ vì sao từng profile chưa vào được. Chỉ liệt kê tên thì
             # người dùng không biết phải làm gì — popup quảng cáo che màn khác

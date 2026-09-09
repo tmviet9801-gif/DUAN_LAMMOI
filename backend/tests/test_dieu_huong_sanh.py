@@ -88,11 +88,39 @@ def test_khong_di_nguoc_cay_vo_han_de_tim_nut():
 
 
 def test_xac_minh_da_vao_man_game_bai():
-    """Bấm xong phải KIỂM, không tin giá trị trả về."""
+    """Bấm xong phải KIỂM, không tin giá trị trả về.
+
+    Và phải kiểm bằng SPRITE, không phải chữ: ĐO TRÊN MÀN GAME BÀI THẬT cho
+    thấy các ô game KHÔNG có nhãn chữ — tên game là hình vẽ. Bản dò theo chữ
+    trả về "chưa vào" ngay cả khi màn đã mở.
+        vgcg_1  -> "tien-len-dem-la@2x"   (ô cần bấm)
+        vgcg_11 -> "tielenmiennam@2x"     (ô Tiến Lên Miền Nam, phải tránh)
+    """
     code = _code(EXT)
     assert "function dangOManGameBai()" in code
-    khoi = EXT.read_text(encoding="utf-8").split("function dangOManGameBai", 1)[1][:400]
-    assert 'includes("ĐẾM LÁ")' in khoi and 'includes("PHỎM")' in khoi
+    khoi = EXT.read_text(encoding="utf-8").split("function dangOManGameBai", 1)[1][:600]
+    assert "timTheoSprite(" in khoi, "vẫn nhận màn Game Bài bằng chữ"
+    assert 'includes("demla")' in khoi
+
+
+def test_o_dem_la_phan_biet_voi_tien_len_mien_nam():
+    """Hai ô RIÊNG BIỆT trong màn Game Bài. Sprite phân biệt chúng dứt khoát:
+    ô cần bấm là "tien-len-dem-la", ô cần tránh là "tielenmiennam" — chuỗi
+    "demla" chỉ có ở ô đầu."""
+    code = _code(EXT)
+    khoi = code.split("MUC_DIEU_HUONG", 1)[1][:700]
+    assert 'timTheoSprite((sp) => sp.includes("demla"))' in khoi
+    # chốt bằng chính hai tên sprite đo được
+    chuan = lambda t: t.lower().replace("@2x", "").replace("-", "")
+    assert "demla" in chuan("tien-len-dem-la@2x")
+    assert "demla" not in chuan("tielenmiennam@2x")
+
+
+def test_ten_sprite_duoc_chuan_hoa():
+    src = EXT.read_text(encoding="utf-8")
+    khoi = src.split("function tenSprite", 1)[1][:700]
+    assert "@" in khoi and "toLowerCase()" in khoi
+    assert "[^a-z0-9]" in khoi
 
 
 # ---------- popup ----------
@@ -259,3 +287,89 @@ def test_phep_doi_toa_do_o_kich_thuoc_cua_so_mac_dinh():
     assert round(0.250 * 505) == 126        # trúng dải tab
     # kích thước mặc định của app (hai ô "Rộng/Cao" cũ: 520x580)
     assert round(0.250 * 580) == 145        # rơi xuống mép card TÀI XỈU
+
+
+# ---------- JS tính vị trí, Python bấm THẬT ----------
+
+def test_js_khong_tu_bam_ma_chi_tra_vi_tri():
+    """ĐO ĐƯỢC: sự kiện chuột/cảm ứng TỔNG HỢP bằng JS KHÔNG tới được Cocos.
+
+    Đã thử năm kiểu trên sảnh thật — mouse trên canvas, touch, pointer kiểu
+    touch, mouse trên document, emit thẳng vào node — không kiểu nào chuyển
+    được tab. Chỉ `page.mouse.click` của Playwright (sự kiện thật) mới ăn; đã
+    xác nhận bằng ảnh chụp trước/sau.
+    """
+    code = _code(EXT)
+    assert "G.__autotool_vi_tri_muc = function" in code
+    khoi = EXT.read_text(encoding="utf-8").split("__autotool_vi_tri_muc", 1)[1][:1400]
+    assert "dispatchCanvasClick" not in khoi, "JS vẫn tự bấm"
+    assert "return { ok: true, nx:" in khoi
+
+
+def test_python_bam_bang_chuot_that():
+    src = (BE / "controllers/auto_flow_controller/lobby.py").read_text(encoding="utf-8")
+    khoi = src.split("async def bam_muc", 1)[1][:2200]
+    assert "__autotool_vi_tri_muc" in khoi
+    assert "await p.mouse.click(x, y)" in khoi
+
+
+def test_uu_tien_node_TRONG_KHUNG_HINH():
+    """Danh sách game là ScrollView ngang: cùng lúc có ô Đếm Lá ở nx=0.286
+    (đang hiện) và các mục khác ở nx=2.2, 3.7, 4.1 — ngoài màn về bên phải,
+    mà `activeInHierarchy` vẫn TRUE. Lấy "node khớp đầu tiên" là bấm ra ngoài
+    khung hình (đo được: tính ra x=1739 trên canvas rộng 784).
+    """
+    src = EXT.read_text(encoding="utf-8")
+    for ham in ("function timTheoSprite", "function timNodeHien"):
+        khoi = src.split(ham, 1)[1][:1800]
+        assert "viTriNodeTrenCanvas(khop[i])" in khoi, f"{ham} chưa ưu tiên node trong khung"
+
+
+# ---------- nhận diện màn hình theo TÊN SCENE ----------
+
+def test_nhan_dien_theo_ten_scene():
+    """ĐO ĐƯỢC — dấu hiệu dứt khoát nhất, khỏi đoán qua chữ:
+        "LobbyNew"  -> sảnh chính
+        "TLDLScene" -> khu Tiến Lên Đếm Lá
+    """
+    code = _code(EXT)
+    assert "function tenScene()" in code
+    khoi = EXT.read_text(encoding="utf-8").split("__autotool_man_hinh", 1)[1][:1400]
+    assert 'sc.includes("tldl")' in khoi
+
+
+def test_moc_cua_sanh_chon_ban_dung_ten_node_do_duoc():
+    """ĐO ĐƯỢC ở sảnh chọn bàn: `lblMucCuoc` (nhãn mức cược trên từng ô bàn),
+    `lblSolo` chữ "BÀN SOLO (280)", `lbl4Nguoi` chữ "BÀN 4 NGƯỜI (6)"."""
+    code = _code(EXT)
+    assert 'n === "lblmuccuoc"' in code
+    assert 'n === "lblsolo"' in code and 'n === "lbl4nguoi"' in code
+
+
+def test_tab_cho_ngoi_khop_nhan_THAT():
+    """Nhãn thật là "BÀN SOLO (280)", KHÔNG phải "SOLO" trần như bản trước tìm —
+    và còn kèm số đếm nên phải khớp theo TIỀN TỐ."""
+    code = _code(EXT)
+    khoi = code.split("MUC_DIEU_HUONG", 1)[1][:900]
+    assert 'startsWith("BÀN SOLO")' in khoi
+    assert 'startsWith("BÀN 4 NGƯỜI")' in khoi
+    assert 't === "SOLO"' not in khoi, "vẫn khớp nhãn trần 'SOLO'"
+
+
+# ---------- rào chắn: MỌI account phải ở sảnh chọn bàn ----------
+
+def test_xac_minh_lai_tung_profile_truoc_khi_join():
+    """Một nick còn kẹt ngoài sảnh chính là cả lượt chạy hỏng: nick giữ tiền
+    vào bàn rồi ngồi đó một mình với người lạ."""
+    src = (BE / "controllers/auto_flow_controller/matching.py").read_text(encoding="utf-8")
+    khoi = src.split("not_ready = []", 1)[1][:900]
+    assert "man_hinh_hien_tai(pages.get(p_name))" in khoi
+    assert 'man != "chon_ban"' in khoi
+
+
+def test_bao_ro_dang_ket_o_dau():
+    src = (BE / "controllers/auto_flow_controller/lobby.py").read_text(encoding="utf-8")
+    khoi = src.split("async def ly_do_chua_o_sanh", 1)[1][:2000]
+    for m in ("sanh_chinh", "game_bai", "trong_ban", "chon_ban"):
+        assert m in khoi, f"thiếu mô tả cho màn {m}"
+    assert "chưa bấm được ô Tiến Lên Đếm Lá" in khoi

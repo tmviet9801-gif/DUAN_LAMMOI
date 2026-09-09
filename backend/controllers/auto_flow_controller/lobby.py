@@ -140,6 +140,61 @@ async def dong_luot_chay(pages, ly_do=""):
              f" ({ly_do})" if ly_do else "")
 
 
+async def man_hinh_hien_tai(p):
+    """Profile đang ở màn nào: sanh_chinh / game_bai / chon_ban / trong_ban."""
+    if not p or (hasattr(p, "is_closed") and p.is_closed()):
+        return "dong"
+    try:
+        return await eval_page(p, """() => {
+            return (typeof window.__autotool_man_hinh === 'function')
+                ? window.__autotool_man_hinh() : 'chua_nap';
+        }""") or "?"
+    except Exception:
+        return "?"
+
+
+async def bam_muc(p, muc, name="Profile", target_mu=2):
+    """Bấm một mục điều hướng: JS TÍNH VỊ TRÍ, Playwright BẤM THẬT.
+
+    Vì sao tách đôi: đo trên sảnh thật cho thấy sự kiện chuột/cảm ứng TỔNG HỢP
+    bằng JS KHÔNG tới được Cocos. Đã thử năm kiểu — mouse trên canvas, touch,
+    pointer kiểu touch, mouse trên document, emit thẳng vào node — không kiểu
+    nào chuyển được tab. Chỉ `page.mouse.click` của Playwright (sự kiện thật,
+    `isTrusted`) mới ăn.
+
+    Đó cũng là lý do bản cũ "bấm" tab Game Bài mà màn không đổi: hàm JS báo
+    thành công nên luồng đi tiếp, rồi bước sau bấm mù vào vị trí ô Đếm Lá —
+    nhưng vẫn đang ở tab ALL GAMES, nên trúng ô Tài Xỉu.
+
+    Toạ độ lấy TỪ CHÍNH NODE nên đúng ở mọi kích thước cửa sổ.
+    """
+    if not p or (hasattr(p, "is_closed") and p.is_closed()):
+        return False, "trang đã đóng"
+    try:
+        vt = await eval_page(p, """(muc) => {
+            if (typeof window.__autotool_vi_tri_muc !== 'function') {
+                return { ok: false, loi: 'extension chưa nạp' };
+            }
+            return window.__autotool_vi_tri_muc(muc);
+        }""", muc) or {}
+    except Exception as e:
+        return False, f"không hỏi được vị trí: {e}"
+
+    if not vt.get("ok"):
+        return False, vt.get("loi") or "không xác định được vị trí"
+
+    sw, sh = await _get_screen_size_util(p)
+    x = int(sw * float(vt["nx"]))
+    y = int(sh * float(vt["ny"]))
+    try:
+        await p.mouse.click(x, y)
+    except Exception as e:
+        return False, f"bấm lỗi: {e}"
+    log.info("%s: bấm '%s' tại (%d, %d) — node=%s sprite=%s",
+             name, muc, x, y, vt.get("node"), vt.get("sprite"))
+    return True, ""
+
+
 async def ly_do_chua_o_sanh(p):
     """Vì sao profile này chưa ở sảnh chọn bàn — câu nói thẳng cho người dùng.
 
@@ -158,7 +213,17 @@ async def ly_do_chua_o_sanh(p):
                     && window.__autotool_has_popup()) {
                 return 'có popup/quảng cáo che màn hình';
             }
-            return window.__autotool_ly_do_chua_o_sanh || 'chưa rõ';
+            // Nói rõ đang KẸT Ở ĐÂU, không chỉ "chưa vào được".
+            const man = (typeof window.__autotool_man_hinh === 'function')
+                ? window.__autotool_man_hinh() : '?';
+            const mo_ta = {
+                sanh_chinh: 'còn đứng ở sảnh chính (chưa bấm được tab Game Bài)',
+                game_bai: 'đã vào màn Game Bài nhưng chưa bấm được ô Tiến Lên Đếm Lá',
+                trong_ban: 'đang ngồi trong một bàn — cần rời bàn trước',
+                tldl_khac: 'đang ở khu Đếm Lá nhưng không phải màn chọn bàn',
+                chon_ban: 'đã ở sảnh chọn bàn',
+            };
+            return mo_ta[man] || (window.__autotool_ly_do_chua_o_sanh || 'chưa rõ');
         }""") or "chưa rõ"
     except Exception as e:
         return f"không đọc được trạng thái ({type(e).__name__})"
@@ -232,31 +297,70 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
             pass
         return True
 
-    # ƯU TIÊN: dùng chính hàm điều hướng của extension. Nó DẸP POPUP trước rồi
-    # click bằng node Cocos (Game Bài -> Tiến Lên Đếm Lá -> tab Solo/4 người),
-    # nên không phụ thuộc ảnh mẫu hay độ phân giải.
+    # ĐƯỜNG CHÍNH: JS tính vị trí từ chính node, Playwright bấm bằng chuột THẬT.
     #
-    # Đường OpenCV bên dưới KHÔNG dẹp popup: gặp banner "CẢNH BÁO LỪA ĐẢO" của
-    # game là kẹt luôn ở sảnh chính — đúng tình huống nick phụ đứng ngoài trong
-    # khi nick chính đã vào sảnh chọn bàn, làm hỏng cả lượt gom bàn.
-    try:
-        entered = await eval_page(p, """(mu) => {
-            if (typeof window.__autotool_dismiss_popups === 'function') {
-                try { window.__autotool_dismiss_popups(); } catch (e) {}
-            }
-            if (typeof window.__autotool_auto_enter_tldl === 'function') {
-                return window.__autotool_auto_enter_tldl(mu);
-            }
-            return null;
-        }""", int(target_mu))
-        if entered is not None:
+    # Bản trước gọi `__autotool_auto_enter_tldl()` để extension tự bấm. Đo trên
+    # sảnh thật: sự kiện chuột/cảm ứng TỔNG HỢP bằng JS không tới được Cocos —
+    # đã thử năm kiểu, không kiểu nào chuyển được tab. Hàm JS vẫn báo thành
+    # công nên luồng đi tiếp, rồi bấm mù vào vị trí ô Đếm Lá trong khi màn vẫn
+    # là tab ALL GAMES — trúng ô Tài Xỉu.
+    #
+    # Mỗi bước đều XÁC MINH bằng `__autotool_man_hinh()` trước khi đi tiếp.
+    dep_popup_js = """() => {
+        if (typeof window.__autotool_dismiss_popups === 'function') {
+            try { window.__autotool_dismiss_popups(); } catch (e) {}
+        }
+    }"""
+    muc_tab_cho = "tab_solo" if int(target_mu) == 2 else "tab_4nguoi"
+
+    for vong in range(3):
+        try:
+            await eval_page(p, dep_popup_js)
+            await asyncio.sleep(0.4)
+        except Exception:
+            pass
+
+        man = await man_hinh_hien_tai(p)
+        if man == "chua_nap":
+            log.warning("%s: extension chưa nạp -> không điều hướng được.", name)
+            break
+        if man == "trong_ban":
+            log.info("%s: đang trong bàn -> rời bàn trước khi vào sảnh.", name)
+            break
+
+        if man == "sanh_chinh":
+            ok, ly_do = await bam_muc(p, "tab_game_bai", name)
+            if not ok:
+                log.warning("%s: chưa bấm được tab GAME BÀI — %s", name, ly_do)
+            await asyncio.sleep(1.0)
+            man = await man_hinh_hien_tai(p)
+
+        if man == "game_bai":
+            ok, ly_do = await bam_muc(p, "o_dem_la", name)
+            if not ok:
+                log.warning("%s: chưa bấm được ô TIẾN LÊN ĐẾM LÁ — %s", name, ly_do)
+            await asyncio.sleep(2.0)
+            man = await man_hinh_hien_tai(p)
+
+        if man == "chon_ban":
+            # Tab Solo / 4 người. Không bấm được theo node thì lùi về toạ độ
+            # tỉ lệ — rủi ro thấp vì đã ở trong sảnh Đếm Lá, và bước join sau
+            # còn đối chiếu rid theo mức cược.
+            ok, _ = await bam_muc(p, muc_tab_cho, name)
+            if not ok:
+                tab_x = 0.500 if int(target_mu) == 2 else 0.690
+                try:
+                    await p.mouse.click(int(sw * tab_x), int(sh * 0.175))
+                except Exception:
+                    pass
             await asyncio.sleep(0.5)
-            if await _is_in_tldl_lobby_util(p):
-                log.info("%s đã vào sảnh Tiến Lên Đếm Lá qua điều hướng của extension.", name)
-                return True
-            log.info("%s: điều hướng extension chưa vào được sảnh -> thử tiếp bằng OpenCV.", name)
-    except Exception as e:
-        log.warning("%s: gọi điều hướng extension lỗi (%s) -> dùng OpenCV.", name, e)
+            log.info("%s: đã đứng ở sảnh chọn bàn Tiến Lên Đếm Lá.", name)
+            return True
+
+        log.info("%s: sau vòng %d vẫn ở màn '%s' -> thử lại.", name, vong + 1, man)
+        await asyncio.sleep(0.8)
+
+    log.info("%s: đường chính chưa vào được sảnh -> thử tiếp bằng OpenCV.", name)
 
     log.info("%s chưa ở sảnh Tiến Lên Đếm Lá -> Kích hoạt điều hướng thông minh (OpenCV Template Matching)...", name)
 
