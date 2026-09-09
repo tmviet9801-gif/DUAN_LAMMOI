@@ -1725,7 +1725,10 @@ button.ghost:hover { border-color: var(--accent); color: var(--accent); }
   font-weight: 800;
 }
 
-.gc-chip.thieu-ten {
+/* Profile se bi preflight loai: thieu tien, chua co ten in-game,
+   hoac chua doc duoc trang thai. Mot mau do duy nhat vi hau qua
+   giong nhau — khong duoc mo. Ly do cu the nam trong tooltip. */
+.gc-chip.khong-dat {
   background: rgba(239, 68, 68, 0.15);
   color: #ef4444;
   border-color: rgba(239, 68, 68, 0.4);
@@ -1735,26 +1738,6 @@ button.ghost:hover { border-color: var(--accent); color: var(--accent); }
   font-size: 11px;
   font-style: italic;
   color: var(--muted, #94a3b8);
-}
-
-.badge-role {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 4px;
-  white-space: nowrap;
-}
-
-.badge-role.main {
-  background: rgba(245, 158, 11, 0.18);
-  color: #f59e0b;
-  border: 1px solid rgba(245, 158, 11, 0.4);
-}
-
-.badge-role.sub {
-  background: rgba(14, 165, 233, 0.18);
-  color: #0284c7;
-  border: 1px solid rgba(14, 165, 233, 0.4);
 }
 
 .gc-sync-actions {

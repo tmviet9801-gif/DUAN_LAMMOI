@@ -56,7 +56,7 @@
       const thieuTien = soDu !== null && can > 0 && soDu < can;
       const el = document.createElement("span");
       el.className = "gc-chip" + (i === 0 ? " anchor" : "")
-        + (tenGame && !thieuTien ? "" : " thieu-ten");
+        + (tenGame && !thieuTien ? "" : " khong-dat");
       el.textContent = `${i === 0 ? "💰 " : ""}${ten}`;
 
       const chu = [];
