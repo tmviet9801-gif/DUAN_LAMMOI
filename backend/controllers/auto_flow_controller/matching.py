@@ -9,7 +9,7 @@ from models.config_model import load_accounts
 
 from core.page_world import eval_page
 
-from .constants import BET_RATIOS
+from .constants import BET_RATIOS, FIXED_TABLE_RIDS
 from .context import (
     MatchContext,
     danh_sach_dong_doi,
@@ -130,9 +130,25 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     # account giữ tiền ngồi lại một mình với người lạ.
     # Kiểm bằng token + WebSocket, KHÔNG mở Chrome (profile đang mở thì đọc
     # thẳng từ trang).
+    # Chan tham so vo nghia NGAY, truoc khi ton cong mo Chrome.
+    # Truoc day: target_bet la -> am tham ha xuong 100 (nguoi dung tin la dang
+    # choi muc minh chon); mu ngoai {2,4} -> FIXED_TABLE_RIDS khong co rid ->
+    # requested_rid = None -> moi vong deu tu choi join voi ly do 'no_rid', ngu
+    # 1s, lap lai 999999 lan. Giao dien dung yen o "DANG DO TIM PHONG" vinh vien,
+    # khong mot thong bao nao. O Slot la o nhap SO TU DO nen go 3 la dinh.
     _bet_kiem = int(body.get("target_bet", 100) or 100)
     if _bet_kiem not in BET_RATIOS:
-        _bet_kiem = 100
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Muc cuoc ${_bet_kiem:,} khong co trong game. "
+                    f"Chon mot trong: {', '.join(f'${b:,}' for b in sorted(BET_RATIOS))}"
+                    ).replace(",", "."))
+    _mu_kiem = int(body.get("mu", 2) or 2)
+    if FIXED_TABLE_RIDS.get(f"{_bet_kiem}_{_mu_kiem}") is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Ban {_mu_kiem} cho khong ton tai o muc ${_bet_kiem:,}. "
+                    f"So cho hop le: 2 hoac 4.").replace(",", "."))
     _ext_hub = getattr(request.app.state, "ext_hub", None)
 
     if body.get("kiem_truoc", True):
@@ -326,6 +342,18 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         first_name = profile_a
         first_page = pages[first_name]
         other_profiles = [name for name in pages.keys() if name != first_name]
+
+        # Ban chi co `target_mu` cho. Anchor chiem mot, nen so nick phu NGOI
+        # DUOC toi da la target_mu - 1. Truoc day vong lap co gang cho MOI nick
+        # phu ngoi xuong roi doi TAT CA phai thanh cong, nen tick 3 profile o
+        # ban 2 cho la khong bao gio ghep duoc — ma van bao thanh cong.
+        so_phu_toi_da = max(0, int(target_mu) - 1)
+        phu_se_ngoi = other_profiles[:so_phu_toi_da]
+        phu_du_bi = other_profiles[so_phu_toi_da:]
+        if phu_du_bi:
+            log.info("find-and-match: ban %s cho -> %d nick phu ngoi cung anchor; "
+                     "%s la du bi, dung cho o sanh",
+                     target_mu, len(phu_se_ngoi), ", ".join(phu_du_bi))
 
         # Làm sạch toàn bộ biến khóa cũ và kích hoạt chế độ SĂN BÀN trên các Extension
         ext_hub = getattr(request.app.state, "ext_hub", None)
@@ -855,7 +883,8 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
             # BƯỚC 3: ĐIỀU PHỐI CÁC TÀI KHOẢN PHỤ JOIN VÀO NHANH CHÓNG THEO ID (BÀN CÔNG CỘNG KHÔNG PASS)
             all_subs_matched = True
-            for sub_name in other_profiles:
+            da_ngoi = []
+            for sub_name in phu_se_ngoi:
                 if _should_stop():
                     break
                 sub_p = pages[sub_name]
@@ -884,11 +913,19 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     # 2. Nạp Account 2 vào Account 1 (ĐỂ ACCOUNT 1 NHẬN BIẾT ACCOUNT 2 LÀ ĐỒNG ĐỘI, KHÔNG COI LÀ KHÁCH LẠ)
                     await eval_page(anchor_page, f"() => {{ if (!window.__autotool_partners) window.__autotool_partners = []; window.__autotool_partners.push({_json.dumps(p_info_sub)}); if (typeof globalThis !== 'undefined') globalThis.__autotool_partners = window.__autotool_partners; }}")
 
+                    # Extension GÁN ĐÈ danh sách khi nhận SYNC_PARTNERS, không
+                    # gộp. Gửi mảnh lẻ từng nick thì xong nick B, anchor có
+                    # partners=[B]; sang nick C thì thành [C] — B biến mất và bị
+                    # coi là khách lạ ngay tại bàn của mình. Luôn gửi CẢ danh
+                    # sách đã xác minh từ database, cộng thêm nick vừa xử lý.
                     if ext_hub:
+                        ds_chung = list(dong_doi)
                         if ext_hub.is_connected(sub_name):
-                            await ext_hub.send_command(sub_name, "SYNC_PARTNERS", {"partners": [p_info_anchor, anchor_name, anchor_dn, anchor_u]})
+                            await ext_hub.send_command(sub_name, "SYNC_PARTNERS", {
+                                "partners": ds_chung + [p_info_anchor, anchor_name, anchor_dn, anchor_u]})
                         if ext_hub.is_connected(anchor_name):
-                            await ext_hub.send_command(anchor_name, "SYNC_PARTNERS", {"partners": [p_info_sub, sub_name, sub_dn, sub_u]})
+                            await ext_hub.send_command(anchor_name, "SYNC_PARTNERS", {
+                                "partners": ds_chung + [p_info_sub, sub_name, sub_dn, sub_u]})
                 except Exception as e:
                     log.warning("find-and-match: Lỗi đồng bộ định danh 2 chiều: %s", e)
 
@@ -900,21 +937,42 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         rid: Number((window.__last_room_info && window.__last_room_info.rid) || window.__ws_last_room_id || 0),
                         bet: Number((window.__last_room_info && window.__last_room_info.b) || 0),
                         players: (window.__room_players || []).length,
+                        la: (window.__room_players || []).filter((p) => {
+                            try {
+                                if (typeof window.__is_me === 'function' && window.__is_me(p)) return false;
+                                if (typeof window.__is_partner === 'function' && window.__is_partner(p)) return false;
+                            } catch (e) {}
+                            return true;   // thiếu helper -> coi là khách lạ (hỏng an toàn)
+                        }).length,
                         in_game: !!window.__game_in_progress,
                         stranger: !!(window.__last_room_info && window.__last_room_info.has_stranger)
                     })""")
                     gate_rid = int(anchor_gate.get("rid") or 0)
                     gate_bet = int(anchor_gate.get("bet") or 0)
                     gate_players = int(anchor_gate.get("players") or 0)
-                    if gate_rid != int(selected_rid) or gate_bet != int(bet_val) or gate_players != 1 or anchor_gate.get("in_game") or anchor_gate.get("stranger"):
-                        log.warning("find-and-match: HỦY vé join %s — Anchor không còn một mình đúng bàn (rid=%s/$%s, players=%s).",
-                                    sub_name, gate_rid, gate_bet, gate_players)
+                    gate_la = int(anchor_gate.get("la") or 0)
+                    con_cho = int(target_mu) - gate_players
+                    # Điều kiện đúng là KHÔNG CÓ KHÁCH LẠ và CÒN CHỖ, không phải
+                    # "anchor một mình". Sau khi nick phụ đầu ngồi xuống, anchor
+                    # thấy 2 người — điều kiện cũ `players != 1` huỷ vé của MỌI
+                    # nick phụ tiếp theo, nên bàn 4 chỗ không bao giờ đủ người.
+                    if (gate_rid != int(selected_rid) or gate_bet != int(bet_val)
+                            or gate_la > 0 or con_cho < 1
+                            or anchor_gate.get("in_game") or anchor_gate.get("stranger")):
+                        log.warning("find-and-match: HỦY vé join %s — bàn không an toàn "
+                                    "(rid=%s/$%s, người=%s, khách lạ=%s, còn chỗ=%s).",
+                                    sub_name, gate_rid, gate_bet, gate_players, gate_la, con_cho)
                         if ext_hub and ext_hub.is_connected(sub_name):
-                            await ext_hub.send_command(sub_name, "LEAVE_ROOM", {"reason": "Anchor không còn một mình ở bàn trống"})
-                        continue
+                            await ext_hub.send_command(sub_name, "LEAVE_ROOM", {"reason": "Bàn của anchor không còn an toàn/không còn chỗ"})
+                        # Đây là trạng thái của CẢ BÀN, không riêng nick này ->
+                        # đi tiếp các nick khác là vô nghĩa. Và phải hạ cờ, nếu
+                        # không sẽ báo "GOM BÀN THÀNH CÔNG" với người còn thiếu.
+                        all_subs_matched = False
+                        break
                 except Exception as e:
                     log.warning("find-and-match: Không xác minh được Anchor ngay trước khi cấp vé: %s", e)
-                    continue
+                    all_subs_matched = False
+                    break
 
                 # Cấp vé trước mọi command tới Sub. JOIN_ROOM của Hub chỉ là
                 # thông báo; lệnh WS thật bên dưới chỉ chạy khi vé hợp lệ.
@@ -928,7 +986,8 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     }}""")
                 except Exception:
                     log.warning("find-and-match: Không cấp được vé join cho %s", sub_name)
-                    continue
+                    all_subs_matched = False
+                    break
 
                 # V3: Bắn lệnh tức thời qua Extension Hub (<2ms) — DÙNG GÓI CHUẨN DUY NHẤT (không send_raw gói rác)
                 ext_hub = getattr(request.app.state, "ext_hub", None)
@@ -1050,6 +1109,8 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         await _ensure_in_tldl_lobby(sub_p, sub_name)
                         break
 
+                if sub_matched:
+                    da_ngoi.append(sub_name)
                 if not sub_matched:
                     all_subs_matched = False
                     log.warning("find-and-match: %s không vào được bàn #%s cùng %s!", sub_name, selected_rid, anchor_name)
@@ -1058,11 +1119,17 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         await _ensure_in_tldl_lobby(sub_p, sub_name)
                     break
 
-            if all_subs_matched:
+            # Thành công = ĐỦ số nick phụ mà bàn chứa được, và chỉ tính những
+            # nick ĐÃ xác minh hai chiều. Trước đây cờ `all_subs_matched` vẫn
+            # True khi vé bị huỷ bằng `continue`, nên hệ thống báo "ĐÃ NGỒI
+            # CHUNG bàn" kèm tên những nick chưa bao giờ vào.
+            if all_subs_matched and len(da_ngoi) == len(phu_se_ngoi) and da_ngoi:
                 found_match = True
-                log.info("find-and-match: >>> GOM BÀN THÀNH CÔNG! TẤT CẢ TÀI KHOẢN ĐÃ Ở CHUNG BÀN #%s! <<<", selected_rid)
+                log.info("find-and-match: >>> GOM BÀN THÀNH CÔNG! %s + %s đã ở chung bàn #%s <<<",
+                         anchor_name, ", ".join(da_ngoi), selected_rid)
+                _them = f" ({len(phu_du_bi)} nick dự bị chờ ở sảnh)" if phu_du_bi else ""
                 await _notify_all(ext_hub,
-                                  f"✅ {anchor_name} và {', '.join(other_profiles)} ĐÃ NGỒI CHUNG bàn #{selected_rid} (${bet_val}) → Sẵn sàng → Bắt đầu → Xả bài!",
+                                  f"✅ {anchor_name} và {', '.join(da_ngoi)} ĐÃ NGỒI CHUNG bàn #{selected_rid} (${bet_val}){_them} → Sẵn sàng → Bắt đầu → Xả bài!",
                                   "success", "✅ Gặp nhau thành công")
                 break
             else:
