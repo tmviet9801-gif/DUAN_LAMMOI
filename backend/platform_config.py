@@ -5,6 +5,7 @@ Khi build bản B52, chỉ cần đổi preset này (id/app_name/url/adapter) �
 dữ liệu (accounts/proxies/license) tách riêng theo platform id.
 """
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -40,9 +41,10 @@ PLATFORM_OWNER_EMAIL = ""  # hiển thị trong phần trợ giúp license
 # URL mặc định cho profile khi tạo mới (trỏ vào game)
 DEFAULT_PROFILE_URL = PLATFORM_GAME_URL
 
-# Token chủ sở hữu — dùng để mở khóa panel sinh license trong app.
-# CHỈ owner biết; đổi trước khi build. Nếu để trống, panel sinh license tắt.
-OWNER_TOKEN = "AutoToolOwner@2026"
+# Token chủ sở hữu — mở khoá panel tự sinh license ngay trong app.
+# Đọc từ biến môi trường, KHÔNG hardcode: bản gửi khách không có biến này nên
+# token rỗng và panel tự tắt. Bản thương mại cấp key từ portal, không dùng panel.
+OWNER_TOKEN = os.environ.get("AUTOTOOL_OWNER_TOKEN", "")
 
 # ---- Khoá kiểm tra license (Ed25519) ----
 # Khoá CÔNG KHAI, base64 32 byte. Sinh bằng: node tools/gen-keypair.mjs bên portal.
@@ -57,9 +59,10 @@ LICENSE_PUBLIC_KEY = "MyACHl4vi3ZVli3R73UaORqr1orXAIvaH9dOhOiS2o4="
 # vừa dùng để kiểm tra vừa dùng để ký, nên ai lấy được nó vẫn tự sinh key vô hạn.
 # Nói cách khác: bật True là Ed25519 mất tác dụng bảo vệ.
 #
-# Quy trình chuyển đổi đúng: portal bấm "Cấp lại toàn bộ key sang Ed25519" ->
-# gửi key mới cho khách -> rồi mới phát hành bản app có LEGACY = False.
-ALLOW_LEGACY_HMAC = True
+# Dự án chưa bán ra ngoài nên không có key HMAC nào đang lưu hành -> tắt ngay
+# từ đầu, khỏi cần giai đoạn chuyển tiếp. Chỉ bật lại nếu về sau phải chấp nhận
+# key cũ, và khi đó phải chấp nhận luôn việc Ed25519 mất tác dụng bảo vệ.
+ALLOW_LEGACY_HMAC = False
 
 # ---- Máy chủ license (portal quản trị) ----
 # Key là HMAC tự chứa hạn dùng nên app kiểm tra được offline; nhưng thu hồi

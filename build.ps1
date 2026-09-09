@@ -6,6 +6,18 @@ $App = Join-Path $Root "app"
 Write-Host ""
 Write-Host "=== BUILD TAB MANAGER (app.exe) ===" -ForegroundColor Cyan
 
+# Soat truoc khi build: ban gui khach khong duoc chua bi mat nao.
+# Moi chuoi nam trong exe deu doc duoc, ke ca khi da ma hoa — app phai giai ma
+# de dung nen khoa giai ma cung o ngay do.
+Write-Host ""
+Write-Host "[0/4] Kiem tra ban phat hanh..." -ForegroundColor Yellow
+$py = Join-Path $Backend ".venv\Scripts\python.exe"
+if (-not (Test-Path $py)) { $py = "python" }
+& $py (Join-Path $Backend "tools\kiem_tra_ban_phat_hanh.py")
+if ($LASTEXITCODE -ne 0) {
+    throw "Cau hinh chua san sang de phat hanh — xem cac dong [LOI] o tren"
+}
+
 Write-Host ""
 Write-Host "[1/4] Build backend.exe..." -ForegroundColor Yellow
 & (Join-Path $Backend "build_backend.ps1")

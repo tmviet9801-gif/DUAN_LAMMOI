@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import platform
 import time
 from pathlib import Path
@@ -35,10 +36,16 @@ from platform_config import (
 
 log = logging.getLogger("license")
 
-# SECRET của scheme HMAC đời cũ (v1). Đối xứng: khoá này vừa ký vừa kiểm tra,
-# mà nó nằm ngay trong file exe gửi khách — ai unpack được exe là tự sinh key
-# vô hạn. Đó là lý do có v2 (Ed25519). Chỉ còn dùng khi ALLOW_LEGACY_HMAC=True.
-SECRET = b"AutoToolLicenseSecret_ChangeMe_2026"
+# SECRET của scheme HMAC đời cũ (v1). Đối xứng: khoá này vừa ký vừa kiểm tra.
+#
+# KHÔNG hardcode nó ở đây nữa. Mã hoá hay giấu chuỗi trong file exe đều vô ích:
+# app phải giải mã được để dùng, nên khoá giải mã cũng nằm trong exe — kẻ dịch
+# ngược chỉ tốn thêm một bước. Cách duy nhất chắc chắn là KHÔNG có bí mật nào
+# trong bản gửi khách.
+#
+# Giá trị đọc từ biến môi trường, chỉ đặt trên máy dev khi cần test key v1.
+# Bản build cho khách không có biến này -> SECRET rỗng -> key v1 tự động vô hiệu.
+SECRET = os.environ.get("AUTOTOOL_LEGACY_SECRET", "").encode()
 
 LICENSE_FILE = data_dir() / "license.json"
 
@@ -56,6 +63,10 @@ def get_machine_id() -> str:
 
 
 def _sign(payload: str) -> str:
+    if not SECRET:
+        raise RuntimeError(
+            "Khong co AUTOTOOL_LEGACY_SECRET — ban nay khong ky/kiem tra duoc key HMAC doi cu"
+        )
     return hmac.new(SECRET, payload.encode(), hashlib.sha256).hexdigest()[:16]
 
 
@@ -96,7 +107,7 @@ def _split_payload(payload: str) -> dict | None:
 
 def _parse_key_v1(key: str) -> dict | None:
     """AUTO-<sig16>-<base64url(payload)> — HMAC-SHA256, khoá đối xứng."""
-    if not ALLOW_LEGACY_HMAC:
+    if not ALLOW_LEGACY_HMAC or not SECRET:
         return None
     try:
         rest = key.strip().split("-", 1)[1]  # bỏ "AUTO-"

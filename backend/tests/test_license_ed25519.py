@@ -11,6 +11,13 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import license as lic
 
 
+@pytest.fixture(autouse=True)
+def _secret_cho_test(monkeypatch):
+    """Bản phát hành tắt HMAC và không có SECRET. Test key v1 thì bật lại."""
+    monkeypatch.setattr(lic, "SECRET", b"secret-chi-dung-trong-test")
+    monkeypatch.setattr(lic, "ALLOW_LEGACY_HMAC", True)
+
+
 def _b64url_nopad(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
 
@@ -129,3 +136,73 @@ def test_hai_dinh_dang_song_song(keypair, monkeypatch):
 
     assert lic.parse_key(v1)["algo"] == "hmac"
     assert lic.parse_key(v2)["algo"] == "ed25519"
+
+
+# --- bản gửi khách phải sạch bí mật ----------------------------------------
+
+def test_ban_build_khong_co_secret_thi_key_v1_tu_vo_hieu(keypair, monkeypatch):
+    """Bản build cho khách không có AUTOTOOL_LEGACY_SECRET.
+
+    Kể cả khi ai đó bật ALLOW_LEGACY_HMAC, không có SECRET thì key v1 vẫn hỏng
+    — vì không có gì để kiểm tra chữ ký. Đây là lớp chặn thứ hai, độc lập với cờ.
+    """
+    monkeypatch.setattr(lic, "ALLOW_LEGACY_HMAC", True)
+    monkeypatch.setattr(lic, "SECRET", b"")
+
+    assert lic.parse_key("AUTO-0123456789abcdef-YWJj") is None
+    # Key Ed25519 vẫn chạy bình thường: nó không cần SECRET.
+    assert lic.parse_key(_make_v2(keypair, machine_id="may-abc")) is not None
+
+
+def test_khong_co_secret_thi_khong_ky_duoc(monkeypatch):
+    """make_key phải báo lỗi rõ thay vì lặng lẽ ký bằng chuỗi rỗng."""
+    monkeypatch.setattr(lic, "SECRET", b"")
+    with pytest.raises(RuntimeError, match="AUTOTOOL_LEGACY_SECRET"):
+        lic.make_key("may-abc", 30, 10)
+
+
+def test_ma_nguon_khong_hardcode_bi_mat():
+    """Chặn việc ai đó vô tình dán lại secret vào mã nguồn."""
+    from pathlib import Path
+
+    goc = Path(__file__).resolve().parent.parent
+    cam = ["AutoToolLicenseSecret", "AutoToolOwner@"]
+    for ten in ["license.py", "platform_config.py"]:
+        noi_dung = (goc / ten).read_text(encoding="utf-8")
+        for chuoi in cam:
+            assert chuoi not in noi_dung, f"{ten} dang hardcode bi mat: {chuoi}"
+
+
+# --- bản gửi khách phải sạch bí mật ----------------------------------------
+
+def test_ban_build_khong_co_secret_thi_key_v1_tu_vo_hieu(keypair, monkeypatch):
+    """Bản build cho khách không có AUTOTOOL_LEGACY_SECRET.
+
+    Kể cả khi ai đó bật ALLOW_LEGACY_HMAC, không có SECRET thì key v1 vẫn hỏng
+    — vì không có gì để kiểm tra chữ ký. Đây là lớp chặn thứ hai, độc lập với cờ.
+    """
+    monkeypatch.setattr(lic, "ALLOW_LEGACY_HMAC", True)
+    monkeypatch.setattr(lic, "SECRET", b"")
+
+    assert lic.parse_key("AUTO-0123456789abcdef-YWJj") is None
+    # Key Ed25519 vẫn chạy bình thường: nó không cần SECRET.
+    assert lic.parse_key(_make_v2(keypair, machine_id="may-abc")) is not None
+
+
+def test_khong_co_secret_thi_khong_ky_duoc(monkeypatch):
+    """make_key phải báo lỗi rõ thay vì lặng lẽ ký bằng chuỗi rỗng."""
+    monkeypatch.setattr(lic, "SECRET", b"")
+    with pytest.raises(RuntimeError, match="AUTOTOOL_LEGACY_SECRET"):
+        lic.make_key("may-abc", 30, 10)
+
+
+def test_ma_nguon_khong_hardcode_bi_mat():
+    """Chặn việc ai đó vô tình dán lại secret vào mã nguồn."""
+    from pathlib import Path
+
+    goc = Path(__file__).resolve().parent.parent
+    cam = ["AutoToolLicenseSecret", "AutoToolOwner@"]
+    for ten in ["license.py", "platform_config.py"]:
+        noi_dung = (goc / ten).read_text(encoding="utf-8")
+        for chuoi in cam:
+            assert chuoi not in noi_dung, f"{ten} dang hardcode bi mat: {chuoi}"

@@ -1,6 +1,15 @@
 import time
 
+import pytest
+
 import license as lic
+
+
+@pytest.fixture(autouse=True)
+def _secret_cho_test(monkeypatch):
+    """Bản phát hành tắt HMAC và không có SECRET. Test key v1 thì bật lại."""
+    monkeypatch.setattr(lic, "SECRET", b"secret-chi-dung-trong-test")
+    monkeypatch.setattr(lic, "ALLOW_LEGACY_HMAC", True)
 
 
 def _gen(days=30, max_tabs=10):
