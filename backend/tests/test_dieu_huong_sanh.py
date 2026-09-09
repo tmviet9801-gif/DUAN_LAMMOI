@@ -183,3 +183,79 @@ def test_nut_dong_popup_loi_moi_that_duoc_khop():
     # không được khớp bừa
     assert not rx.match("btnok"), "không được bấm CHẤP NHẬN lời mời"
     assert not rx.match("khungdong") and not rx.match("dongho")
+
+
+# ---------- lớp phủ rỗng KHÔNG phải popup ----------
+
+def test_lop_phu_rong_khong_bi_coi_la_popup():
+    """ĐO TRÊN SẢNH THẬT: `PopupNode` là container RỖNG phủ toàn màn
+    (1560x720) và LUÔN tồn tại — không nhãn, không nút.
+
+    Chỉ khớp theo tên có chữ "popup" thì `hasBlockingPopup()` luôn trả true ->
+    `isAlreadyInTLDLLobby()` luôn false -> tool KHÔNG BAO GIỜ coi profile nào là
+    sẵn sàng ở sảnh. Đây là lỗi do chính bản vá popup trước đó gây ra.
+    """
+    src = EXT.read_text(encoding="utf-8")
+    khoi = src.split("function hasBlockingPopup", 1)[1][:2600]
+    assert "coNoiDung" in khoi, "chưa kiểm popup có nội dung hay không"
+    assert "&& coNoiDung(node)" in khoi, "vẫn nhận popup chỉ theo tên"
+
+
+def test_popup_co_noi_dung_nghia_la_co_nhan_hoac_nut():
+    src = EXT.read_text(encoding="utf-8")
+    khoi = src.split("const coNoiDung =", 1)[1][:900]
+    assert "getCocosNodeText(n)" in khoi
+    assert 'n.getComponent("cc.Button")' in khoi
+
+
+def test_van_bat_duoc_banh_bao_lua_dao_theo_CHU():
+    """Banner "CẢNH BÁO LỪA ĐẢO" nhận theo CHỮ nên không phụ thuộc tên node."""
+    src = EXT.read_text(encoding="utf-8")
+    khoi = src.split("function hasBlockingPopup", 1)[1][:2600]
+    assert 'text === "CẢNH BÁO LỪA ĐẢO"' in khoi
+    assert 'text === "BỎ QUA"' in khoi
+    # nhánh theo chữ phải đứng TRƯỚC nhánh theo tên (không cần coNoiDung)
+    assert khoi.index('CẢNH BÁO LỪA ĐẢO') < khoi.index("&& coNoiDung(node)")
+
+
+# ---------- không được đâm vào card game ngay bên dưới tab ----------
+
+def test_tu_choi_bam_neu_diem_roi_vao_o_game_khac():
+    """Ngay dưới hàng tab là dãy card TÀI XỈU / TÀI XỈU MD5 / XÓC ĐĨA.
+
+    Toạ độ mù `0.250` là TỈ LỆ theo chiều cao canvas: ở 784x505 nó ra y=126
+    (trúng tab), nhưng ở kích thước cửa sổ mặc định của app 520x580 thì
+    0.250*580 = 145 — đúng mép trên của card TÀI XỈU. Một hằng số chỉ đúng ở
+    đúng một kích thước cửa sổ.
+    """
+    code = _code(EXT)
+    assert "function deLenSanhKhac(" in code
+    khoi = EXT.read_text(encoding="utf-8").split("function bamNodeAnToan", 1)[1][:2600]
+    assert "deLenSanhKhac(vt.nx, vt.ny)" in khoi
+    assert "TỪ CHỐI bấm" in khoi
+
+
+def test_chot_bo_qua_nhan_ti_hon_chi_xet_o_that():
+    """Nhãn chữ nhỏ không phải "ô game" — chỉ chặn khi khối đủ lớn."""
+    src = EXT.read_text(encoding="utf-8")
+    khoi = src.split("function deLenSanhKhac", 1)[1][:1600]
+    assert "vs.width * 0.03" in khoi and "vs.height * 0.03" in khoi
+    assert "1 - ny) * vs.height" in khoi, "phải đổi về hệ Cocos (y từ dưới lên)"
+
+
+def test_danh_sach_nhan_khop_anh_chup_that():
+    """Đọc từ ảnh chụp sảnh: tab ALL GAMES / YÊU THÍCH / GAME BÀI / SLOTS /
+    LIVE / KHÁC, và card TÀI XỈU, TÀI XỈU MD5, XÓC ĐĨA."""
+    code = _code(EXT)
+    khoi = code.split("const NHAN_SANH_KHAC", 1)[1][:400]
+    for nhan in ('"TÀI XỈU MD5"', '"XÓC ĐĨA"', '"ALL GAMES"', '"KHÁC"'):
+        assert nhan in khoi, f"thiếu nhãn: {nhan}"
+
+
+def test_phep_doi_toa_do_o_kich_thuoc_cua_so_mac_dinh():
+    """Chứng minh bằng số: cùng hằng số 0.250, hai kích thước cửa sổ cho hai
+    kết quả khác hẳn — một trúng tab, một trúng card."""
+    # kích thước lúc đo được
+    assert round(0.250 * 505) == 126        # trúng dải tab
+    # kích thước mặc định của app (hai ô "Rộng/Cao" cũ: 520x580)
+    assert round(0.250 * 580) == 145        # rơi xuống mép card TÀI XỈU

@@ -972,9 +972,13 @@
 
   // Nhãn của các sảnh game KHÁC. Bấm nhầm vào đây là vào sảnh cược Tài/Xỉu
   // thay vì Game Bài — đúng triệu chứng người dùng gặp.
+  // Đọc từ ảnh chụp sảnh thật: hàng tab là ALL GAMES / YÊU THÍCH / GAME BÀI /
+  // SLOTS / LIVE / KHÁC, và ngay dưới là dãy card TÀI XỈU, TÀI XỈU MD5,
+  // XÓC ĐĨA, TÀI XỈU (live).
   const NHAN_SANH_KHAC = [
-    "TÀI XỈU", "TAI XIU", "SLOTS", "MINI GAME", "QUAY SỐ", "BẮN CÁ", "NỔ HŨ",
-    "XÓC ĐĨA", "BACCARAT", "POKER", "THỂ THAO", "LÔ ĐỀ",
+    "TÀI XỈU", "TAI XIU", "TÀI XỈU MD5", "SLOTS", "MINI GAME", "QUAY SỐ",
+    "BẮN CÁ", "NỔ HŨ", "XÓC ĐĨA", "BACCARAT", "POKER", "THỂ THAO", "LÔ ĐỀ",
+    "ALL GAMES", "YÊU THÍCH", "LIVE", "KHÁC",
   ];
 
   function laSanhKhac(text) {
@@ -1044,6 +1048,50 @@
     }
   }
 
+  /** Điểm (nx, ny) có rơi vào ô của một sảnh game KHÁC không.
+   *
+   * Ngay dưới hàng tab là dãy card game: TÀI XỈU, TÀI XỈU MD5, XÓC ĐĨA...
+   * Toạ độ mù cũ `(0.427, 0.250)` là TỈ LỆ theo chiều cao canvas: ở 784x505 nó
+   * ra y=126 (trúng tab), nhưng ở kích thước cửa sổ mặc định của app 520x580
+   * thì 0.250*580 = 145 — đúng mép trên của card TÀI XỈU. Một hằng số chỉ đúng
+   * ở đúng một kích thước cửa sổ.
+   *
+   * Chốt này mã hoá thẳng triệu chứng đó: dù tính vị trí kiểu gì, nếu điểm
+   * bấm nằm trong ô của game khác thì TỪ CHỐI.
+   */
+  function deLenSanhKhac(nx, ny) {
+    try {
+      if (typeof cc === "undefined" || !cc.director || !cc.view) return null;
+      const scene = cc.director.getScene();
+      const vs = cc.view.getVisibleSize();
+      if (!scene || !vs || !vs.width || !vs.height) return null;
+      const wx = nx * vs.width;
+      const wy = (1 - ny) * vs.height;          // về lại hệ Cocos (y từ dưới lên)
+      let trung = null;
+      (function quet(n, d) {
+        if (!n || trung || d > 30 || !isNodeVisible(n)) return;
+        const t = chuanNhan(getCocosNodeText(n));
+        if (t && laSanhKhac(t)) {
+          try {
+            const b = n.getBoundingBoxToWorld();
+            // Ô game thật có kích thước đáng kể; bỏ qua nhãn tí hon.
+            if (b.width > vs.width * 0.03 && b.height > vs.height * 0.03
+                && wx >= b.x && wx <= b.x + b.width
+                && wy >= b.y && wy <= b.y + b.height) {
+              trung = t;
+              return;
+            }
+          } catch (e) {}
+        }
+        const ch = n.children || [];
+        for (let i = 0; i < ch.length && !trung; i++) quet(ch[i], d + 1);
+      })(scene, 0);
+      return trung;
+    } catch (e) {
+      return null;
+    }
+  }
+
   /** Bấm một node, nhưng CHỈ khi nút tìm được vẫn còn chứa đúng nhãn cần bấm.
    *
    * `clickCocosNode` đi ngược lên cây tìm `cc.Button` KHÔNG giới hạn số tầng.
@@ -1094,6 +1142,11 @@
     const vt = viTriNodeTrenCanvas(node);
     if (!vt) {
       console.warn(`[AutoTool V3] TỪ CHỐI bấm "${nhanCanCo}": không xác định được vị trí node.`);
+      return false;
+    }
+    const de = deLenSanhKhac(vt.nx, vt.ny);
+    if (de) {
+      console.warn(`[AutoTool V3] TỪ CHỐI bấm "${nhanCanCo}": điểm (${vt.nx.toFixed(3)}, ${vt.ny.toFixed(3)}) nằm trong ô "${de}".`);
       return false;
     }
     console.log(`[AutoTool V3] Bấm "${nhanCanCo}" theo vị trí CỦA CHÍNH NODE (${vt.nx.toFixed(3)}, ${vt.ny.toFixed(3)}).`);
@@ -1261,15 +1314,43 @@
       if (typeof cc === "undefined" || !cc.director) return false;
       const scene = cc.director.getScene();
       if (!scene) return false;
+      // Có NỘI DUNG nhìn thấy được không (nhãn chữ hoặc nút bấm).
+      //
+      // Đo trên sảnh thật: `PopupNode` là một container RỖNG phủ toàn màn
+      // (1560x720) và LUÔN tồn tại. Chỉ khớp theo tên có chữ "popup" là hàm này
+      // luôn trả true -> `isAlreadyInTLDLLobby()` luôn false -> tool không bao
+      // giờ coi profile nào là sẵn sàng ở sảnh. Lớp phủ trống không phải popup.
+      const coNoiDung = (goc) => {
+        let co = false;
+        (function soi(n, d) {
+          if (!n || co || d > 8 || !isNodeVisible(n)) return;
+          if (getCocosNodeText(n)) { co = true; return; }
+          try {
+            if (n.getComponent && (n.getComponent("cc.Button")
+                || (typeof cc.Button !== "undefined" && n.getComponent(cc.Button)))) {
+              co = true;
+              return;
+            }
+          } catch (e) {}
+          const ch = n.children || [];
+          for (let i = 0; i < ch.length && !co; i++) soi(ch[i], d + 1);
+        })(goc, 0);
+        return co;
+      };
+
       let thay = false;
       (function quet(node, depth) {
         if (!node || depth > 30 || thay) return;
         if (isNodeVisible(node)) {
           const name = (node.name || "").toLowerCase();
           const text = getCocosNodeText(node).toUpperCase();
-          if (/^(popup|dialog|quangcao|banner|announce|notice)/.test(name)
-              || name.includes("popup") || name.includes("dialog")
-              || text === "BỎ QUA" || text === "CẢNH BÁO LỪA ĐẢO") {
+          if (text === "BỎ QUA" || text === "CẢNH BÁO LỪA ĐẢO") {
+            thay = true;
+            return;
+          }
+          if ((/^(popup|dialog|quangcao|banner|announce|notice)/.test(name)
+               || name.includes("popup") || name.includes("dialog"))
+              && coNoiDung(node)) {
             thay = true;
             return;
           }
