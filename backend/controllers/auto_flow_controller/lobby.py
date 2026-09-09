@@ -82,6 +82,30 @@ async def _is_in_tldl_lobby_util(p):
         return False
 
 
+async def ly_do_chua_o_sanh(p):
+    """Vì sao profile này chưa ở sảnh chọn bàn — câu nói thẳng cho người dùng.
+
+    Chỉ báo tên profile là không đủ: người dùng không biết phải làm gì. Ba
+    nguyên nhân hay gặp khác hẳn nhau — popup quảng cáo che màn, đứng ở sảnh
+    chính, hoặc extension chưa nạp.
+    """
+    if not p or (hasattr(p, "is_closed") and p.is_closed()):
+        return "trang đã đóng"
+    try:
+        return await eval_page(p, """() => {
+            if (typeof window.__autotool_is_in_tldl_lobby !== 'function') {
+                return 'extension chưa nạp — đóng và mở lại profile';
+            }
+            if (typeof window.__autotool_has_popup === 'function'
+                    && window.__autotool_has_popup()) {
+                return 'có popup/quảng cáo che màn hình';
+            }
+            return window.__autotool_ly_do_chua_o_sanh || 'chưa rõ';
+        }""") or "chưa rõ"
+    except Exception as e:
+        return f"không đọc được trạng thái ({type(e).__name__})"
+
+
 def _match_template_cv(screenshot_bytes, template_path, threshold=0.75):
     try:
         import cv2
@@ -126,6 +150,19 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
     if not p or (hasattr(p, "is_closed") and p.is_closed()):
         return False
     sw, sh = await _get_screen_size_util(p)
+
+    # DẸP POPUP TRƯỚC KHI HỎI "đã ở sảnh chưa". Thứ tự cũ hỏi trước, nên khi
+    # nhận nhầm (nick phụ đứng ở sảnh chính có popup quảng cáo) thì hàm trả
+    # True ngay và KHÔNG BAO GIỜ chạy tới bước dẹp popup / điều hướng bên dưới.
+    try:
+        await eval_page(p, """() => {
+            if (typeof window.__autotool_dismiss_popups === 'function') {
+                try { window.__autotool_dismiss_popups(); } catch (e) {}
+            }
+        }""")
+        await asyncio.sleep(0.35)
+    except Exception:
+        pass
 
     # 1. Nếu đã ở sẵn sảnh Tiến Lên Đếm Lá
     if await _is_in_tldl_lobby_util(p):

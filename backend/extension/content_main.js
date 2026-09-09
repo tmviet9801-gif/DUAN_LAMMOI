@@ -1100,6 +1100,44 @@
     return false;
   }
 
+  /** Có popup/quảng cáo đang che màn hình không.
+   *
+   * Người dùng gặp: nick phụ đứng ở sảnh chính với popup quảng cáo, nhưng bị
+   * báo là "đã sẵn sàng ở sảnh chọn bàn" nên cả lượt chạy tiến hành mà thiếu
+   * người. Popup che màn thì mọi thao tác click đều vô nghĩa -> phải coi là
+   * CHƯA sẵn sàng.
+   *
+   * Dùng `isNodeVisible` (activeInHierarchy) chứ không phải `node.active`:
+   * Cocos dựng sẵn UI rồi tắt bằng cách hạ cờ active của một node CHA, nên
+   * kiểm `active` của chính node sẽ thấy "đang bật" ở những popup đã đóng.
+   */
+  function hasBlockingPopup() {
+    try {
+      if (typeof cc === "undefined" || !cc.director) return false;
+      const scene = cc.director.getScene();
+      if (!scene) return false;
+      let thay = false;
+      (function quet(node, depth) {
+        if (!node || depth > 30 || thay) return;
+        if (isNodeVisible(node)) {
+          const name = (node.name || "").toLowerCase();
+          const text = getCocosNodeText(node).toUpperCase();
+          if (/^(popup|dialog|quangcao|banner|announce|notice)/.test(name)
+              || name.includes("popup") || name.includes("dialog")
+              || text === "BỎ QUA" || text === "CẢNH BÁO LỪA ĐẢO") {
+            thay = true;
+            return;
+          }
+        }
+        const ch = node.children || [];
+        for (let i = 0; i < ch.length; i++) quet(ch[i], depth + 1);
+      })(scene, 0);
+      return thay;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function isAlreadyInTLDLLobby() {
     try {
       // Nếu đang ngồi trong bàn chơi -> Tuyệt đối không phải ở sảnh!
@@ -1109,13 +1147,16 @@
       const hasSimmsWs = !!(simms && simms.readyState === 1);
 
       let hasTLDLScene = false;
-      let hasMainLobbyButtons = false;
+      // Đếm theo TẬP: sảnh chính hiện đủ bộ GAME BÀI + SLOTS + MINI GAME +
+      // QUAY SỐ cùng lúc, trong khi màn chọn bàn có thể có MỘT nhãn lạc.
+      // Đòi từ hai dấu hiệu trở lên để không nhận nhầm theo chiều ngược lại.
+      const dauHieuSanhChinh = new Set();
 
       if (typeof cc !== "undefined" && cc.director) {
         const scene = cc.director.getScene();
         if (scene) {
           function scanLobby(node, depth) {
-            if (!node || depth > 25 || (hasTLDLScene && hasMainLobbyButtons)) return;
+            if (!node || depth > 25) return;
             const name = (node.name || "").toLowerCase();
             const text = getCocosNodeText(node).toUpperCase();
 
@@ -1123,7 +1164,7 @@
             // lẫn UI bàn chơi ở trạng thái tắt, nếu không lọc sẽ nhận nhầm màn.
             if (isNodeVisible(node)) {
               if (text === "GAME BÀI" || text === "SLOTS" || text === "MINI GAME" || text === "QUAY SỐ") {
-                hasMainLobbyButtons = true;
+                dauHieuSanhChinh.add(text);
               }
 
               if (name.includes("roomselect") || name.includes("room_select") ||
@@ -1142,10 +1183,29 @@
         }
       }
 
-      if (hasTLDLScene && !hasMainLobbyButtons) return true;
-      if (hasSimmsWs && hasTLDLScene) return true;
+      const hasMainLobbyButtons = dauHieuSanhChinh.size >= 2;
 
-      return false;
+      // Popup che màn -> chưa thao tác được -> CHƯA sẵn sàng.
+      if (hasBlockingPopup()) return false;
+
+      // ĐÃ BỎ đường "socket đang nối + thấy node giống sảnh chọn bàn -> true".
+      // Socket nối KHÔNG đồng nghĩa đang ở sảnh chọn bàn: vẫn có thể đang ở
+      // sảnh chính HitClub. Chính lobby.py đã ghi luật cấm điều này, nhưng
+      // phía JS lại vi phạm — nên nick phụ đứng ở sảnh chính vẫn được báo là
+      // sẵn sàng, và cả lượt gom bàn chạy tiếp trong khi thiếu người.
+      const sanSang = hasTLDLScene && !hasMainLobbyButtons;
+      if (!sanSang) {
+        G.__autotool_ly_do_chua_o_sanh =
+          !hasTLDLScene ? "khong thay man chon ban"
+          : `dang o sanh chinh (${[...dauHieuSanhChinh].join(", ")})`;
+      } else {
+        G.__autotool_ly_do_chua_o_sanh = "";
+      }
+      // `hasSimmsWs` chỉ để chẩn đoán, KHÔNG dùng để kết luận.
+      if (!sanSang && !hasSimmsWs) {
+        console.debug("[AutoTool V3] chưa ở sảnh chọn bàn & socket chưa nối");
+      }
+      return sanSang;
     } catch (e) {
       console.warn("[AutoTool V3] Lỗi isAlreadyInTLDLLobby:", e);
       return false;
@@ -1206,6 +1266,7 @@
 
   G.__autotool_is_inside_table = isInsideGameTable;
   G.__autotool_is_in_tldl_lobby = isAlreadyInTLDLLobby;
+  G.__autotool_has_popup = hasBlockingPopup;
   G.__autotool_auto_enter_tldl = autoEnterTLDLLobby;
   G.__autotool_join_table_by_bet = joinCocosTableByBet;
   G.__autotool_dismiss_popups = dismissPopupsAndBanners;

@@ -18,7 +18,7 @@ from .context import (
 )
 from .preflight import loc_profile_du_dieu_kien, so_du_toi_thieu
 from .deps import _build_adapter, _notify_all
-from .lobby import _clear_hunt_state, _do_leave_room
+from .lobby import _clear_hunt_state, _do_leave_room, ly_do_chua_o_sanh
 from .rounds import check_and_click_ready_or_start
 
 log = logging.getLogger("auto_flow_controller")
@@ -332,7 +332,14 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             return {"ok": False, "error": "Đã dừng chu trình gom bàn theo lệnh của bạn.", "stopped": True}
         not_ready = [p_name for p_name, entered in lobby_results if not entered]
         if not_ready:
-            err_msg = f"Không đưa được các profile vào sảnh bàn Đếm Lá: {not_ready}"
+            # Nói RÕ vì sao từng profile chưa vào được. Chỉ liệt kê tên thì
+            # người dùng không biết phải làm gì — popup quảng cáo che màn khác
+            # hẳn với đứng ở sảnh chính hay extension chưa nạp.
+            ly_do = []
+            for p_name in not_ready:
+                ly_do.append(f"{p_name} ({await ly_do_chua_o_sanh(pages.get(p_name))})")
+            err_msg = ("Chưa đưa được các profile vào sảnh chọn bàn Đếm Lá — "
+                       "KHÔNG chạy gom bàn: " + "; ".join(ly_do))
             log.warning("find-and-match: %s", err_msg)
             await _notify_all(getattr(request.app.state, "ext_hub", None), f"❌ {err_msg}", "error", "❌ Lỗi sảnh")
             return {"ok": False, "error": err_msg, "stopped": False}
