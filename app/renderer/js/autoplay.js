@@ -146,9 +146,6 @@
     if (isNaN(targetBet) || targetBet <= 0) targetBet = 100;
 
     const targetMu = parseInt(($("gcSlotCount") && $("gcSlotCount").value) || "2", 10) || 2;
-    const chongPha = true;
-    const outGuest = true;
-    const xaDelayMs = $("gcDelay") ? (parseInt($("gcDelay").value || 2) * 1000) : 1000;
     const maxTries = 0; // 0 = Thử lại vô hạn cho tới khi gom được bàn
 
     // Các tuỳ chọn mới từ người dùng
@@ -180,15 +177,17 @@
           target_bet: targetBet,
           mu: targetMu,
           gid: 1, // Tiến Lên Đếm Lá
-          chong_pha: chongPha,
-          out_guest: outGuest,
-          xa_delay_ms: xaDelayMs,
           max_tries: maxTries,
           auto_xa: autoXa,
           auto_start_guest_ss: autoStartGuestSS,
           auto_leave_after: autoLeaveAfter,
         }),
       });
+
+      // Phản hồi của lượt chạy CŨ không được ghi đè thông báo. Bấm Dừng
+      // xong, ~1 giây sau request cũ trả về và ô trạng thái nhảy sang XANH
+      // "THÀNH CÔNG! Đã ghép bàn" ngay sau khi người dùng vừa bảo dừng.
+      if (App.state.gcRunId !== runId) return;
 
       if (res && res.ok) {
         if (autoXa) {

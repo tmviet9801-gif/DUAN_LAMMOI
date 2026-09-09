@@ -363,7 +363,8 @@ class HitClubAdapter(GameAdapter):
                 if isinstance(payload, dict) and payload.get("cmd") == 305 and isinstance(payload.get("ri"), dict):
                     fu = payload.get("fu") or {}
                     u = str(fu.get("u") or "").lower().strip()
-                    if u and (u == game_user or game_user in u or u in game_user):
+                    # Khớp CHÍNH XÁC — xem chú thích ở `_page_current_room`.
+                    if u and u == game_user:
                         r = payload["ri"].get("rid")
                         if isinstance(r, (int, float)) and r > 0:
                             rid = int(r)
@@ -707,9 +708,13 @@ class HitClubAdapter(GameAdapter):
             if p.get("cmd") == 308:
                 return int(r)
             if p.get("cmd") == 305:
+                # KHỚP CHÍNH XÁC. Bản trước còn `game_user in u or u in game_user`:
+                # tên tài khoản ngắn (vd 'xabai1') là chuỗi con của tên một
+                # người chơi bất kỳ ('nicktestxabai1'), nên bàn $500 của NGƯỜI
+                # KHÁC bị nhận là phòng của mình -> nick phụ bị bắn đi nơi khác.
                 fu = p.get("fu") or {}
                 u = str(fu.get("u") or "").lower().strip()
-                if u and game_user and (u == game_user or game_user in u or u in game_user):
+                if u and game_user and u == game_user:
                     return int(r)
         return None
 

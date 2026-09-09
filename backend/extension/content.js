@@ -598,8 +598,16 @@
     const huntBtn = document.createElement("button");
     huntBtn.id = "autotool-hunt-btn";
     huntBtn.style.cssText = "position:fixed!important;right:12px!important;bottom:12px!important;z-index:2147483647!important;display:inline-flex!important;align-items:center!important;gap:5px!important;padding:5px 12px!important;border-radius:9999px!important;border:1px solid rgba(245,158,11,0.5)!important;background:rgba(69,26,3,0.9)!important;color:#fde68a!important;font-family:sans-serif!important;font-size:11px!important;font-weight:700!important;cursor:move!important;user-select:none!important;backdrop-filter:blur(6px)!important;box-shadow:0 4px 14px rgba(0,0,0,0.6)!important;";
-    huntBtn.innerHTML = "🎯 Săn Bàn: BẬT";
-    let isHuntOn = true;
+    // Engine mặc định TẮT: `__AUTOTOOL_AUTO_HUNT` không được khởi tạo (undefined),
+    // và chỉ controller mới bật. Nhãn cũ ghi "BẬT" là NÓI SAI trạng thái: người
+    // dùng bấm lần 1 tưởng đang tắt nó (thực ra không đổi gì), bấm lần 2 vì
+    // tưởng mình vừa tắt nhầm -> lúc này mới thật sự BẬT săn bàn và xoá luôn cờ
+    // AUTOTOOL_STOPPED. Đang chơi tay ở bàn $500 mà dính là bị kéo về bàn khác.
+    let isHuntOn = false;
+    huntBtn.innerHTML = "⚪ Săn Bàn: TẮT";
+    huntBtn.style.background = "rgba(30,41,59,0.9)";
+    huntBtn.style.color = "#94a3b8";
+    huntBtn.style.borderColor = "rgba(255,255,255,0.2)";
     huntBtn.addEventListener("click", () => {
       isHuntOn = !isHuntOn;
       huntBtn.innerHTML = isHuntOn ? "🎯 Săn Bàn: BẬT" : "⚪ Săn Bàn: TẮT";

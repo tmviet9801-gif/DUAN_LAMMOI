@@ -52,10 +52,13 @@
             const u = (a.username || "").toLowerCase().replace(/[^a-z0-9]/g, "");
             const c = (a.character_name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
             const i = String(a.index || a.id || "").toLowerCase();
-            if (p === n || p === u || p === c || p === i) return true;
-            if (p.endsWith("1") && (n.endsWith("1") || i === "1")) return true;
-            if (p.endsWith("2") && (n.endsWith("2") || i === "2")) return true;
-            return false;
+            return p === n || p === u || p === c || p === i;
+            // ĐÃ BỎ hai nhánh đoán theo CHỮ SỐ CUỐI tên. Nhóm có
+            // nicktestxabai1, nicktestxxabai1, nicktestxabai11 — cả ba đều kết
+            // thúc bằng "1", nên khi khớp chính xác trượt thì `endsWith("1")`
+            // gán ngay cho account ĐẦU TIÊN có tên tận cùng "1". Kết quả: bài
+            // trên tay, số dư và số phòng của nick này hiện trên dòng nick
+            // khác. Cùng mô-típ đã bị loại khỏi `isPartner`.
           });
           if (acc) {
             if (ev.balance !== undefined) acc.balance = ev.balance;

@@ -1298,6 +1298,17 @@
 
   // Hàm điều phối xác minh sẵn sàng & bắt đầu ván (Two-way Handshake & Retry Start Pulse)
   function triggerVerifiedMatchReadyAndStart(partnerName, sourceReason) {
+    // Cổng kích hoạt đặt ở NÚT THẮT, không rải ở từng chỗ gọi.
+    //
+    // Trong lúc chạy, controller và Hub phát lệnh bằng task RỜI
+    // (asyncio.create_task) — huỷ task gom bàn KHÔNG huỷ chúng. Bấm Dừng: task
+    // gom bàn chết, nhưng một lệnh CONFIRM_MATCH còn đang trên đường dây WS.
+    // Vài chục ms sau, extension nhận được và chạy Sẵn sàng/Bắt đầu — đúng thứ
+    // người dùng vừa bảo dừng.
+    if (!isAutoEngaged()) {
+      console.warn(`[AutoTool V3] Bỏ qua lệnh ghép bàn tồn đọng [${sourceReason || ''}] — tool chưa/không còn kích hoạt.`);
+      return;
+    }
     const seatedPlayers = G.__room_players || [];
     if (seatedPlayers.length < 2) {
       console.warn(`[AutoTool V3] ⚠️ TỪ CHỐI SẴN SÀNG: Bàn chỉ có ${seatedPlayers.length} người, không thể khớp khi ngồi một mình! [${sourceReason || ''}]`);
@@ -1740,7 +1751,7 @@
                 rid: targetRid,
                 raw_rid: isChongVay ? null : Number(rid),
                 rn: p.rn || (p.Mu === 2 ? "Bàn Solo $100" : "Bàn $100"),
-                b: p.b || 100,
+                b: (typeof p.b === 'number' ? p.b : null),
                 Mu: p.Mu || 2,
                 is_chong_vay: isChongVay,
                 partner_found: !!partner,
@@ -1894,7 +1905,7 @@
                       profile_name: getProfileName(),
                       room_info: G.__last_room_info,
                       rid: targetRid,
-                      b: p.b || 100,
+                      b: (typeof p.b === 'number' ? p.b : null),
                       Mu: p.Mu || 2,
                     }, "*");
 
@@ -1986,7 +1997,7 @@
                 } else {
                   G.__last_room_info = {
                     rid: Number(rid),
-                    b: p.b || 100,
+                    b: (typeof p.b === 'number' ? p.b : null),
                     Mu: p.Mu || 2,
                     rn: `Bàn #${rid}`,
                     is_verified_empty: false,

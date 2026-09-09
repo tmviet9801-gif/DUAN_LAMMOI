@@ -120,37 +120,30 @@
                 <option value="100000">100k</option>
               </select>
             </div>
-            <div class="gc-field narrow" title="Số người / slot: 2 (Bàn Solo 2 người) hoặc 4 (Bàn 4 người)">
-              <input id="gcSlotCount" type="number" value="2" title="Số người / slot (Mặc định: bàn 2 người)" />
+            <div class="gc-field narrow" title="Số chỗ ngồi của bàn: 2 (Solo) hoặc 4. Giá trị khác sẽ bị từ chối.">
+              <label style="font-size:11px">Chỗ</label>
+              <input id="gcSlotCount" type="number" value="2" min="2" max="4" step="2"
+                     title="Số chỗ ngồi: chỉ 2 hoặc 4" />
             </div>
             <div class="gc-field narrow" style="display:none;" title="Mật khẩu bàn (Không dùng cho bàn công cộng)">
               <input id="gcRoomCode" type="hidden" value="" />
             </div>
-            <label class="gc-check-lbl">
-              <input id="gcWaitSS" type="checkbox" checked /> Chờ khi gặp SS
-            </label>
-            <div class="gc-field inline">
-              <label>Delay (s)</label>
-              <input id="gcDelay" type="number" value="2" style="width:40px" />
-            </div>
-            <div class="gc-field inline">
-              <label>Rộng</label>
-              <input id="gcWinW" type="number" value="520" style="width:50px" />
-            </div>
-            <div class="gc-field inline">
-              <label>Cao</label>
-              <input id="gcWinH" type="number" value="580" style="width:50px" />
-            </div>
+            <!-- ĐÃ BỎ: "Chờ khi gặp SS", "Delay (s)", "Rộng", "Cao".
+                 Không dòng JS nào đọc chúng, và endpoint gom bàn không nhận
+                 các trường đó. Người dùng chỉnh "Delay (s)" từ 2 xuống 0 để xả
+                 nhanh hơn, không đổi một mili giây nào, rồi kết luận "tool bị
+                 lag" — trong khi ô này chưa bao giờ nối vào đâu cả. Ô chết còn
+                 tệ hơn không có ô. -->
           </div>
 
           <!-- Auto options & Random Join -->
           <div class="gc-row row-3">
-            <label class="gc-check-lbl"><input id="gcSSWhenEnter" type="checkbox" checked /> SS Khi Vào</label>
-            <label class="gc-check-lbl"><input id="gcAutoLeave" type="checkbox" checked /> Tự Out</label>
-            <div class="gc-field inline">
-              <label>Slot</label>
-              <input id="gcSlotNum" type="number" value="2" style="width:40px" />
-            </div>
+            <!-- ĐÃ BỎ: "SS Khi Vào", "Tự Out", và ô "Slot" thứ hai.
+                 Ô "Slot" này (gcSlotNum) là ô CHẾT trùng tên với ô Slot thật
+                 (gcSlotCount) ở hàng trên: người dùng muốn chạy bàn 4 người,
+                 thấy nhãn "Slot" rõ ràng, đổi thành 4 — và không có gì xảy ra.
+                 "Tự Out" cũng dễ nhầm với "Tự Out sau khi xả" (gcAutoLeaveAfter)
+                 bên dưới, vốn là ô thật. -->
             <button id="btnGcRandomJoin" class="btn-gc blue">RANDOM VÀO PHÒNG</button>
           </div>
 

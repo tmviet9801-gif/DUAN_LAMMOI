@@ -118,17 +118,42 @@ def test_ten_dai_hon_khong_duoc_nhan():
     assert la_dong_doi({"dn": "nicktestxxabai11"}, {"partners": [TOI]}) is False
 
 
-def test_ten_profile_khong_duoc_so_mo_voi_ten_in_game():
-    """Tên profile trong app không phải danh tính trong game.
+def test_ten_profile_khong_bao_gio_duoc_dem_doi_chieu():
+    """Tên profile trong app KHÔNG phải danh tính trong game.
 
-    Đây chính là cầu nối sai đã sinh ra lỗi: `profile1` / `account01` đem so
-    chuỗi con với tên in-game thì người chơi tên `myprofile123` cũng khớp.
+    Đây chính là cầu nối sai đã sinh ra lỗi. Bản đầu chỉ siết từ so-mờ xuống
+    so-khít — nghe an toàn, nhưng vẫn là cùng cây cầu: một người chơi thật đặt
+    tên in-game trùng khít tên profile ("Account 01") sẽ được nhận là đồng đội.
+    Controller nay luôn cấp `character_name` đã xác minh nên không cần nó nữa.
     """
     ctx = {"partners": [{"profile_name": "profile1"}]}
     assert la_dong_doi({"dn": "myprofile123"}, ctx) is False
     assert la_dong_doi({"dn": "profile12"}, ctx) is False
-    # trùng khít thì vẫn chấp nhận
-    assert la_dong_doi({"dn": "profile1"}, ctx) is True
+    assert la_dong_doi({"dn": "profile1"}, ctx) is False, (
+        "trùng khít tên profile cũng không được coi là đồng đội")
+
+    # Nhưng có character_name thì vẫn nhận bình thường
+    ctx2 = {"partners": [{"profile_name": "Account 01",
+                          "character_name": "nicktestxxabai1"}]}
+    assert la_dong_doi({"dn": "nicktestxxabai1"}, ctx2) is True
+    assert la_dong_doi({"dn": "Account 01"}, ctx2) is False
+
+
+def test_controller_khong_day_ten_profile_vao_danh_sach():
+    """Chặn ở cả phía gửi, không chỉ phía nhận."""
+    from pathlib import Path
+
+    src = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller"
+           / "matching.py").read_text(encoding="utf-8")
+    # Kiểm đúng NỘI DUNG danh sách, không kiểm cả dòng: `send_command(anchor_name,
+    # ...)` chứa tên profile ở vị trí ĐÍCH GỬI, chuyện đó là đúng.
+    for dong in src.splitlines():
+        if '"partners": ds_chung' not in dong:
+            continue
+        ds = dong.split("ds_chung", 1)[1]
+        assert "anchor_name" not in ds and "sub_name" not in ds, (
+            f"còn đẩy tên profile vào danh sách đồng đội: {dong.strip()}")
+    assert '"partners": ds_chung' in src
 
 
 def test_khach_la_hoan_toan_khong_duoc_nhan():

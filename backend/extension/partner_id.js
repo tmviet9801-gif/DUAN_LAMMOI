@@ -61,10 +61,15 @@
       // character_name là tên in-game đã xác minh trong database -> tương đương dn
       const cn = chuanHoa(pt.character_name);
       if (cn) dn.add(cn);
-      // profile_name là tên hiển thị trong app, KHÔNG phải danh tính trong game.
-      // Chỉ chấp nhận khi trùng KHÍT — không so chuỗi con, không gộp ký tự.
-      const pn = chuanHoa(pt.profile_name);
-      if (pn) { dn.add(pn); u.add(pn); }
+      // profile_name KHÔNG được đem đối chiếu với danh tính trong game.
+      //
+      // Trước đây nó được nhét vào tập dn/u để khớp CHÍNH XÁC — nghe có vẻ an
+      // toàn, nhưng vẫn là đúng cây cầu sai mà đầu file này cấm: một người
+      // chơi thật đặt tên in-game trùng khít tên profile ("Account 01") sẽ
+      // được nhận là đồng đội. Controller nay luôn cấp `character_name` đã
+      // xác minh, nên cây cầu này không còn cần thiết.
+      //
+      // Giữ lại làm NHÃN để log/hiển thị, không đưa vào tập đối chiếu.
     }
     return { dn: dn, u: u, uid: uid };
   }

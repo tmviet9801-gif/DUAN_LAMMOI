@@ -238,11 +238,14 @@ async def autoplay_start(body: dict, request: Request):
     return {"ok": True, "run_id": run_id, "profiles": profile_names}
 
 
-# Tương thích trạng thái cũ. Việc dừng thực tế dùng stop_epoch trên app state
-# để nhiều cặp có thể chạy đồng thời mà không vô hiệu hoá lẫn nhau.
-_GOM_BAN_STOP = False
+# Việc dừng dùng `stop_epoch` trên app state để nhiều lượt có thể chạy đồng
+# thời mà không vô hiệu hoá lẫn nhau.
+#
+# ĐÃ BỎ `_GOM_BAN_STOP` và `_GOM_BAN_ACTIVE_RUN_ID`: chúng chỉ được GÁN, không
+# nơi nào đọc. Đọc code thấy `_GOM_BAN_STOP = True` là tưởng có một công tắc
+# tắt toàn cục và bỏ qua việc kiểm `stop_epoch` — đúng loại hiểu nhầm đã đẻ ra
+# mấy lỗ hổng vừa vá.
 _GOM_BAN_RUN_ID = 0
-_GOM_BAN_ACTIVE_RUN_ID = None
 
 
 def _pham_vi_dung(request, body):
@@ -310,12 +313,9 @@ async def autoplay_stop(request: Request, body: dict | None = Body(default=None)
 
 
 async def _dung_auto(request: Request, body, ep_toan_bo=False):
-    global _GOM_BAN_STOP, _GOM_BAN_ACTIVE_RUN_ID
     ten_pham_vi, toan_bo = _pham_vi_dung(request, body)
     if ep_toan_bo:
         ten_pham_vi, toan_bo = set(), True
-    _GOM_BAN_STOP = True
-    _GOM_BAN_ACTIVE_RUN_ID = None  # invalidate run_id: chặn mọi lệnh/task mang run_id cũ
     request.app.state.gom_ban_stop_epoch = int(getattr(request.app.state, "gom_ban_stop_epoch", 0)) + 1
 
     # 1. KHOÁ cơ chế chia sẻ bàn + broadcast STOP_HUNT NGAY (trước khi cancel task)

@@ -562,71 +562,14 @@
   }
 
   // 3. Game Control actions (Tạo phòng, Tìm ID, Thoát hết, Dừng)
-  if ($("btnGcCreateRoom")) {
-    $("btnGcCreateRoom").onclick = async () => {
-      const game = $("gcGameSelect") ? $("gcGameSelect").value : "TLDL";
-      const bet = $("gcBetSelect") ? $("gcBetSelect").value : "100";
-      const slot = $("gcSlotCount") ? $("gcSlotCount").value : "2";
 
-      // Profile được tích ĐẦU TIÊN. Bản trước lùi về "Account 1" khi không có
-      // gì được chọn -> thao tác lên một account người dùng không hề chọn.
-      const profile_name = App.profileDaTichDauTien ? App.profileDaTichDauTien() : "";
-      if (!profile_name) {
-        App.toast("Hãy tích 1 profile trên bảng danh sách trước.", "warn");
-        return;
-      }
 
-      App.toast(`Đang tìm bàn công cộng mới trống ${game} cược ${bet} cho ${profile_name}...`, "info");
-      try {
-        const res = await App.api("/api/autoplay/create-table", {
-          method: "POST",
-          body: JSON.stringify({
-            profile_name,
-            game,
-            bet: Number(bet),
-            mu: Number(slot),
-            pwd: ""
-          }),
-        });
-        const room_id = res.room_id || bet;
-        if ($("gcTargetRoomId")) $("gcTargetRoomId").value = room_id;
-        App.toast(`✅ Vào bàn công cộng thành công: Phòng #${room_id} (Cược ${bet})!`, "success");
-
-        // Cập nhật tức thì dòng tài khoản trên bảng
-        const row = document.querySelector(`#profileTbody tr[data-name="${profile_name}"]`);
-        if (row) {
-          const tdRoom = row.querySelector(".td-room");
-          if (tdRoom) tdRoom.textContent = room_id;
-          const tdLog = row.querySelector(".td-log");
-          if (tdLog) tdLog.textContent = `Bàn #${room_id} (${bet})`;
-        }
-        if (window.App && window.App.refreshAccounts) window.App.refreshAccounts();
-      } catch (err) {
-        App.toast("Tạo phòng lỗi: " + err.message, "error");
-      }
-    };
-  }
-
-  if ($("btnGcFindId")) {
-    $("btnGcFindId").onclick = async () => {
-      const rid = $("gcTargetRoomId") ? $("gcTargetRoomId").value.trim() : "";
-      if (!rid) {
-        App.toast("Vui lòng nhập ID phòng cần tìm!", "warn");
-        return;
-      }
-      App.toast(`Đang tìm và vào phòng ${rid}...`, "info");
-      try {
-        await App.api("/api/autoplay/join-rid", {
-          method: "POST",
-          body: JSON.stringify({ room_id: rid }),
-        });
-        App.toast(`Đã gửi lệnh vào phòng ${rid}!`, "success");
-      } catch (err) {
-        App.toast("Vào phòng lỗi: " + err.message, "error");
-      }
-    };
-  }
-
+  // ĐÃ GỠ handler của các nút không còn tồn tại trong index.html:
+  //   btnGcCreateRoom, btnGcFindId, btnReconnect, btnModePhom, btnModeMauBinh
+  // Nút đã bị xoá nhưng handler còn lại là cái bẫy: người sửa sau thêm lại nút
+  // với đúng id, tin rằng handler đã sẵn sàng và đã được kiểm — bấm vào thì
+  // backend trả 400. btnGcCreateRoom còn ghi kết quả vào #gcTargetRoomId, một
+  // phần tử không tồn tại. Các endpoint tương ứng vẫn còn ở backend.
   if ($("btnGcRandomJoin")) {
     $("btnGcRandomJoin").onclick = async () => {
       const game = $("gcGameSelect") ? $("gcGameSelect").value : "TLDL";
@@ -681,29 +624,6 @@
     };
   }
 
-  if ($("btnReconnect")) {
-    $("btnReconnect").onclick = async () => {
-      App.toast("Đang kết nối lại WS cho các profiles...", "info");
-      try {
-        await App.api("/api/autoplay/reconnect-ws", { method: "POST", body: "{}" });
-        App.toast("Đã gửi yêu cầu kết nối lại WS", "success");
-      } catch (err) {
-        App.toast("Kết nối lại WS lỗi: " + err.message, "error");
-      }
-    };
-  }
 
-  if ($("btnModePhom")) {
-    $("btnModePhom").onclick = () => {
-      if ($("gcGameSelect")) $("gcGameSelect").value = "PHOM";
-      App.toast("Đã chuyển chế độ sang PHOM", "info");
-    };
-  }
 
-  if ($("btnModeMauBinh")) {
-    $("btnModeMauBinh").onclick = () => {
-      if ($("gcGameSelect")) $("gcGameSelect").value = "MAUBINH";
-      App.toast("Đã chuyển chế độ sang MAUBINH", "info");
-    };
-  }
 })();

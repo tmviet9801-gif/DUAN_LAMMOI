@@ -84,7 +84,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
     Body:
       - profile_a: str (mặc định "Account01")
-      - profile_b: str (tuỳ chọn "Account02")
+      - profile_b: str (tương thích ngược; CHỈ dùng khi `profiles` trống)
       - bet_levels: list[int] (mặc định [100, 500])
       - gid: int (mặc định 1 = Tiến Lên Đếm Lá)
     """
@@ -111,8 +111,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         p_a = (body.get("profile_a") or "").strip()
         p_b = (body.get("profile_b") or "").strip()
         profiles_input = [p for p in [p_a, p_b] if p]
-    if len(profiles_input) < 2 and len(open_acc_names) >= 2:
-        profiles_input = open_acc_names[:5]
+    # ĐÃ BỎ tầng đoán "thiếu profiles thì tự lấy 5 Chrome đang mở". Bất kỳ ai
+    # gọi API mà quên trường `profiles` sẽ khiến tool chạy trên 5 account BẤT
+    # KỲ đang đăng nhập — tiền thật bị đem đi xả bài trên account không ai chọn.
     if not profiles_input:
         # KHÔNG tự chọn thay người dùng. Bản trước lùi về ["Account 01",
         # "Account 02"] — chạy trên hai tài khoản có tiền thật mà không ai yêu cầu.
@@ -134,7 +135,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         profiles_input = [requested_anchor] + [p for p in profiles_input if p != requested_anchor]
 
     profile_a = profiles_input[0]
-    profile_b = profiles_input[1] if len(profiles_input) > 1 else ""
+    # ĐÃ BỎ biến `profile_b`: nó được gán rồi không ai đọc. Để lại là mời người
+    # sửa sau kết luận endpoint chỉ hỗ trợ 2 profile, rồi thêm một vòng "ghép
+    # cặp" ở giao diện cho N>2 — quay lại đúng mô hình vừa bỏ.
 
     adapter = _build_adapter(request, {"game": {"adapter": "hitclub", "clicks": {}}})
 
@@ -843,18 +846,31 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
             # KIỂM TRA MỨC CƯỢC THỰC TẾ CỦA BÀN Account 1 ĐANG NGỒI: PHẢI KHỚP bet đã cấu hình.
             # (Sửa bug: cấu hình bàn 100 nhưng game tự đưa vào bàn 500 -> phải out ngay, không mời B.)
+            # KHÔNG BIẾT mức cược = KHÔNG đi tiếp. Bản trước coi `None` và lỗi
+            # phân tích đều là "hợp lệ" -> cổng xanh oan. Cộng với việc
+            # extension bịa `b = 100` khi khung thiếu trường đó, cả nhóm có thể
+            # ngồi đánh ở bàn $500 trong khi cấu hình là $100, không một dòng
+            # cảnh báo. Đo thực tế: 292/292 khung cmd 202 đều có `b`, nên thiếu
+            # nó là bất thường thật.
             wrong_bet = False
+            room_b = None
             try:
-                room_b = await eval_page(anchor_page, "() => (window.__last_room_info && window.__last_room_info.b) || null")
-                if room_b is not None:
-                    try:
-                        room_b_int = int(float(str(room_b).replace(",", "").replace(".", "").strip()))
-                        if room_b_int != bet_val:
-                            wrong_bet = True
-                    except Exception:
-                        wrong_bet = False
-            except Exception:
-                wrong_bet = False
+                room_b = await eval_page(anchor_page, "() => (window.__last_room_info && window.__last_room_info.b)")
+            except Exception as e:
+                log.warning("find-and-match: không đọc được mức cược của bàn: %s", e)
+            if room_b is None:
+                wrong_bet = True
+                log.warning("find-and-match: bàn không báo mức cược -> coi như SAI, out và quét lại "
+                            "(không đoán bừa là đúng cấu hình).")
+            else:
+                try:
+                    room_b_int = int(float(str(room_b).replace(",", "").replace(".", "").strip()))
+                    if room_b_int != bet_val:
+                        wrong_bet = True
+                except Exception:
+                    wrong_bet = True
+                    log.warning("find-and-match: mức cược đọc được không phân tích nổi (%r) -> coi như SAI.",
+                                room_b)
             if wrong_bet:
                 log.info("find-and-match: Account 1 đang ở BÀN $%s (không đúng mức cược $%s đã cấu hình) -> Out về sảnh & thử lại!",
                          room_b, bet_val)
@@ -966,11 +982,14 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     if ext_hub:
                         ds_chung = list(dong_doi)
                         if ext_hub.is_connected(sub_name):
+                            # KHÔNG đẩy tên profile (anchor_name/sub_name) vào
+                            # danh sách: đó là tên hiển thị trong app, không
+                            # phải danh tính trong game. Chỉ dn/u/uid.
                             await ext_hub.send_command(sub_name, "SYNC_PARTNERS", {
-                                "partners": ds_chung + [p_info_anchor, anchor_name, anchor_dn, anchor_u]})
+                                "partners": ds_chung + [p_info_anchor, anchor_dn, anchor_u]})
                         if ext_hub.is_connected(anchor_name):
                             await ext_hub.send_command(anchor_name, "SYNC_PARTNERS", {
-                                "partners": ds_chung + [p_info_sub, sub_name, sub_dn, sub_u]})
+                                "partners": ds_chung + [p_info_sub, sub_dn, sub_u]})
                 except Exception as e:
                     log.warning("find-and-match: Lỗi đồng bộ định danh 2 chiều: %s", e)
 
