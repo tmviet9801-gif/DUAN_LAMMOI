@@ -16,14 +16,24 @@
     if (status.valid) {
       if (gate) gate.classList.add("hidden");
       const left = $("footerLeft");
-      if (left) left.textContent = `${App.platformName || "AutoTool"} — ${status.max_tabs} tab`;
+      if (left) {
+        let text = `${App.platformName || "AutoTool"} — ${status.max_tabs} tab`;
+        // Đang chạy bằng kết quả kiểm tra cũ vì không gọi được máy chủ.
+        if (status.grace_days_left != null && status.grace_days_left <= 2) {
+          text += ` — ⚠ chưa liên lạc được máy chủ, còn ${status.grace_days_left} ngày`;
+        }
+        left.textContent = text;
+      }
     } else {
       if (gate) {
         gate.classList.remove("hidden");
         $("licMachine").textContent = `Máy: ${status.machine_id || "…"}`;
-        $("licMsg").textContent = status.activated
-          ? "Giấy phép đã hết hạn hoặc không khớp máy. Nhập key mới."
-          : "Nhập license key để sử dụng.";
+        // message do máy chủ trả về (bị thu hồi / tạm treo…) nói rõ hơn câu chung.
+        $("licMsg").textContent =
+          status.message ||
+          (status.activated
+            ? "Giấy phép đã hết hạn hoặc không khớp máy. Nhập key mới."
+            : "Nhập license key để sử dụng.");
       }
     }
     // CẬP NHẬT TAB CẤU HÌNH (PANEL BẢN QUYỀN & GIẤY PHÉP)
@@ -52,7 +62,7 @@
         badge.style.color = "var(--ok, #22c55e)";
         badge.style.borderColor = "var(--ok, #22c55e)";
       } else if (st.activated) {
-        badge.textContent = "✗ Hết hạn hoặc sai máy";
+        badge.textContent = st.message ? "✗ " + st.message : "✗ Hết hạn hoặc sai máy";
         badge.style.color = "var(--danger, #ef4444)";
         badge.style.borderColor = "var(--danger, #ef4444)";
       } else {

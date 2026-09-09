@@ -59,6 +59,29 @@ async def _browser_watchdog(manager: "BrowserManager"):
             pass
 
 
+async def _license_watchdog():
+    """Định kỳ hỏi máy chủ license xem key còn hiệu lực (thu hồi/tạm treo) không.
+
+    Chạy ở task nền chứ không nhét vào license.status(): status() là hàm đồng bộ
+    nằm trên đường đi nóng (mở tab / mở trình duyệt), gọi HTTP ở đó sẽ chặn
+    event loop và treo cả app khi mạng chậm.
+    """
+    import license as lic
+
+    if not lic.server_enabled():
+        log.info("License: chưa cấu hình LICENSE_SERVER_URL, bỏ qua kiểm tra online")
+        return
+
+    while True:
+        try:
+            result = await lic.check_online()
+            if result.get("ok") and result.get("verdict") != "valid":
+                log.warning("License: máy chủ từ chối key (%s)", result.get("verdict"))
+        except Exception:
+            log.exception("license watchdog failed")
+        await asyncio.sleep(lic.CHECK_INTERVAL)
+
+
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -128,11 +151,13 @@ def create_app() -> FastAPI:
             log.exception("reap orphan chrome failed")
 
         watchdog = asyncio.create_task(_browser_watchdog(manager))
+        lic_watchdog = asyncio.create_task(_license_watchdog())
         log.info("Backend ready (manager + hub + game_sim + ext_hub v3 initialized)")
         try:
             yield
         finally:
             watchdog.cancel()
+            lic_watchdog.cancel()
             # đóng graceful: flush cookie xuống profile_dir để login được giữ lại
             try:
                 await manager.close_all()

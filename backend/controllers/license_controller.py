@@ -29,7 +29,33 @@ async def license_activate(body: dict):
             "expired": "Key đã hết hạn",
         }.get(result.get("reason"), "Không kích hoạt được")
         raise HTTPException(status_code=400, detail=reason)
+
+    # Chữ ký hợp lệ chưa chắc key còn hiệu lực: hỏi máy chủ ngay để bắt
+    # trường hợp key đã bị thu hồi mà chữ ký vẫn đúng tới ngày hết hạn.
+    if lic.server_enabled():
+        try:
+            await lic.check_online(key)
+        except Exception:
+            log.exception("kiểm tra online khi kích hoạt thất bại")
+        st = lic.status()
+        if not st.get("valid"):
+            lic.deactivate()
+            raise HTTPException(
+                status_code=400,
+                detail=st.get("message") or "Key không còn hiệu lực",
+            )
+        return st
+
     return result
+
+
+@router.post("/api/license/recheck")
+async def license_recheck():
+    """Hỏi lại máy chủ ngay (nút 'Kiểm tra lại' trong app)."""
+    if not lic.server_enabled():
+        return {"ok": False, "error": "disabled", **lic.status()}
+    result = await lic.check_online()
+    return {"ok": result.get("ok", False), "error": result.get("error"), **lic.status()}
 
 
 @router.post("/api/license/deactivate")

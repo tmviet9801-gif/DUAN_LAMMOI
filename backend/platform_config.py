@@ -44,6 +44,19 @@ DEFAULT_PROFILE_URL = PLATFORM_GAME_URL
 # CHỈ owner biết; đổi trước khi build. Nếu để trống, panel sinh license tắt.
 OWNER_TOKEN = "AutoToolOwner@2026"
 
+# ---- Máy chủ license (portal quản trị) ----
+# Key là HMAC tự chứa hạn dùng nên app kiểm tra được offline; nhưng thu hồi
+# license CHỈ có hiệu lực nếu app hỏi lại máy chủ. Điền URL portal vào đây để bật.
+# Để TRỐNG = tắt hoàn toàn, app chạy y như trước (thuần offline).
+LICENSE_SERVER_URL = ""
+
+# Máy chủ không gọi được (mất mạng, sập server) thì app vẫn chạy bằng kết quả
+# kiểm tra lần trước, trong tối đa từng này ngày. Quá hạn đó mới khoá.
+LICENSE_OFFLINE_GRACE_DAYS = 7
+
+# Khoảng cách giữa hai lần tự kiểm tra nền (giây).
+LICENSE_CHECK_INTERVAL = 6 * 3600
+
 
 def data_dir() -> Path:
     """Thư mục dữ liệu — tách riêng theo platform để 2 bản không dùng chung."""
