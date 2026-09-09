@@ -476,17 +476,22 @@
         });
         const ds = r.ket_qua || [];
         const doi = ds.filter((x) => (x.da_cap_nhat || []).length);
-        const hong = ds.filter((x) => x.loi || !x.mo);
+        // Hỏng = KHÔNG đọc được gì. Profile đóng vẫn đọc được qua token +
+        // WebSocket, nên `!mo` không còn đồng nghĩa với thất bại.
+        const hong = ds.filter((x) => !x.ten_in_game && x.so_du == null);
 
         // Báo cáo trung thực: nói rõ cái nào KHÔNG đọc được, không im lặng bỏ qua
         for (const x of hong) {
-          App.toast(`${x.profile}: ${x.loi || "chưa mở trình duyệt"}`, "warn");
+          App.toast(`${x.profile}: ${x.loi || "không đọc được trạng thái"}`, "warn");
         }
         for (const c of (r.canh_bao || [])) App.toast(c, "error");
 
         const ok = ds.filter((x) => x.ten_in_game).length;
+        const qua_ws = ds.filter((x) => x.nguon === "ws").length;
         App.toast(
-          `Check Live: ${ok}/${ds.length} đọc được, ${doi.length} profile được cập nhật.`,
+          `Check Live: ${ok}/${ds.length} đọc được`
+            + (qua_ws ? ` (${qua_ws} qua token, không mở Chrome)` : "")
+            + `, ${doi.length} profile được cập nhật.`,
           doi.length || ok ? "success" : "warn",
         );
         if (doi.length) {
