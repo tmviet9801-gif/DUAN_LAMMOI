@@ -9,7 +9,12 @@ from models.config_model import load_accounts
 
 from core.page_world import eval_page
 
-from .context import MatchContext, load_extension_scripts, resolve_profile_name
+from .context import (
+    MatchContext,
+    danh_sach_dong_doi,
+    load_extension_scripts,
+    resolve_profile_name,
+)
 from .deps import _build_adapter, _notify_all
 from .lobby import _clear_hunt_state, _do_leave_room
 from .rounds import check_and_click_ready_or_start
@@ -180,7 +185,24 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         # cược (ví dụ $500). Tắt engine cũ trước khi kiểm tra sảnh để nó không
         # tự join lại, sau đó _prepare_lobby luôn gửi lệnh rời bàn — không dựa
         # vào nhận diện ảnh/scene vốn có thể trượt khi đang ở gameplay.
+        # Danh sach dong doi DA XAC MINH, lay tu database. Extension khoi tao
+        # `__autotool_partners = []` va chi nhan dong doi qua khop CHINH XAC
+        # `character_name`, nen khong bom xuong day thi khong ai nhan ai.
+        dong_doi, thieu_ten = danh_sach_dong_doi(list(pages.keys()), accounts)
+        if thieu_ten:
+            log.warning(
+                "find-and-match: %s chua co character_name -> KHONG duoc nhan la "
+                "dong doi (danh nhu nguoi thuong). Chay Check Live de dien.",
+                ", ".join(str(x) for x in thieu_ten))
+            await _notify_all(
+                ctx.ext_hub,
+                f"Chua co ten in-game cho: {', '.join(str(x) for x in thieu_ten)}. "
+                f"Chay Check Live truoc khi xa bai.",
+                "warn")
+
         preflight_code = f"""() => {{
+            // Danh tinh dong doi da xac minh (character_name tu database).
+            window.__autotool_partners = {_json.dumps(dong_doi)};
             // Mở cổng kích hoạt: từ đây extension mới được phép tự động
             // (rời bàn khi gặp khách lạ, Sẵn sàng/Bắt đầu, tự đánh bài).
             // XOÁ CỜ DỪNG TRÊN MỌI TRANG. Trước đây chỉ anchor được xoá (trong

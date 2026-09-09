@@ -19,7 +19,13 @@
   // Trước đây mặc định true: tab vừa nạp đã ở trạng thái sẵn sàng tự đánh,
   // chỉ còn cổng isAutoEngaged() chặn — mất một lớp phòng vệ không cần thiết.
   G.__AUTOTOOL_AUTO_DISCARD = false;
-  G.__autotool_partners = ["nicktestxabai1", "nicktestxabai2", "nicktestxxabai1", "nicktestxxabai2", "account01", "account02", "profile1", "profile2"];
+  // RỖNG cho tới khi controller đồng bộ danh sách thật xuống (SYNC_PARTNERS).
+  // Trước đây đây là danh sách cứng trộn lẫn tên đăng nhập, tên in-game và tên
+  // profile ("profile1", "account01"). Vì so khớp hồi đó dùng chuỗi con, một
+  // người chơi thật tên `myprofile123` cũng khớp `profile1` -> bị coi là đồng
+  // đội -> tool cố tình đánh nhẹ cho họ ăn. Danh sách thật nay lấy từ
+  // `character_name` trong database (Check Live đọc về).
+  G.__autotool_partners = [];
 
   // ---- MODULE PHÂN TÍCH & GIẢI MÃ 52 LÁ BÀI TIẾN LÊN (0..51) ----
   function getCardVal(c) {
@@ -536,15 +542,6 @@
     return String(s || "").replace(/\D/g, "");
   }
 
-  function collapseRepeats(s) {
-    if (!s) return "";
-    let r = "";
-    for (let i = 0; i < s.length; i++) {
-      if (i === 0 || s[i] !== s[i - 1]) r += s[i];
-    }
-    return r;
-  }
-
   function isMe(x) {
     if (!x) return false;
 
@@ -581,91 +578,37 @@
     return false;
   }
 
+  // Xác định đồng đội: uỷ quyền cho partner_id.js (thuần, kiểm thử bằng node).
+  //
+  // Bản trước đoán theo HÌNH DẠNG TÊN — cắt số đuôi, gộp ký tự lặp, so chuỗi
+  // con hai chiều. Với tên in-game `nicktestxxabai1` (gốc `nicktestxabai`),
+  // mọi người chơi tên `ai2`, `i3`, `nick9`, `bai3`, `test5`… đều thành "đồng
+  // đội": 10/15 tên thử bị nhận nhầm. Mà nhận nhầm nghĩa là tool cố tình đánh
+  // nhẹ / bỏ lượt cho một người lạ ăn.
+  //
+  // Nay chỉ khớp CHÍNH XÁC trên danh tính đã xác minh (dn / u / uid). Thiếu
+  // danh tính thì trả false — mất phối hợp còn hơn nạp bài cho khách lạ.
   function isPartner(x) {
     if (!x || isMe(x)) return false;
-    const targetUid = x.uid !== undefined ? String(x.uid).trim() : "";
-    const cTargetUid = cleanUid(targetUid);
-    const targetDn = String(x.dn || "").trim().toLowerCase();
-    const targetU = String(x.u || "").trim().toLowerCase();
-    const targetClean = (targetDn || targetU).replace(/[^a-z0-9]/g, "");
-    const targetComp = collapseRepeats(targetClean);
-    const targetNum = (targetComp.match(/\d+$/) || [""])[0];
-    const targetBase = targetComp.replace(/\d+$/, "");
-
-    // TẦNG 0: KHỚP CẶP TÀI KHOẢN SONG HÀNH (1 <-> 2)
-    const meName = (G.__my_dn || G.__my_u || getProfileName() || "").toLowerCase();
-    const meClean = meName.replace(/[^a-z0-9]/g, "");
-    const meComp = collapseRepeats(meClean);
-    const meNum = (meComp.match(/\d+$/) || [""])[0];
-    const meBase = meComp.replace(/\d+$/, "");
-
-    if (meBase && targetBase && (meBase === targetBase || meBase.includes(targetBase) || targetBase.includes(meBase))) {
-      if (meNum && targetNum && meNum !== targetNum) {
-        console.log(`[AutoTool V3] isPartner -> KHỚP TÊN NHÂN VẬT IN-GAME (${meName} [${meNum}] <-> ${targetDn || targetU} [${targetNum}])!`);
-        return true;
+    const P = G.AutoToolPartner;
+    if (!P || typeof P.laDongDoi !== "function") {
+      // partner_id.js chưa nạp -> KHÔNG đoán bừa.
+      if (!G.__canh_bao_thieu_partner_id) {
+        G.__canh_bao_thieu_partner_id = true;
+        console.warn("[AutoTool V3] Thiếu partner_id.js — không xác định đồng đội, đánh như người thường.");
       }
+      return false;
     }
-
-    // TẦNG 1: EXPECTED ANCHOR
-    if (G.__expected_anchor_uid && cTargetUid && cTargetUid === cleanUid(G.__expected_anchor_uid)) return true;
-    if (G.__expected_anchor_dn) {
-      const expDn = String(G.__expected_anchor_dn).trim().toLowerCase();
-      if (targetDn === expDn || targetU === expDn) return true;
-      const compExp = collapseRepeats(expDn.replace(/[^a-z0-9]/g, ""));
-      if (targetComp && compExp && (targetComp === compExp || targetComp.includes(compExp) || compExp.includes(targetComp))) return true;
-    }
-    if (G.__expected_anchor_u) {
-      const expU = String(G.__expected_anchor_u).trim().toLowerCase();
-      if (targetDn === expU || targetU === expU) return true;
-    }
-    if (G.__expected_anchor_profile) {
-      const expProf = String(G.__expected_anchor_profile).trim().toLowerCase();
-      if (targetDn === expProf || targetU === expProf) return true;
-      const compProf = collapseRepeats(expProf.replace(/[^a-z0-9]/g, ""));
-      if (targetComp && compProf && (targetComp === compProf || targetComp.includes(compProf) || compProf.includes(targetComp))) return true;
-    }
-
-    // TẦNG 2: ACTIVE ROOM INVITE CONTEXT
-    if (G.__active_room_invite && (Date.now() - G.__active_room_invite.ts) < 20000) {
-      const inv = G.__active_room_invite;
-      if (inv.source_profile) {
-        const compSrc = collapseRepeats(inv.source_profile.replace(/[^a-z0-9]/g, ""));
-        if (targetComp && compSrc && (targetComp === compSrc || targetComp.includes(compSrc) || compSrc.includes(targetComp))) return true;
-      }
-      if (inv.anchor_uid && cTargetUid && cTargetUid === cleanUid(inv.anchor_uid)) return true;
-    }
-
-    // TẦNG 3: PARTNERS LIST TỪ HUB & LOCAL
-    const partnerList = G.__autotool_partners || [];
-    for (const pt of partnerList) {
-      if (!pt) continue;
-      if (typeof pt === "object") {
-        if (pt.uid && cTargetUid && cleanUid(pt.uid) === cTargetUid) return true;
-        if (pt.dn && targetDn && String(pt.dn).trim().toLowerCase() === targetDn) return true;
-        if (pt.u && targetU && String(pt.u).trim().toLowerCase() === targetU) return true;
-        if (pt.profile_name) {
-          const pStr = String(pt.profile_name).trim().toLowerCase();
-          if (targetDn === pStr || targetU === pStr) return true;
-          const compP = collapseRepeats(pStr.replace(/[^a-z0-9]/g, ""));
-          if (targetComp && compP && (targetComp === compP || targetComp.includes(compP) || compP.includes(targetComp))) return true;
-        }
-      } else if (typeof pt === "string") {
-        const ptStr = pt.trim().toLowerCase();
-        if (!ptStr) continue;
-        if (targetDn === ptStr || targetU === ptStr) return true;
-        if (cTargetUid && cleanUid(ptStr) && cTargetUid === cleanUid(ptStr)) return true;
-        const cPt = ptStr.replace(/[^a-z0-9]/g, "");
-        if (targetClean && cPt && targetClean === cPt) return true;
-        const compPt = collapseRepeats(cPt);
-        if (targetComp && compPt && (targetComp === compPt || targetComp.includes(compPt) || compPt.includes(targetComp))) return true;
-        const numPt = (compPt.match(/\d+$/) || [""])[0];
-        if (targetNum && numPt && targetNum === numPt) {
-          const basePt = compPt.replace(/\d+$/, "");
-          if (targetBase && basePt && (targetBase.includes(basePt) || basePt.includes(targetBase))) return true;
-        }
-      }
-    }
-    return false;
+    return P.laDongDoi(x, {
+      partners: G.__autotool_partners || [],
+      expected: {
+        dn: G.__expected_anchor_dn,
+        u: G.__expected_anchor_u,
+        uid: G.__expected_anchor_uid,
+        profile_name: G.__expected_anchor_profile,
+      },
+      invite: G.__active_room_invite,
+    });
   }
 
   // Helper quét và kích hoạt Sẵn Sàng / Bắt Đầu: Cocos Native + Event + Canvas Pointer Click
@@ -1551,7 +1494,7 @@
               }
             }
 
-            // (cleanUid, collapseRepeats, isMe, isPartner, triggerVerifiedMatchReadyAndStart đã được khai báo ở top-level scope)
+            // (cleanUid, isMe, isPartner, triggerVerifiedMatchReadyAndStart đã được khai báo ở top-level scope)
             // cmd 200: Người chơi mới bước vào bàn (t: 1) hoặc rời bàn (t: 2)
             if (p.cmd === 200 && p.p) {
               const player = p.p;

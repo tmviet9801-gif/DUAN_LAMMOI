@@ -210,7 +210,10 @@ def test_wired_into_extension_and_manifest():
     ext = Path(__file__).parents[1] / "extension"
     manifest = json.loads((ext / "manifest.json").read_text(encoding="utf-8"))
     js_files = manifest["content_scripts"][0]["js"]
-    assert js_files == ["card_logic.js", "content_main.js"], js_files
+    # Khoá THỨ TỰ, không khoá cả danh sách: thêm một module thuần khác
+    # (partner_id.js) là chuyện bình thường và không được làm test này đỏ.
+    assert "card_logic.js" in js_files and "content_main.js" in js_files
+    assert js_files.index("card_logic.js") < js_files.index("content_main.js"), js_files
     assert manifest["content_scripts"][0]["world"] == "MAIN"
 
     content = (ext / "content_main.js").read_text(encoding="utf-8")
@@ -221,7 +224,8 @@ def test_wired_into_extension_and_manifest():
     # nên bám theo một file cụ thể là sai chỗ.
     pkg = Path(__file__).parents[1] / "controllers" / "auto_flow_controller"
     controller = "\n".join(f.read_text(encoding="utf-8") for f in sorted(pkg.glob("*.py")))
-    assert '("card_logic.js", "content_main.js")' in controller
+    thu_tu = controller.split("for fname in (", 1)[1].split(")", 1)[0]
+    assert thu_tu.index("card_logic.js") < thu_tu.index("content_main.js"), thu_tu
 
 
 # ---------- Đảo chiều ưu tiên cho Account phụ ----------

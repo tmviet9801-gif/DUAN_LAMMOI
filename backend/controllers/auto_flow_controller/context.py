@@ -57,18 +57,53 @@ def resolve_profile_name(p, accounts):
     return matched_name or p
 
 
+def danh_sach_dong_doi(profile_names, accounts):
+    """Danh tinh DA XAC MINH cua cac profile cung chay, de extension nhan nhau.
+
+    Khoa doi chieu la `character_name` — ten nhan vat trong game, doc ve bang
+    Check Live. KHONG dung `username` (ten dang nhap): hai ten chi khac mot ky
+    tu (`nicktestxabai1` vs `nicktestxxabai1`) nen nham la khop sai nguoi.
+
+    Tra `(danh_sach, thieu)`. `thieu` la cac profile chua co character_name —
+    chung se KHONG duoc nhan la dong doi (isPartner tra false), tuc tool danh
+    nhu nguoi thuong. Hong theo huong an toan, nhung nguoi dung can biet de
+    chay Check Live.
+    """
+    theo_ten = {}
+    for a in accounts or []:
+        if isinstance(a, dict) and a.get("name"):
+            theo_ten[str(a["name"]).strip().lower()] = a
+
+    danh_sach, thieu = [], []
+    for ten in profile_names or []:
+        a = theo_ten.get(str(ten or "").strip().lower())
+        cn = str((a or {}).get("character_name") or "").strip()
+        if not cn:
+            thieu.append(ten)
+            continue
+        danh_sach.append({
+            "profile_name": ten,
+            "character_name": cn,
+            "dn": cn,
+            "uid": str((a or {}).get("uid") or "").strip(),
+        })
+    return danh_sach, thieu
+
+
 def load_extension_scripts():
-    """Doc card_logic.js roi content_main.js, DUNG THU TU DO.
+    """Doc card_logic.js, partner_id.js roi content_main.js, DUNG THU TU DO.
 
     card_logic.js cung cap AutoToolCards (phan ra toi uu, dem bai) ma nhanh xa
     bai cua content_main.js goi toi.
+    partner_id.js cung cap AutoToolPartner (xac dinh dong doi). Thieu no thi
+    isPartner() luon tra false -> danh nhu nguoi thuong, khong doan bua.
     """
     scripts = []
     try:
         from models.bundled_model import get_extension_dir
         ext_dir = get_extension_dir()
         fallback_dir = Path(__file__).resolve().parent.parent / "extension"
-        for fname in ("card_logic.js", "content_main.js"):
+        for fname in ("card_logic.js", "partner_id.js", "content_main.js"):
             f = Path(ext_dir or "") / fname
             if not f.exists():
                 f = fallback_dir / fname

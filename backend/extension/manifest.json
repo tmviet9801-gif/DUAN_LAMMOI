@@ -27,6 +27,7 @@
       ],
       "js": [
         "card_logic.js",
+        "partner_id.js",
         "content_main.js"
       ],
       "run_at": "document_start",
