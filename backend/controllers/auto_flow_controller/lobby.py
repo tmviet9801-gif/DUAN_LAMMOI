@@ -317,7 +317,9 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
             await p.mouse.click(loc_close[0], loc_close[1])
             await asyncio.sleep(0.4)
 
-        # Bước 2: Tìm và click tab [ GAME BÀI ] (Tuyệt đối không để rơi vào ALL GAMES gây nhầm Tài Xỉu)
+        # Bước 2: Tìm và click tab [ GAME BÀI ].
+        # Không nhận ra thì DỪNG chứ không click theo toạ độ: sai vài chục pixel
+        # là rơi vào ô game khác, và người dùng thấy tool vào sảnh Tài/Xỉu.
         shot2 = await p.screenshot(type="png")
         loc_gb, score_gb = _match_template_cv(shot2, tpl_gb, threshold=0.75)
         if loc_gb:
@@ -325,9 +327,13 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
             await p.mouse.click(loc_gb[0], loc_gb[1])
             await asyncio.sleep(0.8)
         else:
-            log.info("%s không match được template GAME BÀI -> fallback click tọa độ chuẩn (335, 126)", name)
-            await p.mouse.click(int(sw * 0.427), int(sh * 0.250))
-            await asyncio.sleep(0.8)
+            # KHÔNG click mù. Toạ độ tỉ lệ trượt là trúng ô game bên cạnh —
+            # đúng triệu chứng "bấm vào sảnh cược Tài/Xỉu chứ không vào được
+            # Game Bài". Chú thích ở bước 1 đã ghi "tuyệt đối không click mù"
+            # nhưng chính bước này lại làm thế.
+            log.warning("%s: không nhận ra tab GAME BÀI (độ khớp cao nhất %.2f < 0.75) "
+                        "-> DỪNG, không click mò. Sẽ thử lại lượt sau.", name, score_gb)
+            return False
 
         # Bước 3: Đóng popup phát sinh (nếu có)
         shot3 = await p.screenshot(type="png")
@@ -344,9 +350,9 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
             await p.mouse.click(loc_tldl[0], loc_tldl[1])
             await asyncio.sleep(2.0)
         else:
-            log.info("%s không match được template TLDL -> fallback click tọa độ icon TLDL Hàng 1 Cột 1 (250, 202)", name)
-            await p.mouse.click(int(sw * 0.320), int(sh * 0.400))
-            await asyncio.sleep(2.0)
+            log.warning("%s: không nhận ra ô TIẾN LÊN ĐẾM LÁ (độ khớp cao nhất %.2f < 0.75) "
+                        "-> DỪNG, không click mò.", name, score_tldl)
+            return False
 
         # Bước 5: Bấm tab Solo (hoặc 4 người)
         tab_x = 0.500 if target_mu == 2 else 0.690

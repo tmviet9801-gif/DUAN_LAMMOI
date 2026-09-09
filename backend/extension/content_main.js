@@ -918,11 +918,18 @@
 
             // Nhận diện nút đóng popup / quảng cáo / x
             // QUAN TRỌNG: Loại trừ btn_back (nút thoát game) tránh click nhầm!
-            const isCloseBtn = /^(btn_close|btnclose|btn_dong|btndong|btn_x|btnx|closebtn|button_close|btn_exit|btnexit|btn_cancel)$/i.test(name) ||
-                               name.includes("close") || name.includes("dong") || name === "x" ||
-                               text === "ĐÓNG" || text === "BỎ QUA" || text === "CLOSE" || text === "X";
+            // Tên phải khớp MẪU NÚT ĐÓNG, không phải "có chứa chữ close/dong".
+            // `name.includes("dong")` khớp cả `khungdong`, `dongho`, `dongxu`...
+            // — bấm bừa vào những node đó là thao tác ngoài ý muốn giữa sảnh.
+            const isCloseBtn =
+              /^(btn[_-]?)?(close|dong|x|exit|cancel|huy|skip)([_-]?(btn|button))?$/i.test(name) ||
+              /^(popup|dialog|banner)[_-]?(close|dong|x)$/i.test(name) ||
+              text === "ĐÓNG" || text === "BỎ QUA" || text === "CLOSE" || text === "X";
 
-            if (isCloseBtn && node.active && (node.opacity === undefined || node.opacity > 0)) {
+            // isNodeVisible = activeInHierarchy: Cocos tắt popup bằng cách hạ cờ
+            // active của node CHA, nên kiểm `node.active` của chính nút đóng sẽ
+            // thấy "đang bật" ở những popup đã đóng từ lâu.
+            if (isCloseBtn && isNodeVisible(node)) {
               // Chặn tuyệt đối: không được click nút THOÁT hoặc BACK vì sẽ thoát game
               if (!name.includes("back") && !name.includes("leave") && !name.includes("thoat") &&
                   text !== "THOÁT" && text !== "THOÁT HẾT") {
@@ -958,76 +965,140 @@
     return closedCount;
   }
 
-  function clickCocosTabGameBai() {
-    let clicked = false;
-    try {
-      if (typeof cc !== "undefined" && cc.director) {
-        const scene = cc.director.getScene();
-        if (scene) {
-          function scan(node, depth) {
-            if (!node || depth > 30 || clicked) return;
-            const name = (node.name || "").toLowerCase();
-            const text = getCocosNodeText(node).toUpperCase();
+  /** Chuẩn hoá nhãn Cocos để so khớp: bỏ khoảng trắng thừa, viết hoa. */
+  function chuanNhan(s) {
+    return String(s || "").replace(/\s+/g, " ").trim().toUpperCase();
+  }
 
-            if ((text === "GAME BÀI" || name === "gamebai" || name === "game_bai" || name === "cardgame" || name === "tab_gamebai") && node.active) {
-              clicked = clickCocosNode(node);
-              if (clicked) {
-                console.log(`[AutoTool V3] Đã click Cocos tab GAME BÀI: node='${node.name}', text='${text}'`);
-                return;
-              }
-            }
+  // Nhãn của các sảnh game KHÁC. Bấm nhầm vào đây là vào sảnh cược Tài/Xỉu
+  // thay vì Game Bài — đúng triệu chứng người dùng gặp.
+  const NHAN_SANH_KHAC = [
+    "TÀI XỈU", "TAI XIU", "SLOTS", "MINI GAME", "QUAY SỐ", "BẮN CÁ", "NỔ HŨ",
+    "XÓC ĐĨA", "BACCARAT", "POKER", "THỂ THAO", "LÔ ĐỀ",
+  ];
 
-            const children = node.children || [];
-            for (let i = 0; i < children.length; i++) {
-              scan(children[i], depth + 1);
-              if (clicked) return;
-            }
-          }
-          scan(scene, 0);
-        }
+  function laSanhKhac(text) {
+    const t = chuanNhan(text);
+    return !!t && NHAN_SANH_KHAC.some((x) => t === x || t.includes(x));
+  }
+
+  /** Tìm node ĐANG HIỂN THỊ có nhãn khớp `hopLe(text, name)`.
+   *
+   * Chỉ duyệt node nhìn thấy được (`activeInHierarchy`): Cocos dựng sẵn cả UI
+   * của những màn khác rồi tắt bằng cách hạ cờ active của node CHA, nên kiểm
+   * `node.active` của chính node sẽ "thấy" cả những ô đang ẩn — bấm vào đó
+   * không có gì xảy ra nhưng hàm lại báo thành công.
+   */
+  function timNodeHien(hopLe, sauMax) {
+    if (typeof cc === "undefined" || !cc.director) return null;
+    const scene = cc.director.getScene();
+    if (!scene) return null;
+    let thay = null;
+    (function quet(node, depth) {
+      if (!node || thay || depth > (sauMax || 30)) return;
+      if (!isNodeVisible(node)) return;          // cha tắt -> cả nhánh bỏ qua
+      const text = getCocosNodeText(node);
+      if (!laSanhKhac(text) && hopLe(chuanNhan(text), String(node.name || "").toLowerCase())) {
+        thay = node;
+        return;
       }
+      const ch = node.children || [];
+      for (let i = 0; i < ch.length && !thay; i++) quet(ch[i], depth + 1);
+    })(scene, 0);
+    return thay;
+  }
+
+  /** Bấm một node, nhưng CHỈ khi nút tìm được vẫn còn chứa đúng nhãn cần bấm.
+   *
+   * `clickCocosNode` đi ngược lên cây tìm `cc.Button` KHÔNG giới hạn số tầng.
+   * Nếu nhãn nằm trong một container mà nút gần nhất phía trên là ô game khác,
+   * nó bấm nhầm ô đó. Đây là đường thứ hai dẫn tới sảnh Tài/Xỉu.
+   */
+  function bamNodeAnToan(node, nhanCanCo, sauMax) {
+    if (!node) return false;
+    const can = chuanNhan(nhanCanCo);
+    let nut = node;
+    let len = 0;
+    const coBtn = (n) => {
+      try {
+        return !!(n.getComponent && (n.getComponent("cc.Button")
+          || (typeof cc.Button !== "undefined" && n.getComponent(cc.Button))));
+      } catch (e) { return false; }
+    };
+    while (nut && !coBtn(nut) && nut.parent && len < (sauMax === undefined ? 3 : sauMax)) {
+      nut = nut.parent;
+      len++;
+    }
+    if (!nut) return false;
+
+    // Nút tìm được phải CÒN chứa nhãn cần bấm, và không được là sảnh game khác.
+    let hopLe = false;
+    (function soi(n, d) {
+      if (!n || hopLe || d > 6) return;
+      const t = chuanNhan(getCocosNodeText(n));
+      if (t && laSanhKhac(t)) { hopLe = false; return; }
+      if (can && t.includes(can)) { hopLe = true; return; }
+      const ch = n.children || [];
+      for (let i = 0; i < ch.length && !hopLe; i++) soi(ch[i], d + 1);
+    })(nut, 0);
+
+    if (!hopLe) {
+      console.warn(`[AutoTool V3] TỪ CHỐI bấm: nút cha gần nhất không còn chứa nhãn "${nhanCanCo}" -> tránh bấm nhầm ô game khác.`);
+      return false;
+    }
+    return clickCocosNode(nut);
+  }
+
+  /** Đang ở màn chọn game bài chưa (đã bấm đúng tab GAME BÀI). */
+  function dangOManGameBai() {
+    return !!timNodeHien((t) => t.includes("ĐẾM LÁ") || t.includes("PHỎM")
+      || t.includes("MẬU BINH") || t.includes("SÂM LỐC") || t.includes("XÌ DÁCH"));
+  }
+  G.__autotool_o_man_game_bai = dangOManGameBai;
+
+  function clickCocosTabGameBai() {
+    try {
+      const node = timNodeHien(
+        (t, n) => t === "GAME BÀI" || n === "gamebai" || n === "game_bai"
+               || n === "cardgame" || n === "tab_gamebai");
+      if (!node) {
+        console.warn("[AutoTool V3] Không thấy ô GAME BÀI đang hiển thị.");
+        return false;
+      }
+      const ok = bamNodeAnToan(node, "GAME BÀI");
+      if (ok) console.log(`[AutoTool V3] Đã bấm tab GAME BÀI: node='${node.name}'`);
+      return ok;
     } catch (e) {
       console.warn("[AutoTool V3] Lỗi clickCocosTabGameBai:", e);
+      return false;
     }
-    return clicked;
   }
 
   function clickCocosGameTLDL() {
-    let clicked = false;
+    // Dấu hiệu phân biệt là "ĐẾM LÁ", KHÔNG phải sự vắng mặt của "MIỀN NAM".
+    //
+    // Bản trước loại trừ `!text.includes("MIỀN NAM")` — mà game này TÊN ĐẦY ĐỦ
+    // là "Tiến Lên Miền Nam Đếm Lá". Nếu ô trong sảnh ghi đủ tên đó thì điều
+    // kiện ấy loại đúng ô cần bấm, hàm trả false, rồi luồng gọi rơi xuống
+    // click mù theo toạ độ và trúng sảnh game khác.
+    //
+    // "ĐẾM LÁ" nhận đúng cả hai cách ghi, và vẫn loại được "Tiến Lên Miền Nam"
+    // thường (không đếm lá) — đó mới là ô cần tránh.
     try {
-      if (typeof cc !== "undefined" && cc.director) {
-        const scene = cc.director.getScene();
-        if (scene) {
-          function scan(node, depth) {
-            if (!node || depth > 30 || clicked) return;
-            const name = (node.name || "").toLowerCase();
-            const text = getCocosNodeText(node).toUpperCase();
-
-            const isTLDL = text.includes("ĐẾM LÁ") || text.includes("TIẾN LÊN") ||
-                           name.includes("demla") || name.includes("dem_la") ||
-                           name.includes("simms") || name.includes("tldl");
-
-            if (isTLDL && !text.includes("MIỀN NAM") && node.active) {
-              clicked = clickCocosNode(node);
-              if (clicked) {
-                console.log(`[AutoTool V3] Đã click Cocos game TIẾN LÊN ĐẾM LÁ: node='${node.name}', text='${text}'`);
-                return;
-              }
-            }
-
-            const children = node.children || [];
-            for (let i = 0; i < children.length; i++) {
-              scan(children[i], depth + 1);
-              if (clicked) return;
-            }
-          }
-          scan(scene, 0);
-        }
+      const node = timNodeHien(
+        (t, n) => t.includes("ĐẾM LÁ") || n.includes("demla")
+               || n.includes("dem_la") || n.includes("tldl"));
+      if (!node) {
+        console.warn("[AutoTool V3] Không thấy ô TIẾN LÊN ĐẾM LÁ đang hiển thị.");
+        return false;
       }
+      const ok = bamNodeAnToan(node, "ĐẾM LÁ");
+      if (ok) console.log(`[AutoTool V3] Đã bấm ô TIẾN LÊN ĐẾM LÁ: node='${node.name}'`);
+      return ok;
     } catch (e) {
       console.warn("[AutoTool V3] Lỗi clickCocosGameTLDL:", e);
+      return false;
     }
-    return clicked;
   }
 
   function clickCocosSoloTab(targetMu = 2) {
@@ -1248,43 +1319,65 @@
       return { ok: false, error: "Tài khoản chưa đăng nhập / bị đăng xuất" };
     }
 
-    // 1. Đóng Popup / Banner / Ads nếu có
-    dismissPopupsAndBanners();
-    await new Promise((r) => setTimeout(r, humanDelay(350, 550)));
+    const nghi = (a, b) => new Promise((r) => setTimeout(r, humanDelay(a, b)));
 
-    // 2. Click tab GAME BÀI (Ưu tiên Cocos Native an toàn 100%, chống nhầm sang Tài Xỉu)
-    let clickedGb = clickCocosTabGameBai();
-    if (!clickedGb) {
-      // Chỉ click fallback nếu Cocos không tìm thấy node
-      dispatchCanvasClick(0.427, 0.250);
-      await new Promise((r) => setTimeout(r, 200));
+    // ĐÃ BỎ MỌI CLICK MÙ THEO TOẠ ĐỘ trong luồng này.
+    //
+    // Trước đây khi không tìm thấy node Cocos, hàm bấm đại vào (0.427, 0.250)
+    // rồi (0.320, 0.400). Toạ độ tỉ lệ trượt là trúng ô game bên cạnh — đúng
+    // triệu chứng "bấm vào sảnh cược Tài/Xỉu chứ không vào được Game Bài".
+    // Không tìm thấy ô thì BÁO, để lớp gọi bên ngoài dẹp popup và thử lại;
+    // nó đã có sẵn 45 giây để thử.
+
+    // 1. Đóng popup / banner / quảng cáo
+    dismissPopupsAndBanners();
+    await nghi(350, 550);
+
+    // 2. Tab GAME BÀI — thử lại vài lượt, popup có thể đóng chậm
+    let daVaoGameBai = dangOManGameBai();
+    for (let i = 0; i < 3 && !daVaoGameBai; i++) {
+      if (i > 0) {
+        dismissPopupsAndBanners();
+        await nghi(300, 500);
+      }
       clickCocosTabGameBai();
+      await nghi(600, 900);
+      daVaoGameBai = dangOManGameBai();
     }
-    await new Promise((r) => setTimeout(r, humanDelay(600, 900)));
-
-    // 3. Đóng popup phát sinh (nếu có)
-    dismissPopupsAndBanners();
-    await new Promise((r) => setTimeout(r, humanDelay(250, 400)));
-
-    // 4. Click game TIẾN LÊN ĐẾM LÁ (Ưu tiên Cocos Native)
-    let clickedTldl = clickCocosGameTLDL();
-    if (!clickedTldl) {
-      dispatchCanvasClick(0.320, 0.400);
-      await new Promise((r) => setTimeout(r, 200));
-      clickCocosGameTLDL();
+    if (!daVaoGameBai) {
+      console.warn("[AutoTool V3] Chưa vào được màn chọn Game Bài.");
+      return { ok: false, step: "game_bai",
+               error: "không bấm được vào Game Bài (không thấy ô, hoặc popup che)" };
     }
-    await new Promise((r) => setTimeout(r, humanDelay(1500, 2000)));
 
-    // 5. Đóng popup nếu có
+    // 3. Ô TIẾN LÊN ĐẾM LÁ
     dismissPopupsAndBanners();
+    await nghi(250, 400);
+    let daBamTldl = false;
+    for (let i = 0; i < 3 && !daBamTldl; i++) {
+      daBamTldl = clickCocosGameTLDL();
+      if (!daBamTldl) {
+        dismissPopupsAndBanners();
+        await nghi(400, 650);
+      }
+    }
+    if (!daBamTldl) {
+      return { ok: false, step: "tldl",
+               error: "không thấy ô Tiến Lên Đếm Lá trong màn Game Bài" };
+    }
+    await nghi(1500, 2000);
 
-    // 6. Click Solo Tab
+    // 4. Tab Solo / 4 người
+    dismissPopupsAndBanners();
     clickCocosSoloTab(targetMu);
-    await new Promise((r) => setTimeout(r, humanDelay(300, 500)));
+    await nghi(300, 500);
 
     const inLobby = isAlreadyInTLDLLobby();
-    console.log(`[AutoTool V3] Hoàn thành quy trình autoEnterTLDLLobby -> Kết quả inLobby: ${inLobby}`);
-    return { ok: inLobby, step: "done" };
+    console.log(`[AutoTool V3] Hoàn thành autoEnterTLDLLobby -> inLobby: ${inLobby}`);
+    return inLobby
+      ? { ok: true, step: "done" }
+      : { ok: false, step: "sanh_chon_ban",
+          error: "đã vào Đếm Lá nhưng chưa thấy màn chọn bàn" };
   }
 
   G.__autotool_is_inside_table = isInsideGameTable;
