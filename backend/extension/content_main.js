@@ -1008,6 +1008,42 @@
     return thay;
   }
 
+  /** Vị trí TÂM của node trên canvas, dạng tỉ lệ 0..1.
+   *
+   * Đo được trên sảnh thật: node nhãn "GAME BÀI" tự báo
+   * `getBoundingBoxToWorld() = {x:619.3, y:761.0, w:90.1, h:13.8}`, và
+   * `cc.view.getVisibleSize() = 1560 x 1004.8` trong khi canvas là 784 x 505.
+   * Tâm world (664.4, 767.9) -> tỉ lệ (0.426, 0.236) -> canvas (334, 119).
+   *
+   * Đây KHÔNG phải toạ độ đoán: nó lấy từ chính node cần bấm, nên đúng ở mọi
+   * kích thước cửa sổ và mọi lần game đổi bố cục.
+   */
+  function viTriNodeTrenCanvas(node) {
+    try {
+      if (!node || typeof cc === "undefined" || !cc.view) return null;
+      let cx, cy;
+      if (typeof node.getBoundingBoxToWorld === "function") {
+        const b = node.getBoundingBoxToWorld();
+        cx = b.x + b.width / 2;
+        cy = b.y + b.height / 2;
+      } else if (typeof node.convertToWorldSpaceAR === "function") {
+        const pt = node.convertToWorldSpaceAR(cc.v2 ? cc.v2(0, 0) : { x: 0, y: 0 });
+        cx = pt.x; cy = pt.y;
+      } else {
+        return null;
+      }
+      const vs = cc.view.getVisibleSize ? cc.view.getVisibleSize() : null;
+      if (!vs || !vs.width || !vs.height) return null;
+      const nx = cx / vs.width;
+      const ny = 1 - cy / vs.height;        // Cocos đếm y từ dưới lên
+      // Ngoài khung hình -> TỪ CHỐI, đừng bấm đại vào đâu đó.
+      if (!(nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1)) return null;
+      return { nx: nx, ny: ny };
+    } catch (e) {
+      return null;
+    }
+  }
+
   /** Bấm một node, nhưng CHỈ khi nút tìm được vẫn còn chứa đúng nhãn cần bấm.
    *
    * `clickCocosNode` đi ngược lên cây tìm `cc.Button` KHÔNG giới hạn số tầng.
@@ -1042,11 +1078,26 @@
       for (let i = 0; i < ch.length && !hopLe; i++) soi(ch[i], d + 1);
     })(nut, 0);
 
-    if (!hopLe) {
-      console.warn(`[AutoTool V3] TỪ CHỐI bấm: nút cha gần nhất không còn chứa nhãn "${nhanCanCo}" -> tránh bấm nhầm ô game khác.`);
+    if (hopLe && coBtn(nut)) {
+      return clickCocosNode(nut);
+    }
+
+    // KHÔNG có cc.Button — đây là trường hợp THẬT của các tab sảnh.
+    //
+    // Đo trên sảnh thật: node `Tab > GameBai` không có component nào, và cả
+    // chuỗi tổ tiên tới gốc cũng không có `cc.Button`. `clickCocosNode` đi
+    // ngược lên tìm Button, không thấy thì leo tới node GỐC rồi
+    // `emit(TOUCH_END)` ở đó — và trả về true. Nên đường Cocos cho tab GAME BÀI
+    // CHƯA BAO GIỜ hoạt động, mà vì nó báo thành công nên còn chặn luôn đường
+    // dự phòng. Màn hình ở nguyên tab ALL GAMES, rồi bước sau bấm vào vị trí ô
+    // Đếm Lá — trên tab ALL GAMES chỗ đó là ô Tài Xỉu.
+    const vt = viTriNodeTrenCanvas(node);
+    if (!vt) {
+      console.warn(`[AutoTool V3] TỪ CHỐI bấm "${nhanCanCo}": không xác định được vị trí node.`);
       return false;
     }
-    return clickCocosNode(nut);
+    console.log(`[AutoTool V3] Bấm "${nhanCanCo}" theo vị trí CỦA CHÍNH NODE (${vt.nx.toFixed(3)}, ${vt.ny.toFixed(3)}).`);
+    return dispatchCanvasClick(vt.nx, vt.ny);
   }
 
   /** Đang ở màn chọn game bài chưa (đã bấm đúng tab GAME BÀI). */

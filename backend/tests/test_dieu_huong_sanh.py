@@ -111,3 +111,75 @@ def test_ten_nut_dong_khop_mau_chu_khong_phai_chuoi_con():
     assert 'name.includes("close")' not in khoi
     assert 'name.includes("dong")' not in khoi
     assert "close|dong|x|exit|cancel|huy|skip" in khoi
+
+
+# ---------- bấm được node KHÔNG có cc.Button ----------
+
+def test_bam_theo_vi_tri_cua_chinh_node():
+    """ĐO TRÊN SẢNH THẬT: node `Tab > GameBai` KHÔNG có component nào, và cả
+    chuỗi tổ tiên tới gốc cũng không có `cc.Button`.
+
+    `clickCocosNode` đi ngược lên tìm Button, không thấy thì leo tới node GỐC
+    rồi `emit(TOUCH_END)` ở đó — và trả về true. Nên đường Cocos cho tab GAME
+    BÀI CHƯA BAO GIỜ hoạt động, mà vì báo thành công nên còn chặn luôn đường dự
+    phòng: màn ở nguyên tab ALL GAMES, rồi bước sau bấm vào vị trí ô Đếm Lá —
+    trên tab ALL GAMES chỗ đó là ô Tài Xỉu.
+    """
+    code = _code(EXT)
+    assert "function viTriNodeTrenCanvas(" in code
+    khoi = EXT.read_text(encoding="utf-8").split("function bamNodeAnToan", 1)[1][:2600]
+    assert "viTriNodeTrenCanvas(node)" in khoi
+    assert "dispatchCanvasClick(vt.nx, vt.ny)" in khoi
+
+
+def test_vi_tri_lay_tu_node_khong_phai_hang_so():
+    """Toạ độ phải suy ra từ hình học của node, để đúng ở mọi kích thước cửa sổ."""
+    src = EXT.read_text(encoding="utf-8")
+    khoi = src.split("function viTriNodeTrenCanvas", 1)[1][:1400]
+    assert "getBoundingBoxToWorld" in khoi
+    assert "cc.view.getVisibleSize" in khoi
+    assert "1 - cy / vs.height" in khoi, "Cocos đếm y từ dưới lên"
+
+
+def test_node_ngoai_khung_hinh_thi_tu_choi_bam():
+    src = EXT.read_text(encoding="utf-8")
+    khoi = src.split("function viTriNodeTrenCanvas", 1)[1][:1400]
+    assert "nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1" in khoi
+
+
+def test_phep_doi_toa_do_khop_so_do_that():
+    """Chốt lại phép đổi bằng số ĐO ĐƯỢC trên sảnh thật.
+
+    Node "GAME BÀI": bbox world {x:619.338, y:760.982, w:90.06, h:13.75};
+    cc.view.getVisibleSize() = 1560 x 1004.847; canvas = 784 x 505.
+    Toạ độ mù cũ là (0.427, 0.250) — sát ngay cạnh, nên nó "đúng" ở đúng kích
+    thước này và sai khi bố cục đổi.
+    """
+    bx, by, bw, bh = 619.338, 760.9824693877551, 90.06, 13.75
+    vw, vh = 1560.0, 1004.8469387755102
+    nx = (bx + bw / 2) / vw
+    ny = 1 - (by + bh / 2) / vh
+    assert abs(nx - 0.4259) < 0.001, nx
+    assert abs(ny - 0.2359) < 0.001, ny
+    # ra pixel canvas
+    assert abs(nx * 784 - 333.9) < 1.0
+    assert abs(ny * 505 - 119.1) < 1.0
+
+
+def test_nut_dong_popup_loi_moi_that_duoc_khop():
+    """Popup ĐANG MỞ trên máy người dùng lúc dò: `PopupInveteJoinRom`, nút tên
+    `BtnCancel`. Mẫu CŨ chỉ khớp `btn_cancel` (có gạch dưới) nên KHÔNG đóng
+    được — popup nằm che màn và mọi thao tác sau đó đều trượt.
+    """
+    import re
+
+    src = EXT.read_text(encoding="utf-8")
+    khoi = src.split("function dismissPopupsAndBanners", 1)[1][:2200]
+    dong = [d for d in khoi.splitlines() if "test(name)" in d and "close|dong" in d][0]
+    mau = dong.split("/", 1)[1].rsplit("/", 1)[0]
+    rx = re.compile(mau, re.I)
+    assert rx.match("btncancel"), "không khớp nút thật BtnCancel"
+    assert rx.match("btn_close") and rx.match("btnClose")
+    # không được khớp bừa
+    assert not rx.match("btnok"), "không được bấm CHẤP NHẬN lời mời"
+    assert not rx.match("khungdong") and not rx.match("dongho")
