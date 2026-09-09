@@ -175,6 +175,33 @@ class HitClubAdapter(GameAdapter):
             log.warning("persist token to account fail: %s", e)
 
     # ---- page helpers ----
+    def peek_page(self, account_name):
+        """Trả Page của profile NẾU đang mở; KHÔNG mở Chrome.
+
+        `_page()` gọi `page_pool.get_or_open()` nên sẽ BẬT profile lên khi nó
+        đang đóng. Check Live cần biết trạng thái mà không làm việc đó.
+        """
+        if not account_name:
+            return None
+        pg = self._pages.get(account_name)
+        if pg is not None:
+            return pg
+        if not self.page_pool:
+            return None
+        acc = self.account_lookup.get(account_name)
+        if not acc:
+            goc = account_name.lower().replace(" ", "")
+            for k, v in self.account_lookup.items():
+                if k and k.lower().replace(" ", "") == goc:
+                    acc = v
+                    break
+        if not acc:
+            return None
+        try:
+            return self.page_pool.peek(acc)
+        except Exception:
+            return None
+
     async def _page(self, account_name):
         if not account_name or not self.page_pool:
             return None

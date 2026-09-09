@@ -911,10 +911,18 @@ async def autoplay_report_room(body: dict, request: Request):
 async def autoplay_check_live(body: dict, request: Request):
     """Đọc trạng thái THẬT của profile rồi cập nhật lại accounts.json.
 
-    Body: {"profiles": ["Account 01", ...]}  — bỏ trống = kiểm tra tất cả.
+    Body: {"profiles": ["Account 01", ...], "ep_ws": false}
+          — `profiles` bỏ trống = kiểm tra tất cả.
 
-    Lấy tên hiển thị in-game (`dn`) và số dư từ trang đang mở, dự phòng bằng
-    Extension Hub. Ghi lại vào `character_name` / `uid` / `balance`.
+    KHÔNG mở Chrome. Thứ tự nguồn: trang đang mở (nếu profile đã bật) -> Extension
+    Hub -> WebSocket bằng token đã lưu. Đường WebSocket là cách đọc được số dư và
+    tên in-game của profile đang ĐÓNG; nó xác thực bằng token trong kho rồi đọc
+    khung `cmd 100`.
+
+    `ep_ws=true` ép dùng WebSocket cả khi profile đang mở. Mặc định tắt: phiên WS
+    thứ hai song song với trình duyệt cùng account có thể đá phiên kia ra.
+
+    Ghi lại vào `character_name` / `uid` / `balance`.
 
     Cơ chế ghép bàn xác minh đồng đội bằng cách khớp `dn` với `character_name`,
     nên trường đó cũ hoặc thiếu là ghép bàn hỏng — hoặc khớp nhầm sang TÊN ĐĂNG
@@ -925,7 +933,7 @@ async def autoplay_check_live(body: dict, request: Request):
         names = [names]
     adapter = _active_adapter(request)
     hub = getattr(request.app.state, "ext_hub", None)
-    return await check_live(adapter, hub, names)
+    return await check_live(adapter, hub, names, ep_ws=bool(body.get("ep_ws")))
 
 
 @router.get("/api/autoplay/profile-info")

@@ -76,6 +76,40 @@ class TokenStore:
     def get_record(self, account_name):
         return self._data.get(account_name)
 
+    def find_for_account(self, account):
+        """Tìm token cho một account, chịu được kho khoá không nhất quán.
+
+        Kho token tích tụ nhiều thế hệ khoá cho cùng một người: `Account 01`,
+        `Account01`, và cả tên đăng nhập `nicktestxabai1`. `get()` tra khoá
+        chính xác nên sẽ hụt. Ở đây thử mọi định danh biết được của account và
+        chọn bản ghi MỚI NHẤT — token cũ đã hết hạn (server trả mã 404).
+
+        Trả về `(token, khoá_đã_dùng)`; `(None, None)` nếu không có.
+        """
+        if not isinstance(account, dict):
+            return None, None
+
+        ung_vien = set()
+        for truong in ("name", "username", "character_name"):
+            v = str(account.get(truong) or "").strip()
+            if v:
+                ung_vien.add(v.lower())
+                ung_vien.add(v.replace(" ", "").lower())
+        if not ung_vien:
+            return None, None
+
+        khop = [
+            (rec.get("saved_at") or "", khoa, rec)
+            for khoa, rec in self._data.items()
+            if isinstance(rec, dict) and rec.get("token")
+            and (khoa.lower() in ung_vien or khoa.replace(" ", "").lower() in ung_vien)
+        ]
+        if not khop:
+            return None, None
+        khop.sort(key=lambda x: x[0], reverse=True)
+        _, khoa, rec = khop[0]
+        return rec.get("token"), khoa
+
     def clear(self, account_name=None):
         if account_name:
             self._data.pop(account_name, None)

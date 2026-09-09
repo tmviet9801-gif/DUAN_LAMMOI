@@ -18,13 +18,33 @@ from controllers.auto_flow_controller.check_live import (
 def test_ghi_ten_in_game_khi_database_con_trong():
     acc = {"name": "Account03", "username": "dangnhap03", "character_name": None}
     changed = apply_to_account(acc, {
-        "ten_in_game": "nicktestxxabai3", "uid": "aB3cD4", "so_du": 12345,
+        "ten_in_game": "nicktestxxabai3", "uid": "aB3cD4", "u": "1_643156999",
+        "so_du": 12345,
     })
     assert acc["character_name"] == "nicktestxxabai3"
     assert acc["uid"] == "aB3cD4"
-    assert acc["game_username"] == "aB3cD4"
+    assert acc["game_username"] == "1_643156999", "game_username là trường `u`, không phải uid"
     assert acc["balance"] == 12345
     assert any("character_name" in c for c in changed)
+
+
+def test_game_username_khong_bi_nhoi_uid():
+    """`context.py` dùng `game_username` làm ứng viên đối chiếu profile.
+
+    Bản trước gán thẳng `game_username = uid`, bơm một định danh khác không
+    gian vào tập đối chiếu. Quy ước sẵn có là lấy trường `u` của gói WS.
+    """
+    acc = {"name": "Account 01"}
+    apply_to_account(acc, {"uid": "eXBrqK5a", "u": "1_643156061"})
+    assert acc["uid"] == "eXBrqK5a"
+    assert acc["game_username"] == "1_643156061"
+
+
+def test_thieu_truong_u_thi_lui_ve_uid():
+    """Khung không có `u` thì vẫn phải điền được — không để trống."""
+    acc = {"name": "Account 01"}
+    apply_to_account(acc, {"uid": "eXBrqK5a"})
+    assert acc["game_username"] == "eXBrqK5a"
 
 
 def test_khong_ghi_de_bang_gia_tri_rong():
@@ -94,6 +114,16 @@ class _FakeAdapter:
         return self._pages.get(name)
 
 
+class _FakeTokenStore:
+    """Kho token giả — giữ test kín, không chạm file thật hay mạng."""
+
+    def __init__(self, token=None, khoa="Account 01"):
+        self._token, self._khoa = token, khoa
+
+    def find_for_account(self, account):
+        return (self._token, self._khoa) if self._token else (None, None)
+
+
 class _FakeHub:
     def __init__(self, states):
         self._states = states
@@ -143,7 +173,8 @@ async def test_du_phong_bang_hub_khi_trang_khong_co_du_lieu():
 async def test_profile_chua_mo_thi_bao_dung_su_that():
     """Không bịa dữ liệu cho profile đóng — đây là lỗi của endpoint cũ."""
     adapter = _FakeAdapter({})
-    live = await check_one_profile(adapter, None, {"name": "Account05"})
+    live = await check_one_profile(adapter, None, {"name": "Account05"},
+                                   token_store=_FakeTokenStore(None))
     assert live["mo"] is False
     assert live["ten_in_game"] is None
     assert live["so_du"] is None
@@ -218,3 +249,193 @@ def test_endpoint_gold_cung_khong_con_bia():
     assert "gold = 77607 if is_acc2 else 57377" not in khoi
     assert "is_acc2 = any(" not in khoi
     assert "check_one_profile" in khoi
+
+
+# ---------- đọc qua WebSocket bằng token (không mở Chrome) ----------
+
+def _gia_lap_ws(monkeypatch, ket_qua, ghi=None):
+    import controllers.auto_flow_controller.check_live as cl
+
+    async def _fake(token, **kw):
+        if ghi is not None:
+            ghi.append({"token": token, **kw})
+        return ket_qua
+    monkeypatch.setattr(cl, "doc_qua_ws", _fake)
+
+
+@pytest.mark.anyio
+async def test_dung_ws_khi_profile_dong(monkeypatch):
+    """Mục tiêu chính: đọc được số dư/tên mà KHÔNG mở Chrome."""
+    ghi = []
+    _gia_lap_ws(monkeypatch, {
+        "ok": True, "ten_in_game": "nicktestxxabai1", "uid": "1_643156061",
+        "so_du": 95_745, "loi": None, "ma_loi": None,
+    }, ghi)
+
+    live = await check_one_profile(
+        _FakeAdapter({}), None,
+        {"name": "Account 01", "proxy": "1.2.3.4:8080", "user_agent": "UA-X"},
+        token_store=_FakeTokenStore("1-" + "a" * 32))
+
+    assert live["mo"] is False, "không mở Chrome"
+    assert live["ten_in_game"] == "nicktestxxabai1"
+    assert live["so_du"] == 95_745
+    assert live["uid"] == "1_643156061"
+    assert live["nguon"] == "ws"
+    assert live["loi"] is None
+    # proxy và user-agent của account phải được dùng, không bỏ qua
+    assert ghi[0]["proxy"] == "1.2.3.4:8080"
+    assert ghi[0]["user_agent"] == "UA-X"
+
+
+@pytest.mark.anyio
+async def test_khong_mo_ws_khi_profile_dang_mo(monkeypatch):
+    """Phiên WS thứ hai có thể đá phiên trình duyệt — mặc định không được mở."""
+    ghi = []
+    _gia_lap_ws(monkeypatch, {"ok": True, "ten_in_game": "x", "so_du": 1}, ghi)
+
+    adapter = _FakeAdapter({"Account 01": _FakePage({"hooked": False})})
+    live = await check_one_profile(adapter, None, {"name": "Account 01"},
+                                   token_store=_FakeTokenStore("1-" + "a" * 32))
+    assert ghi == [], "profile đang mở thì KHÔNG được mở phiên WS thứ hai"
+    assert "Extension chưa nạp" in live["loi"]
+
+
+@pytest.mark.anyio
+async def test_ep_ws_thi_dung_ca_khi_dang_mo(monkeypatch):
+    ghi = []
+    _gia_lap_ws(monkeypatch, {"ok": True, "ten_in_game": "ten_ws", "so_du": 7}, ghi)
+
+    adapter = _FakeAdapter({"Account 01": _FakePage({"hooked": False})})
+    live = await check_one_profile(adapter, None, {"name": "Account 01"},
+                                   token_store=_FakeTokenStore("1-" + "a" * 32),
+                                   ep_ws=True)
+    assert len(ghi) == 1
+    assert live["ten_in_game"] == "ten_ws"
+    assert live["nguon"] == "ws"
+
+
+@pytest.mark.anyio
+async def test_token_het_han_bao_ro_khong_bia(monkeypatch):
+    """Server trả mã 404 -> nói thẳng token hết hạn, không đoán dữ liệu."""
+    _gia_lap_ws(monkeypatch, {
+        "ok": False, "ten_in_game": None, "uid": None, "so_du": None,
+        "loi": "Token hết hạn hoặc không hợp lệ — cần mở profile đăng nhập lại.",
+        "ma_loi": 404,
+    })
+    live = await check_one_profile(_FakeAdapter({}), None, {"name": "Account03"},
+                                   token_store=_FakeTokenStore("1-" + "b" * 32))
+    assert live["ten_in_game"] is None
+    assert live["so_du"] is None
+    assert live["ma_loi"] == 404
+    assert "hết hạn" in live["loi"]
+
+
+@pytest.mark.anyio
+async def test_khong_co_token_thi_bao_can_dang_nhap(monkeypatch):
+    ghi = []
+    _gia_lap_ws(monkeypatch, {"ok": True, "ten_in_game": "x"}, ghi)
+    live = await check_one_profile(_FakeAdapter({}), None, {"name": "Account09"},
+                                   token_store=_FakeTokenStore(None))
+    assert ghi == [], "không có token thì đừng gọi mạng"
+    assert "Chưa có token" in live["loi"]
+
+
+# ---------- tìm token trong kho khoá lộn xộn ----------
+
+def _kho(tmp_path, data):
+    import json
+    from game_sim.token_store import TokenStore
+
+    f = tmp_path / "tok.json"
+    f.write_text(json.dumps(data), encoding="utf-8")
+    return TokenStore(f)
+
+
+def test_tim_token_chiu_duoc_khoa_khong_nhat_quan(tmp_path):
+    """Kho thật có cả `Account 01`, `Account01` và tên đăng nhập cho cùng một người."""
+    store = _kho(tmp_path, {
+        "Account01":      {"token": "1-cu",  "saved_at": "2026-09-03T11:40:00+00:00"},
+        "nicktestxabai1": {"token": "1-vua", "saved_at": "2026-09-05T16:43:10+00:00"},
+        "Account 01":     {"token": "1-moi", "saved_at": "2026-09-08T21:29:09+00:00"},
+    })
+    tok, khoa = store.find_for_account(
+        {"name": "Account 01", "username": "nicktestxabai1"})
+    assert tok == "1-moi", "phải chọn bản ghi mới nhất — token cũ đã hết hạn"
+    assert khoa == "Account 01"
+
+
+def test_tim_token_qua_ten_dang_nhap_khi_ten_profile_khong_khop(tmp_path):
+    store = _kho(tmp_path, {
+        "nicktestxabai2": {"token": "1-x", "saved_at": "2026-09-05T08:07:01+00:00"},
+    })
+    tok, _ = store.find_for_account({"name": "Ten Khac",
+                                     "username": "nicktestxabai2"})
+    assert tok == "1-x"
+
+
+def test_khong_tim_thay_thi_tra_none(tmp_path):
+    store = _kho(tmp_path, {"Account 01": {"token": "1-a", "saved_at": "2026-09-08"}})
+    assert store.find_for_account({"name": "Account 99"}) == (None, None)
+    assert store.find_for_account(None) == (None, None)
+
+
+# ---------- an toàn & proxy ----------
+
+def test_khong_bao_gio_lo_token_day_du():
+    from core.ws_account import che_token
+
+    tok = "1-" + "0123456789abcdef" * 2
+    che = che_token(tok)
+    assert tok not in che
+    assert che.startswith("1-0123") and che.endswith("cdef")
+
+
+def test_proxy_cua_account_duoc_chuyen_dung_dang():
+    from core.ws_account import proxy_url
+
+    assert proxy_url("1.2.3.4:8080:user:pass") == "http://user:pass@1.2.3.4:8080"
+    assert proxy_url("1.2.3.4:8080") == "http://1.2.3.4:8080"
+    assert proxy_url("") is None
+    assert proxy_url(None) is None
+
+
+@pytest.mark.anyio
+async def test_check_live_khong_duoc_mo_chrome(monkeypatch):
+    """Check Live phải ĐỌC trạng thái, không được bật profile lên.
+
+    Bản cũ gọi `adapter._page()` -> `page_pool.get_or_open()` -> mở Chrome.
+    Chọn 5 profile để check là 5 cửa sổ bật lên — sai mục đích.
+    """
+    ghi = []
+    _gia_lap_ws(monkeypatch, {"ok": True, "ten_in_game": "ten_ws", "so_du": 5}, ghi)
+
+    class _AdapterCoPeek:
+        def __init__(self):
+            self.da_goi_page = False
+
+        def peek_page(self, name):
+            return None                      # profile đang đóng
+
+        async def _page(self, name):
+            self.da_goi_page = True          # nếu bị gọi là đã mở Chrome
+            raise AssertionError("_page() sẽ mở Chrome — không được gọi")
+
+    ad = _AdapterCoPeek()
+    live = await check_one_profile(ad, None, {"name": "Account 01"},
+                                   token_store=_FakeTokenStore("1-" + "a" * 32))
+    assert ad.da_goi_page is False
+    assert live["mo"] is False
+    assert live["nguon"] == "ws"
+    assert live["so_du"] == 5
+
+
+def test_page_pool_co_duong_tra_khong_mo():
+    """`peek` phải tồn tại và không đụng tới `open_sessions`."""
+    import inspect
+
+    from services.page_pool import PagePool
+
+    assert hasattr(PagePool, "peek")
+    assert not inspect.iscoroutinefunction(PagePool.peek), "peek là tra nhanh, không async"
+    assert "open_sessions" not in inspect.getsource(PagePool.peek)

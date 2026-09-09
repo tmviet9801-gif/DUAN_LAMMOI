@@ -12,6 +12,10 @@ Nguồn dữ liệu, theo thứ tự tin cậy:
   1. Đọc thẳng từ trang đang mở (`__my_dn`, `__my_uid`, `__my_balance`) — sống nhất.
   2. Extension Hub (`dn`/`balance` do extension báo lên) — dự phòng khi đọc trang lỗi.
   3. localStorage `AUTOTOOL_BALANCE` — dự phòng cuối cho số dư.
+  4. WebSocket bằng token đã lưu (`core.ws_account`) — KHÔNG cần mở Chrome.
+     Chỉ dùng khi profile đang ĐÓNG: mở phiên WS thứ hai song song với
+     trình duyệt cùng account có thể đá phiên kia ra, và điều đó chưa
+     kiểm chứng được.
 
 KHÔNG bịa dữ liệu: profile chưa mở hoặc chưa đăng nhập thì báo đúng như vậy,
 không đoán theo tên profile.
@@ -19,7 +23,9 @@ không đoán theo tên profile.
 import logging
 
 from core.page_world import eval_page
-from models.config_model import load_accounts, save_accounts
+from core.ws_account import doc_qua_ws
+from game_sim.token_store import TokenStore
+from models.config_model import DATA_DIR, load_accounts, save_accounts
 
 log = logging.getLogger("auto_flow_controller")
 
@@ -53,11 +59,32 @@ def _norm(s):
     return str(s or "").strip()
 
 
-async def check_one_profile(adapter, hub, account):
+async def _lay_trang_dang_mo(adapter, name):
+    """Trang của profile NẾU đang mở — không bao giờ tự bật Chrome lên.
+
+    Adapter thật có `peek_page()` (tra session sẵn có). Bản cũ gọi `_page()`,
+    mà `_page()` -> `page_pool.get_or_open()` -> MỞ profile. Với Check Live đó
+    là tác dụng phụ sai: người dùng muốn biết số dư, không muốn 5 cửa sổ
+    Chrome bật lên. Adapter nào không có `peek_page` thì vẫn dùng `_page`.
+    """
+    if adapter is None:
+        return None
+    peek = getattr(adapter, "peek_page", None)
+    if callable(peek):
+        pg = peek(name)
+        return await pg if hasattr(pg, "__await__") else pg
+    return await adapter._page(name)
+
+
+async def check_one_profile(adapter, hub, account, *, token_store=None,
+                            ep_ws=False):
     """Đọc trạng thái sống của MỘT account. Không ghi database ở đây.
 
     Trả về dict mô tả đúng những gì đọc được, kể cả khi thất bại — người gọi tự
     quyết định có cập nhật database hay không.
+
+    `ep_ws=True` dùng WebSocket cả khi profile đang mở. Mặc định KHÔNG, vì
+    phiên WS thứ hai có thể đá phiên trình duyệt đang đăng nhập.
     """
     name = account.get("name")
     out = {
@@ -66,16 +93,19 @@ async def check_one_profile(adapter, hub, account):
         "dang_nhap": None,
         "ten_in_game": None,
         "uid": None,
+        "u": None,
         "so_du": None,
         "nguon": None,
         "loi": None,
+        "ma_loi": None,
+        "token_key": None,
     }
 
     page = None
     try:
-        page = await adapter._page(name)
+        page = await _lay_trang_dang_mo(adapter, name)
     except Exception as e:
-        out["loi"] = f"Không mở được trang: {e}"
+        out["loi"] = f"Không đọc được trang: {e}"
 
     if page is not None:
         out["mo"] = True
@@ -89,6 +119,7 @@ async def check_one_profile(adapter, hub, account):
                                     else (True if live.get("on_login") is False else None))
                 out["ten_in_game"] = _norm(live.get("dn")) or None
                 out["uid"] = _norm(live.get("uid")) or None
+                out["u"] = _norm(live.get("u")) or None
                 out["so_du"] = live.get("balance")
                 out["nguon"] = "trang"
         except Exception as e:
@@ -108,6 +139,37 @@ async def check_one_profile(adapter, hub, account):
             out["nguon"] = out["nguon"] or "hub"
         if out["uid"] is None and _norm(st.get("uid")):
             out["uid"] = _norm(st.get("uid"))
+
+    # Cuối: WebSocket bằng token đã lưu — đường duy nhất đọc được mà không mở
+    # Chrome. Chỉ chạy khi profile ĐÓNG (hoặc bị ép), để không đá phiên đang mở.
+    thieu = out["ten_in_game"] is None or out["so_du"] is None
+    if thieu and (ep_ws or not out["mo"]):
+        store = token_store or TokenStore(DATA_DIR / "game_sim_token.json")
+        token, khoa = store.find_for_account(account)
+        if not token:
+            out["loi"] = out["loi"] or "Chưa có token đã lưu — mở profile đăng nhập một lần."
+        else:
+            kq = await doc_qua_ws(
+                token,
+                user_agent=account.get("user_agent"),
+                proxy=account.get("proxy"),
+            )
+            if kq.get("ten_in_game"):
+                out["ten_in_game"] = out["ten_in_game"] or kq["ten_in_game"]
+                out["dang_nhap"] = True
+            if kq.get("uid"):
+                out["uid"] = out["uid"] or kq["uid"]
+            if kq.get("u"):
+                out["u"] = out["u"] or kq["u"]
+            if kq.get("so_du") is not None and out["so_du"] is None:
+                out["so_du"] = kq["so_du"]
+            if kq.get("ten_in_game") or kq.get("so_du") is not None:
+                out["nguon"] = "ws"
+                out["loi"] = None
+                out["token_key"] = khoa
+            else:
+                out["loi"] = kq.get("loi") or out["loi"]
+                out["ma_loi"] = kq.get("ma_loi")
 
     return out
 
@@ -129,8 +191,16 @@ def apply_to_account(account, live):
     uid = live.get("uid")
     if uid and _norm(account.get("uid")) != uid:
         account["uid"] = uid
-        account["game_username"] = uid
-        changed.append("uid/game_username")
+        changed.append("uid")
+
+    # `game_username` giữ trường `u` của gói WS, KHÔNG phải `uid`. Đây là quy
+    # ước sẵn có (`account_controller._apply_real_identity`), và `context.py`
+    # dùng `game_username` làm ứng viên đối chiếu profile — nhét nhầm uid vào
+    # đây là bơm rác vào tập định danh.
+    u = live.get("u") or uid
+    if u and _norm(account.get("game_username")) != _norm(u):
+        account["game_username"] = u
+        changed.append("game_username")
 
     so_du = live.get("so_du")
     if so_du is not None and account.get("balance") != so_du:
@@ -158,12 +228,14 @@ def canh_bao_trung_ten(accounts):
     ]
 
 
-async def check_live(adapter, hub, profile_names=None):
+async def check_live(adapter, hub, profile_names=None, *, ep_ws=False):
     """Check Live cho một hoặc nhiều profile, rồi cập nhật accounts.json.
 
     `profile_names=None` -> kiểm tra mọi account có trong database.
+    `ep_ws=True` -> luôn dùng WebSocket, kể cả profile đang mở.
     """
     accounts = load_accounts()
+    store = TokenStore(DATA_DIR / "game_sim_token.json")
     muon = None
     if profile_names:
         muon = {_norm(n).lower() for n in profile_names if _norm(n)}
@@ -176,7 +248,8 @@ async def check_live(adapter, hub, profile_names=None):
         if muon is not None and _norm(a.get("name")).lower() not in muon:
             continue
 
-        live = await check_one_profile(adapter, hub, a)
+        live = await check_one_profile(adapter, hub, a, token_store=store,
+                                       ep_ws=ep_ws)
         changed = apply_to_account(a, live)
         if changed:
             co_thay_doi = True

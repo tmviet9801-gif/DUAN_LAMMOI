@@ -33,6 +33,18 @@ class PagePool:
                 return sid
         return None
 
+    def peek(self, account: dict | str) -> Optional[object]:
+        """Trả Page NẾU session đã mở sẵn; KHÔNG mở mới.
+
+        Dùng cho Check Live: mục đích của nó là đọc trạng thái mà không bật
+        Chrome lên. `get_or_open` sẽ mở profile — đúng thứ cần tránh.
+        """
+        sid = self._find_session(account)
+        if not sid:
+            return None
+        s = self.manager.sessions.get(sid)
+        return s.page if s else None
+
     async def get_or_open(self, account: dict) -> Optional[object]:
         """Trả về Playwright Page cho account. Mở session mới nếu chưa có."""
         sid = self._find_session(account)
