@@ -16,6 +16,7 @@ from .context import (
     load_extension_scripts,
     resolve_profile_name,
 )
+from .thong_ke_pha import ghi_moc, tom_tat
 from .preflight import loc_profile_du_dieu_kien, so_du_toi_thieu
 from game_sim import room_catalog
 from .deps import _build_adapter, _notify_all
@@ -671,6 +672,8 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         max_tries = 999999 if infinite_mode else raw_tries
 
         found_match = False
+        moc_pha: list = []
+        da_bao_pha = False
         anchor_name = first_name
         anchor_page = first_page
         selected_rid = None
@@ -799,6 +802,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             # Kiểm tra xem bàn Account 1 vừa vào có phải bàn trống không (đọc trực tiếp biến bộ nhớ JS 0ms)
             is_empty = False
             guest_ss_triggered = False
+            r_info_cuoi = None
             for _ in range(10):
                 if _should_stop():
                     break
@@ -815,6 +819,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                             in_game: !!window.__game_in_progress
                         };
                     }""")
+                    r_info_cuoi = r_info
                     if r_info.get("has_info"):
                         # Bàn trống: chỉ có 1 mình Account 1 và không có khách lạ
                         is_empty = (r_info.get("player_count") <= 1 and not r_info.get("has_stranger"))
@@ -855,7 +860,20 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 continue
 
             if not is_empty:
-                log.info("find-and-match: Account 1 vào bàn có người lạ / bàn full -> out về sảnh bàn Đếm Lá ngay & HỦY LỆNH cho các profile phụ")
+                # CHỈ THU THẬP SỐ LIỆU, không tính vào cảnh báo. Đo trên bản ghi
+                # WS của chính dự án: 68/117 khung cmd 202 (58%) có hơn một
+                # người. Mỗi (mức cược, số ghế) chỉ có ĐÚNG MỘT rid nên server
+                # tự xếp chỗ — bàn có sẵn người là kết quả mặc định giờ đông,
+                # không phải dấu hiệu bị phá. Tách ba nguyên nhân để về sau
+                # còn đặt được ngưỡng có căn cứ.
+                if r_info_cuoi is None:
+                    _ly_do = "khong_doc_duoc"
+                elif r_info_cuoi.get("has_stranger"):
+                    _ly_do = "khach_la"
+                else:
+                    _ly_do = "ban_full"
+                moc_pha = ghi_moc(moc_pha, _ly_do, selected_rid, time.time())
+                log.info("find-and-match: Account 1 vào bàn có người lạ / bàn full (%s) -> out về sảnh bàn Đếm Lá ngay & HỦY LỆNH cho các profile phụ", _ly_do)
                 await _notify_all(ext_hub,
                                   f"⚠️ {first_name} vào bàn có NGƯỜI LẠ/BÀN FULL → đang OUT về sảnh; {', '.join(other_profiles) or 'đồng đội'} đứng yên chờ bàn trống khác",
                                   "warn", f"⚠️ {first_name}")
@@ -987,11 +1005,19 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             still_alone = False
             for _ in range(5):
                 try:
-                    alive_check = await eval_page(anchor_page, """() => ({
-                        player_count: (window.__room_players || []).length,
-                        has_stranger: !!(window.__last_room_info && window.__last_room_info.has_stranger),
-                        in_game: !!window.__game_in_progress
-                    })""")
+                    alive_check = await eval_page(anchor_page, """() => {
+                        const ps = window.__room_players || [];
+                        const la = ps.filter((x) => {
+                            try { return !window.__is_me(x) && !window.__is_partner(x); }
+                            catch (e) { return false; }
+                        }).map((x) => String(x.uid || x.dn || x.u || ""));
+                        return {
+                            player_count: ps.length,
+                            has_stranger: !!(window.__last_room_info && window.__last_room_info.has_stranger),
+                            in_game: !!window.__game_in_progress,
+                            uid_la: la,
+                        };
+                    }""")
                     if alive_check.get("in_game"):
                         break
                     if int(alive_check.get("player_count") or 0) <= 1 and not alive_check.get("has_stranger"):
@@ -1001,7 +1027,22 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     break
                 await asyncio.sleep(0.4)
             if not still_alone:
-                log.info("find-and-match: KHÁCH LẠ VÀO BÀN TRONG LÚC Account 1 giữ bàn -> HỦY MỜI & OUT NGAY, báo Account 2!")
+                # Đây là tín hiệu DUY NHẤT được tính vào cảnh báo: bàn ĐÃ xác
+                # minh là trống rồi mới bị chen. Các nhánh "join xong thấy có
+                # người" không tính — đo được 58% lần join rơi vào bàn đã có
+                # người, đó là kết quả mặc định của giờ đông chứ không phải phá.
+                for _uid_la in (alive_check.get("uid_la") or [""]):
+                    moc_pha = ghi_moc(moc_pha, "khach_chen_khi_giu",
+                                      selected_rid, time.time(), _uid_la)
+                _tk = tom_tat(moc_pha, time.time())
+                log.info("find-and-match: KHÁCH LẠ VÀO BÀN TRONG LÚC Account 1 giữ bàn -> HỦY MỜI & OUT NGAY, báo Account 2! (thống kê: %s)", _tk)
+                if _tk["canh_bao"] and not da_bao_pha:
+                    da_bao_pha = True
+                    log.warning("find-and-match: cùng một người chen bàn %d lần trở lên -> có thể đang bị phá: %s",
+                                len(_tk["ke_lap_lai"]), _tk["ke_lap_lai"])
+                    await _notify_all(ext_hub,
+                                      "⚠️ Cùng một người liên tục chen vào bàn đang giữ — có thể đang bị phá. Tool VẪN CHẠY TIẾP.",
+                                      "warn", "⚠️ Nghi bị phá bàn")
                 await _notify_all(ext_hub,
                                   f"🔄 Khách lạ vào bàn #{selected_rid} lúc {anchor_name} đang giữ → HỦY lệnh, out tìm bàn trống khác",
                                   "warn", f"🔄 {anchor_name}")
@@ -1306,6 +1347,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 "room_id": selected_rid,
                 "bet": bet_val,
                 "room_name": f"Bàn #{selected_rid} (${bet_val})",
+                "thong_ke_pha": tom_tat(moc_pha, time.time()),
             }
 
 
@@ -1495,6 +1537,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             "bet": bet_val,
             "room_name": f"Bàn #{selected_rid} (${bet_val})",
             "screenshot": shot_a,
+            "thong_ke_pha": tom_tat(moc_pha, time.time()),
         }
 
     except asyncio.CancelledError:
