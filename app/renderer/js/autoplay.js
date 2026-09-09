@@ -65,8 +65,14 @@
         .filter(Boolean);
     }
 
-    // Ưu tiên 1 (khi bấm từ Dashboard): Lấy trực tiếp từ 2 dropdown Chính & Phụ trên thanh Gom Bàn
-    if (isFromDashboard && selectedProfiles.length < 4) {
+    // Ưu tiên 1: 2 dropdown Chính & Phụ trên thanh Gom Bàn.
+    //
+    // KHÔNG còn ràng buộc `isFromDashboard`: trước đây bấm từ panel Game thì
+    // nhánh này bị bỏ qua, rơi xuống danh sách tích checkbox và lấy phần tử
+    // ĐẦU TIÊN làm Account chính. Thứ tự checkbox theo accounts.json chứ không
+    // theo lựa chọn của người dùng -> vai trò chính/phụ bị đảo, Account được
+    // chọn làm Chính lại chạy với vai phụ.
+    if (selectedProfiles.length < 4) {
       const mainSelect = $("gcProfileMain");
       const subSelect = $("gcProfileSub");
       const mainName = mainSelect ? mainSelect.value : "";

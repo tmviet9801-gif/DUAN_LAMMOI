@@ -730,3 +730,60 @@ def test_phu_tu_out_sau_van_khong_canh_co_luon_tat():
     assert "if (isAutoEngaged() && isSubMatchProfile()) {" in src, \
         "phải canh cổng kích hoạt, không canh __AUTOTOOL_AUTO_HUNT"
     assert "G.__AUTOTOOL_AUTO_HUNT && isSubMatchProfile()" not in src
+
+
+def test_resolve_profile_name_khop_ca_ten_in_game():
+    """Extension báo tên IN-GAME (character_name), không phải username đăng nhập.
+
+    Thiếu nó thì resolve trả về chuỗi thô -> adapter._page() không tìm ra
+    session -> profile bị bỏ qua cả lượt chạy, không được cấu hình gì.
+    """
+    from controllers.auto_flow_controller.context import resolve_profile_name
+
+    accounts = [{
+        "id": "acc-1", "name": "Account 01",
+        "username": "nicktestxabai1",          # tên đăng nhập (1 chữ x)
+        "character_name": "nicktestxxabai1",   # tên in-game (2 chữ x)
+        "game_username": "O6YY7y9a",
+    }]
+    for probe in ("Account 01", "account01", "nicktestxabai1",
+                  "nicktestxxabai1", "O6YY7y9a", "acc-1"):
+        assert resolve_profile_name(probe, accounts) == "Account 01", probe
+    # Không khớp thì giữ nguyên chuỗi vào
+    assert resolve_profile_name("nguoi-la", accounts) == "nguoi-la"
+
+
+def test_vao_sanh_uu_tien_dieu_huong_cua_extension():
+    """Đường OpenCV không dẹp popup -> gặp banner cảnh báo là kẹt ở sảnh chính.
+
+    Triệu chứng thật: nick phụ đứng ngoài sảnh chính trong khi nick chính đã
+    vào sảnh chọn bàn, hỏng cả lượt gom bàn.
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).parents[1] / "controllers" / "auto_flow_controller"
+           / "lobby.py").read_text(encoding="utf-8")
+    assert "__autotool_dismiss_popups" in src, "phải dẹp popup trước khi điều hướng"
+    assert "__autotool_auto_enter_tldl" in src, "phải ưu tiên điều hướng của extension"
+    # Đường OpenCV vẫn giữ làm dự phòng
+    assert "OpenCV Template Matching" in src
+
+
+def test_ui_lay_account_chinh_tu_dropdown():
+    """Dropdown "Chính" phải quyết định anchor, không phụ thuộc bấm từ đâu.
+
+    Trước đây nhánh dropdown bị ràng buộc `isFromDashboard`; bấm từ panel Game
+    thì rơi xuống danh sách checkbox và lấy phần tử ĐẦU TIÊN làm Account chính
+    -> vai trò chính/phụ bị đảo.
+    """
+    from pathlib import Path
+
+    src = (Path(__file__).parents[2] / "app" / "renderer" / "js"
+           / "autoplay.js").read_text(encoding="utf-8")
+    # Điều kiện cũ ràng buộc dropdown vào isFromDashboard — phải biến mất hẳn.
+    assert "if (isFromDashboard && selectedProfiles.length < 4) {" not in src, \
+        "nhánh dropdown vẫn còn phụ thuộc isFromDashboard"
+    assert "if (selectedProfiles.length < 4) {" in src
+    # Và nhánh đó vẫn phải đọc đúng hai dropdown
+    block = src.split("if (selectedProfiles.length < 4) {", 1)[1][:400]
+    assert "gcProfileMain" in block and "gcProfileSub" in block

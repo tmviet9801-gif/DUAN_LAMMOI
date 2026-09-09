@@ -137,6 +137,32 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
             pass
         return True
 
+    # ƯU TIÊN: dùng chính hàm điều hướng của extension. Nó DẸP POPUP trước rồi
+    # click bằng node Cocos (Game Bài -> Tiến Lên Đếm Lá -> tab Solo/4 người),
+    # nên không phụ thuộc ảnh mẫu hay độ phân giải.
+    #
+    # Đường OpenCV bên dưới KHÔNG dẹp popup: gặp banner "CẢNH BÁO LỪA ĐẢO" của
+    # game là kẹt luôn ở sảnh chính — đúng tình huống nick phụ đứng ngoài trong
+    # khi nick chính đã vào sảnh chọn bàn, làm hỏng cả lượt gom bàn.
+    try:
+        entered = await eval_page(p, """(mu) => {
+            if (typeof window.__autotool_dismiss_popups === 'function') {
+                try { window.__autotool_dismiss_popups(); } catch (e) {}
+            }
+            if (typeof window.__autotool_auto_enter_tldl === 'function') {
+                return window.__autotool_auto_enter_tldl(mu);
+            }
+            return null;
+        }""", int(target_mu))
+        if entered is not None:
+            await asyncio.sleep(0.5)
+            if await _is_in_tldl_lobby_util(p):
+                log.info("%s đã vào sảnh Tiến Lên Đếm Lá qua điều hướng của extension.", name)
+                return True
+            log.info("%s: điều hướng extension chưa vào được sảnh -> thử tiếp bằng OpenCV.", name)
+    except Exception as e:
+        log.warning("%s: gọi điều hướng extension lỗi (%s) -> dùng OpenCV.", name, e)
+
     log.info("%s chưa ở sảnh Tiến Lên Đếm Lá -> Kích hoạt điều hướng thông minh (OpenCV Template Matching)...", name)
 
     tpl_dir = Path(__file__).resolve().parent.parent / "data" / "templates"

@@ -41,6 +41,14 @@ def resolve_profile_name(p, accounts):
             (a.get("name") or "").replace(" ", "").lower(),
             a.get("username") or "",
             (a.get("username") or "").lower(),
+            # Ten in-game (dn) va game_username: extension bao ten nay, khong
+            # phai username dang nhap. Thieu chung thi resolve tra ve chuoi tho
+            # -> adapter._page() khong tim ra session -> profile bi bo qua ca
+            # luot chay. (_match_account o account_controller da khop ca hai.)
+            a.get("character_name") or "",
+            (a.get("character_name") or "").lower(),
+            a.get("game_username") or "",
+            (a.get("game_username") or "").lower(),
             a.get("id") or "",
         ]
         if p in candidates or p.lower() in candidates or p.replace(" ", "").lower() in candidates:
