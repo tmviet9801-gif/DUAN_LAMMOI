@@ -9,7 +9,7 @@ from models.config_model import load_accounts
 
 from core.page_world import eval_page
 
-from .constants import BET_RATIOS, FIXED_TABLE_RIDS
+from .constants import BET_RATIOS, FIXED_TABLE_RIDS, kiem_so_cho
 from .context import (
     MatchContext,
     danh_sach_dong_doi,
@@ -163,12 +163,15 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             detail=(f"Muc cuoc ${_bet_kiem:,} khong co trong game. "
                     f"Chon mot trong: {', '.join(f'${b:,}' for b in sorted(BET_RATIOS))}"
                     ).replace(",", "."))
-    _mu_kiem = int(body.get("mu", 2) or 2)
+    try:
+        _mu_kiem = kiem_so_cho(body.get("mu", 2) or 2)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if FIXED_TABLE_RIDS.get(f"{_bet_kiem}_{_mu_kiem}") is None:
         raise HTTPException(
             status_code=400,
-            detail=(f"Ban {_mu_kiem} cho khong ton tai o muc ${_bet_kiem:,}. "
-                    f"So cho hop le: 2 hoac 4.").replace(",", "."))
+            detail=(f"Ban {_mu_kiem} cho khong ton tai o muc ${_bet_kiem:,}."
+                    ).replace(",", "."))
     _ext_hub = getattr(request.app.state, "ext_hub", None)
 
     if body.get("kiem_truoc", True):
@@ -337,6 +340,12 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         # `__autotool_partners = []` va chi nhan dong doi qua khop CHINH XAC
         # `character_name`, nen khong bom xuong day thi khong ai nhan ai.
         dong_doi, thieu_ten = danh_sach_dong_doi(list(pages.keys()), accounts)
+        # Ghim danh sách hẹp này ở Hub ngay từ đầu lượt chạy. Không ghim thì Hub
+        # ghi đè bằng "mọi account khác đều là đồng đội" ngay lần đầu extension
+        # đăng ký lại hoặc gửi tin đồng bộ tên in-game.
+        if ctx.ext_hub:
+            for _ten in pages.keys():
+                ctx.ext_hub.pin_partners(_ten, dong_doi)
         if thieu_ten:
             log.warning(
                 "find-and-match: %s chua co character_name -> KHONG duoc nhan la "
@@ -1097,11 +1106,15 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                             # KHÔNG đẩy tên profile (anchor_name/sub_name) vào
                             # danh sách: đó là tên hiển thị trong app, không
                             # phải danh tính trong game. Chỉ dn/u/uid.
-                            await ext_hub.send_command(sub_name, "SYNC_PARTNERS", {
-                                "partners": ds_chung + [p_info_anchor, anchor_dn, anchor_u]})
+                            ds_sub = ds_chung + [p_info_anchor, anchor_dn, anchor_u]
+                            ext_hub.pin_partners(sub_name, ds_sub)
+                            await ext_hub.send_command(sub_name, "SYNC_PARTNERS",
+                                                       {"partners": ds_sub})
                         if ext_hub.is_connected(anchor_name):
-                            await ext_hub.send_command(anchor_name, "SYNC_PARTNERS", {
-                                "partners": ds_chung + [p_info_sub, sub_dn, sub_u]})
+                            ds_anchor = ds_chung + [p_info_sub, sub_dn, sub_u]
+                            ext_hub.pin_partners(anchor_name, ds_anchor)
+                            await ext_hub.send_command(anchor_name, "SYNC_PARTNERS",
+                                                       {"partners": ds_anchor})
                 except Exception as e:
                     log.warning("find-and-match: Lỗi đồng bộ định danh 2 chiều: %s", e)
 
@@ -1558,6 +1571,15 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         # Không điều hướng/click sau cancellation: Stop phải thực sự dừng ngay.
         return {"ok": False, "error": "Đã dừng chu trình gom bàn theo lệnh của bạn.", "stopped": True}
     finally:
+        # Gỡ ghim danh sách đồng đội — THEO TỪNG TÊN của chính lượt này.
+        # Các cặp chạy song song qua `asyncio.gather`; gỡ sạch sẽ tháo luôn ghim
+        # của cặp còn đang chạy dở.
+        try:
+            _hub = getattr(request.app.state, "ext_hub", None)
+            if _hub:
+                _hub.unpin_partners(profiles_input)
+        except Exception:
+            pass
         dang_chay = getattr(request.app.state, "gom_ban_profiles", None)
         if dang_chay is not None:
             for _t in profiles_input:

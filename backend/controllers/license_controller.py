@@ -4,7 +4,6 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 import license as lic
-from platform_config import ALLOW_LEGACY_HMAC, OWNER_TOKEN
 
 log = logging.getLogger("license_controller")
 router = APIRouter()
@@ -63,38 +62,13 @@ async def license_deactivate():
     return lic.deactivate()
 
 
-@router.post("/api/license/make")
-async def license_make(body: dict):
-    """Sinh license key HMAC đời cũ ngay trong app (cần owner_token).
+# ĐÃ BỎ: endpoint POST /api/license/make (sinh license ngay trong app).
+#
+# Việc cấp license chuyển sang dự án quản trị riêng. App chỉ còn NHẬP và KIỂM
+# license: đúng mã máy, còn hạn, và mở được bao nhiêu profile.
+#
+# Không chỉ là dọn giao diện: chừng nào app còn tự ký được key thì ai unpack
+# được exe cũng tự cấp key vô hạn cho mình — đúng lỗ hổng mà bản Ed25519 sinh
+# ra để bịt. `lic.make_key` vẫn còn trong backend/license.py vì bộ kiểm thử
+# dùng nó để dựng key thử; nhưng không còn đường nào từ mạng gọi tới nó.
 
-    Chỉ còn dùng được khi ALLOW_LEGACY_HMAC=True. Bản thương mại phải cấp key
-    từ portal: app không giữ khoá ký Ed25519, nên tự nó không sinh nổi key —
-    đó chính là điều làm cho việc unpack exe trở nên vô dụng.
-    """
-    if not ALLOW_LEGACY_HMAC:
-        raise HTTPException(
-            status_code=410,
-            detail="Bản này không tự sinh key được nữa. Hãy cấp license từ trang quản trị.",
-        )
-    token = (body.get("owner_token") or "").strip()
-    if not token or token != OWNER_TOKEN:
-        raise HTTPException(status_code=403, detail="Sai token — chỉ owner mới sinh được key")
-    machine_id = (body.get("machine_id") or "").strip()
-    if not machine_id:
-        raise HTTPException(status_code=400, detail="Thiếu machine_id của máy khách")
-    days = int(body.get("days", 30))
-    max_tabs = int(body.get("max_tabs", 10))
-    features = (body.get("features") or "game").strip()
-    if days < 1 or days > 3650:
-        raise HTTPException(status_code=400, detail="Số ngày không hợp lệ (1-3650)")
-    if max_tabs < 1 or max_tabs > 50:
-        raise HTTPException(status_code=400, detail="Số tab không hợp lệ (1-50)")
-    key = lic.make_key(machine_id, days, max_tabs, features)
-    log.info("owner generated license for %s (%d days, %d tabs)", machine_id, days, max_tabs)
-    return {
-        "key": key,
-        "machine_id": machine_id,
-        "days": days,
-        "max_tabs": max_tabs,
-        "expires_at": lic.parse_key(key)["expiry"] if lic.parse_key(key) else 0,
-    }

@@ -104,10 +104,15 @@ def test_khong_gui_truong_endpoint_khong_doc():
 
 def test_o_slot_that_co_gioi_han():
     """Ô nhập số tự do: gõ 3 là vòng lặp vô hạn im lặng (đã chặn ở backend,
-    nhưng chặn từ giao diện thì người dùng biết ngay)."""
+    nhưng chặn từ giao diện thì người dùng biết ngay).
+
+    Bản này chỉ mở bàn Solo 2 nên ô khoá cứng ở 2 và để `readonly`. Không ẩn ô:
+    ẩn thì người dùng không biết đang chạy loại bàn nào.
+    """
     html = (UI / "index.html").read_text(encoding="utf-8")
-    khoi = html.split('id="gcSlotCount"', 1)[1][:200]
-    assert 'min="2"' in khoi and 'max="4"' in khoi
+    khoi = html.split('id="gcSlotCount"', 1)[1][:260]
+    assert 'min="2"' in khoi and 'max="2"' in khoi
+    assert "readonly" in khoi
 
 
 def test_phan_hoi_cua_luot_cu_khong_ghi_de_thong_bao():

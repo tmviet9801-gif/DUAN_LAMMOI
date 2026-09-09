@@ -147,13 +147,16 @@ def test_controller_khong_day_ten_profile_vao_danh_sach():
            / "matching.py").read_text(encoding="utf-8")
     # Kiểm đúng NỘI DUNG danh sách, không kiểm cả dòng: `send_command(anchor_name,
     # ...)` chứa tên profile ở vị trí ĐÍCH GỬI, chuyện đó là đúng.
-    for dong in src.splitlines():
-        if '"partners": ds_chung' not in dong:
-            continue
-        ds = dong.split("ds_chung", 1)[1]
-        assert "anchor_name" not in ds and "sub_name" not in ds, (
-            f"còn đẩy tên profile vào danh sách đồng đội: {dong.strip()}")
-    assert '"partners": ds_chung' in src
+    #
+    # Bắt theo phép NỐI `ds_chung + [...]` chứ không theo một dòng cụ thể: danh
+    # sách có thể được đặt tên biến trung gian trước khi gửi, và bản trước của
+    # test này đã đỏ đúng vì lý do đó dù ý định vẫn được giữ nguyên.
+    noi = [d.strip() for d in src.splitlines() if "ds_chung +" in d]
+    assert noi, "không tìm thấy chỗ dựng danh sách đồng đội từ ds_chung"
+    for dong in noi:
+        them = dong.split("ds_chung", 1)[1]
+        assert "anchor_name" not in them and "sub_name" not in them, (
+            f"còn đẩy tên profile vào danh sách đồng đội: {dong}")
 
 
 def test_khach_la_hoan_toan_khong_duoc_nhan():

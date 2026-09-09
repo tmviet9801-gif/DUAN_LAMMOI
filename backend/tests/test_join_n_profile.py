@@ -115,15 +115,47 @@ def test_muc_cuoc_la_thi_bao_loi_khong_am_tham_ha_xuong():
 
 def test_so_cho_la_thi_bao_loi_ngay():
     """Ô Slot là ô nhập SỐ TỰ DO. Gõ 3 -> không có rid -> vòng lặp 999999 lần,
-    giao diện đứng ở "ĐANG DÒ TÌM PHÒNG" vĩnh viễn, không một thông báo nào."""
+    giao diện đứng ở "ĐANG DÒ TÌM PHÒNG" vĩnh viễn, không một thông báo nào.
+
+    Bản này chỉ mở bàn Solo 2 người nên cổng chặn nằm ở `kiem_so_cho`; bảng RID
+    vẫn kiểm lần hai phòng khi mở lại bàn 4 người mà mức cược đó không có bàn.
+    """
     code = _code()
+    assert "kiem_so_cho(" in code, "phải chặn qua hằng số dùng chung"
     assert 'FIXED_TABLE_RIDS.get(f"{_bet_kiem}_{_mu_kiem}") is None' in code
-    assert "2 hoac 4" in code or "2 hoặc 4" in code
+
+
+def test_chi_mo_ban_solo_2():
+    """Người dùng yêu cầu: bản này chỉ chạy bàn Solo 2; bàn 4 mở ở bản sau."""
+    from controllers.auto_flow_controller.constants import (
+        SO_CHO_CHO_PHEP,
+        kiem_so_cho,
+    )
+    assert SO_CHO_CHO_PHEP == (2,)
+    assert kiem_so_cho(2) == 2
+    for xau in (4, 3, "4", 0, None, "abc"):
+        with pytest.raises(ValueError):
+            kiem_so_cho(xau)
+
+
+def test_de_mo_lai_ban_4_chi_can_doi_hang_so():
+    """Không được rải `if mu == 2` khắp nơi — mở lại phải rẻ."""
+    from pathlib import Path as _P
+    goc = _P(__file__).parents[1] / "controllers" / "auto_flow_controller"
+    src = (goc / "constants.py").read_text(encoding="utf-8")
+    assert "SO_CHO_CHO_PHEP = (2,)" in src
+    # bảng RID vẫn giữ đủ cả hai cột để mở lại không phải dựng lại
+    assert '"100_4"' in src and '"500_4"' in src
+    for f in ("matching.py", "routes_basic.py"):
+        code = "\n".join(
+            d for d in (goc / f).read_text(encoding="utf-8").splitlines()
+            if not d.strip().startswith("#"))
+        assert "kiem_so_cho(" in code, f"{f}: phải gọi hằng số dùng chung"
 
 
 def test_chan_tham_so_TRUOC_khi_mo_chrome():
     src = _src()
-    assert src.index("_mu_kiem = int(") < src.index("page_a = await adapter._page(profile_a)")
+    assert src.index("kiem_so_cho(") < src.index("page_a = await adapter._page(profile_a)")
 
 
 # ---------- kiểm bằng số học, không chỉ bằng chuỗi ----------

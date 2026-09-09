@@ -32,6 +32,42 @@ class ExtensionHubManager:
         # Luồng đó từng chuyển rid=4 ($500) dù UI đã cấu hình $100. Controller
         # là nơi duy nhất được quyền ghép bàn và hiện luôn giữ cờ này tắt.
         self._room_share_enabled = False
+        # DANH SÁCH ĐỒNG ĐỘI ĐƯỢC GHIM, theo từng profile.
+        #
+        # `broadcast_partners` dựng danh sách từ MỌI account khác trong
+        # accounts.json và chạy lại mỗi khi extension đăng ký lại hoặc gửi tin
+        # đồng bộ tên. Nó GÁN ĐÈ (không gộp) nên xoá mất danh sách hẹp mà
+        # `matching.py` vừa cấp — giữa lúc đang chạy. Hậu quả đo được bằng cách
+        # chạy `partner_id.js` với 4 tài khoản chia 2 cặp: sau một lần chạy,
+        # cặp A nhìn cặp B thành đồng đội, `hasStrangerOrFull` từ true thành
+        # false, tức cơ chế phát hiện người lạ bị vô hiệu hoàn toàn.
+        #
+        # GHIM chứ không chỉ BỎ QUA: extension chạy trên service worker MV3, bị
+        # kill rồi sống lại và đăng ký lại giữa chừng. Chỉ bỏ qua thì trang đó
+        # không còn danh sách nào cả — thay một danh sách quá rộng bằng danh
+        # sách rỗng, còn tệ hơn. Ghim lại thì lần đăng ký sau nạp đúng bản hẹp.
+        #
+        # Kiểu dict theo từng profile, KHÔNG phải một tập gán đè: các cặp chạy
+        # SONG SONG qua `asyncio.gather` nên gán đè sẽ xoá ghim của cặp kia, và
+        # `finally` của cặp xong trước sẽ gỡ ghim của cặp còn đang chạy.
+        self._pinned_partners: Dict[str, list] = {}
+
+    def pin_partners(self, profile_name, partners):
+        """Ghim danh sách đồng đội do controller cấp cho MỘT profile."""
+        ten = str(profile_name or "").strip().lower()
+        if not ten:
+            return
+        self._pinned_partners[ten] = list(partners or [])
+        log.info("ExtensionHub V3: ghim %d dinh danh dong doi cho '%s'",
+                 len(self._pinned_partners[ten]), ten)
+
+    def unpin_partners(self, names):
+        """Gỡ ghim cho các profile đã chạy xong. Dùng discard theo TỪNG tên."""
+        for n in (names or []):
+            self._pinned_partners.pop(str(n or "").strip().lower(), None)
+
+    def pinned_partners(self, profile_name):
+        return self._pinned_partners.get(str(profile_name or "").strip().lower())
 
     def set_room_share(self, enabled: bool):
         """Bật/tắt cơ chế tự động chia sẻ bàn trống giữa các profile."""
@@ -275,6 +311,17 @@ class ExtensionHubManager:
 
         for name in active_names:
             name_low = str(name).strip().lower()
+            ghim = self._pinned_partners.get(name_low)
+            if ghim is not None:
+                # Controller đang cấp danh sách theo cặp cho profile này. Gửi
+                # lại ĐÚNG bản đã ghim thay vì "mọi account khác đều là đồng
+                # đội" — vừa không phá phạm vi cặp, vừa nạp lại được sau khi
+                # extension đăng ký lại.
+                asyncio.create_task(self.send_command(name, "SYNC_PARTNERS", {
+                    "partners": list(ghim),
+                    "all_profiles": active_names,
+                }))
+                continue
             partners = []
 
             # 1. Thêm từ các tab browser khác đang kết nối

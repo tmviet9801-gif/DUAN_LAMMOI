@@ -8,7 +8,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 
 from models.config_model import load_accounts
 
-from .constants import AUTOPLAY_CONFIG_FILE, FIXED_TABLE_RIDS
+from .constants import AUTOPLAY_CONFIG_FILE, FIXED_TABLE_RIDS, kiem_so_cho
 from .check_live import check_live, check_one_profile
 from .context import resolve_profile_name
 from .deps import _active_adapter, _build_adapter, _load_game_config
@@ -609,7 +609,10 @@ async def autoplay_create_table(body: dict, request: Request):
     if not name:
         raise HTTPException(status_code=400, detail="Thiếu profile_name")
     bet = int(body.get("bet", 100) or 100)
-    mu = int(body.get("mu", 2) or 2)
+    try:
+        mu = kiem_so_cho(body.get("mu", 2) or 2)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     pwd = ""
 
     adapter = _build_adapter(request, {"game": {"adapter": "hitclub", "clicks": {}}})
@@ -709,7 +712,10 @@ async def autoplay_join_rid(body: dict, request: Request):
         raise HTTPException(status_code=400, detail="Thiếu rid")
     gid = int(body.get("gid", 1))
     bet = int(body.get("bet", 100))
-    mu = int(body.get("mu", 2))
+    try:
+        mu = kiem_so_cho(body.get("mu", 2))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     payload = {
         "cmd": 308, "aid": 1, "gid": gid, "b": bet, "Mu": mu,
         "iJ": True, "inc": False, "pwd": "", "rid": int(rid),

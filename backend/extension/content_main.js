@@ -1761,6 +1761,26 @@
     }, "*");
 
     const executeHandshakeAction = () => {
+      // ĐỦ SỐ GHẾ NGƯỜI DÙNG CHỌN mới được gửi Sẵn sàng/Bắt đầu.
+      //
+      // Lớp gác trên chỉ chặn "< 2", tức hai người là đủ. `__target_hunt_mu`
+      // (ô "Chỗ" trên giao diện) được controller bơm xuống nhưng KHÔNG được
+      // đọc ở bất kỳ chỗ quyết định nào — chọn bàn 4 người thì nick phụ đầu
+      // tiên vừa ngồi là ván bắt đầu với 2 người.
+      //
+      // Đặt ở ĐÂY chứ không đặt ở đầu hàm: thoát sớm ở đầu hàm sẽ bỏ qua cả
+      // `__is_matched_locked`, việc huỷ `__hunt_wait_timer`/`__hunt_retry_timer`,
+      // gói AUTOTOOL_MATCH_SUCCESS và nhịp nhắc lại — bàn coi như chưa khớp và
+      // không còn gì đánh thức nó khi người thứ ba, thứ tư ngồi xuống.
+      //
+      // Bản này khoá bàn Solo 2 nên cổng trùng đúng lớp gác trên và không đổi
+      // hành vi; nó là thứ giữ cho bàn 4 người chạy đúng khi mở lại sau này.
+      const soGheCan = Number(G.__target_hunt_mu) || 2;
+      const dangNgoi = (G.__room_players || []).length;
+      if (dangNgoi < soGheCan) {
+        console.warn(`[AutoTool V3] ⏳ CHƯA ĐỦ CHỖ: bàn có ${dangNgoi}/${soGheCan} người -> chưa gửi Sẵn sàng/Bắt đầu.`);
+        return;
+      }
       // Account phụ chỉ Sẵn Sàng; chỉ chủ bàn mới được Bắt đầu. Trước đây cả
       // hai cùng gọi ready (có kèm cmd 5) khiến chủ bàn có thể không phát Start
       // đúng thời điểm và bị server out vì timeout.

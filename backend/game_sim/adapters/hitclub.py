@@ -32,6 +32,7 @@ import logging
 import re
 import time
 
+from controllers.auto_flow_controller.constants import SO_CHO_CHO_PHEP
 from core.time_utils import utcnow_iso
 from game_sim.game_adapter import GameAdapter
 from game_sim.protocol import ProtocolLearner
@@ -935,6 +936,18 @@ class HitClubAdapter(GameAdapter):
 
             msgs = _PAGE_RECV.get(id(page), []) or []
             rooms = _extract_rooms(msgs)
+            # Bản này chỉ mở bàn Solo 2 người. Đây là LUỒNG GOM BÀN THỨ HAI
+            # (/api/autoplay/start), hoàn toàn không nhận tham số `mu` nên cổng
+            # `kiem_so_cho` ở controller không chạm tới được: nó chọn bàn theo
+            # số người đang ngồi và có thể rơi thẳng vào bàn 4 chỗ.
+            # Lọc ngay tại nguồn, theo đúng trường `Mu` mà server trả về.
+            if rooms:
+                loc = {rid: r for rid, r in rooms.items()
+                       if int(r.get("Mu") or 0) in SO_CHO_CHO_PHEP}
+                if len(loc) != len(rooms):
+                    log.info("loc ban theo so cho %s: %d -> %d bàn",
+                             SO_CHO_CHO_PHEP, len(rooms), len(loc))
+                rooms = loc
             if rooms:
                 empty = [r for r in rooms.values() if r["uC"] == 0]
                 if empty:

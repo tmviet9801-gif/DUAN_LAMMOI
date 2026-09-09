@@ -38,3 +38,35 @@ FIXED_TABLE_RIDS = {
     "500000_2": 22, "500000_4": 21, "1000000_2": 24, "1000000_4": 23,
     "2000000_2": 26, "2000000_4": 25, "5000000_2": 28, "5000000_4": 27,
 }
+
+# ===================== SỐ CHỖ ĐANG MỞ =====================
+#
+# Bản này CHỈ chạy bàn Solo 2 người. Bàn 4 người phát triển ở bản sau.
+#
+# Toàn bộ đường 4 người vẫn còn nguyên trong mã (bảng RID ở trên vẫn đủ cả hai
+# cột, `_ensure_in_tldl_lobby_util` vẫn biết toạ độ tab 4 người). Mở lại chỉ
+# cần thêm 4 vào tuple này — đó là lý do đặt một hằng số thay vì rải `if mu == 2`
+# khắp nơi.
+SO_CHO_CHO_PHEP = (2,)
+
+
+def kiem_so_cho(mu):
+    """Trả về số chỗ hợp lệ, hoặc ném ValueError kèm thông điệp cho người dùng.
+
+    Ném `ValueError` chứ không phải `HTTPException` để hàm này không kéo FastAPI
+    vào — bên gọi tự chuyển thành lỗi HTTP. Nhờ vậy kiểm thử được trực tiếp.
+    """
+    # Không dùng thẳng `int(mu)`: `int(2.5)` cho 2 nên một giá trị rác lọt qua
+    # thành "hợp lệ" mà không ai biết. JSON gửi số thực là chuyện có thật.
+    if isinstance(mu, bool) or not isinstance(mu, (int, float, str)):
+        raise ValueError(f"So cho khong hop le: {mu!r}")
+    try:
+        so = int(str(mu).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"So cho khong hop le: {mu!r}")
+    if so not in SO_CHO_CHO_PHEP:
+        cho_phep = ", ".join(str(x) for x in SO_CHO_CHO_PHEP)
+        raise ValueError(
+            f"Ban {so} cho chua duoc mo o ban nay. Hien chi chay ban Solo {cho_phep} nguoi."
+        )
+    return so
