@@ -15,7 +15,10 @@
   G.__last_table_player = null;
   G.__game_in_progress = false;
   G.__partner_cards_count = 13;
-  G.__AUTOTOOL_AUTO_DISCARD = true;
+  // MẶC ĐỊNH TẮT. Chỉ controller được bật (theo tuỳ chọn 'Tự động xả bài').
+  // Trước đây mặc định true: tab vừa nạp đã ở trạng thái sẵn sàng tự đánh,
+  // chỉ còn cổng isAutoEngaged() chặn — mất một lớp phòng vệ không cần thiết.
+  G.__AUTOTOOL_AUTO_DISCARD = false;
   G.__autotool_partners = ["nicktestxabai1", "nicktestxabai2", "nicktestxxabai1", "nicktestxxabai2", "account01", "account02", "profile1", "profile2"];
 
   // ---- MODULE PHÂN TÍCH & GIẢI MÃ 52 LÁ BÀI TIẾN LÊN (0..51) ----
