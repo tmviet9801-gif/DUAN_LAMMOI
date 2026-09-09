@@ -6,7 +6,10 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
+from models.config_model import load_accounts
+
 from .constants import AUTOPLAY_CONFIG_FILE, FIXED_TABLE_RIDS
+from .check_live import check_live, check_one_profile
 from .deps import _active_adapter, _build_adapter, _load_game_config
 from .lobby import (
     _clear_hunt_state,
@@ -848,33 +851,34 @@ async def autoplay_reload(body: dict, request: Request):
     return {"ok": True, "reloaded": name, "diag": diag}
 
 
-# ---- đọc Gold gần nhất của profile từ ws_capture ----
+# ---- số dư THẬT của profile ----
 @router.get("/api/autoplay/gold")
 async def autoplay_gold(request: Request):
-    name = (request.query_params.get("profile_name") or "").strip()
-    is_acc2 = any(x in name.lower() for x in ["2", "sub", "phu", "xabai2"])
-    dn_target = "nicktestxxabai2" if is_acc2 else "nicktestxxabai1"
-    gold = 77607 if is_acc2 else 57377
+    """Số dư hiện tại của một profile, đọc từ trang đang mở hoặc Extension Hub.
 
-    from models.config_model import DATA_DIR as _DATA
-    import json as _json
-    cf = _DATA / "game_sim_debug" / "ws_capture.jsonl"
-    if cf.exists():
-        for line in reversed(cf.read_text(encoding="utf-8", errors="replace").splitlines()):
-            if '"cmd":100' in line or '"cmd\\":100' in line:
-                try:
-                    d = _json.loads(line)
-                    arr = _json.loads(d.get("text", ""))
-                    pl = arr[1] if isinstance(arr, list) and len(arr) > 1 else {}
-                    dn = pl.get("dn") or ""
-                    if dn == dn_target:
-                        as_ = pl.get("As") or {}
-                        if as_.get("gold") is not None:
-                            gold = as_.get("gold")
-                            break
-                except Exception:
-                    continue
-    return {"profile": name, "gold": gold, "dn": dn_target}
+    Bản trước ĐOÁN account theo việc tên có chứa chữ "2" rồi trả số dư HARDCODE
+    (77607 / 57377), chỉ dò ws_capture.jsonl như một cải thiện may rủi. Nghĩa là
+    giao diện có thể hiển thị số dư của account khác, hoặc số bịa hoàn toàn.
+    """
+    name = (request.query_params.get("profile_name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Thiếu profile_name")
+
+    accounts = load_accounts()
+    acc = next((a for a in accounts
+                if (a.get("name") or "").strip().lower() == name.lower()), None)
+    if acc is None:
+        raise HTTPException(status_code=404, detail=f"Không có account tên {name}")
+
+    live = await check_one_profile(
+        _active_adapter(request), getattr(request.app.state, "ext_hub", None), acc)
+    return {
+        "profile": acc.get("name"),
+        "gold": live.get("so_du"),      # None nếu chưa đọc được — KHÔNG bịa
+        "dn": live.get("ten_in_game"),
+        "mo": live.get("mo"),
+        "loi": live.get("loi"),
+    }
 
 
 _REPORTED_ROOMS = {}
@@ -903,49 +907,69 @@ async def autoplay_report_room(body: dict, request: Request):
     return {"ok": True, "reported": _REPORTED_ROOMS.get(p_name)}
 
 
+@router.post("/api/autoplay/check-live")
+async def autoplay_check_live(body: dict, request: Request):
+    """Đọc trạng thái THẬT của profile rồi cập nhật lại accounts.json.
+
+    Body: {"profiles": ["Account 01", ...]}  — bỏ trống = kiểm tra tất cả.
+
+    Lấy tên hiển thị in-game (`dn`) và số dư từ trang đang mở, dự phòng bằng
+    Extension Hub. Ghi lại vào `character_name` / `uid` / `balance`.
+
+    Cơ chế ghép bàn xác minh đồng đội bằng cách khớp `dn` với `character_name`,
+    nên trường đó cũ hoặc thiếu là ghép bàn hỏng — hoặc khớp nhầm sang TÊN ĐĂNG
+    NHẬP (hai tên chỉ khác một ký tự), dẫn tới ngồi xả bài với khách lạ.
+    """
+    names = body.get("profiles") or body.get("profile_names") or None
+    if isinstance(names, str):
+        names = [names]
+    adapter = _active_adapter(request)
+    hub = getattr(request.app.state, "ext_hub", None)
+    return await check_live(adapter, hub, names)
+
+
 @router.get("/api/autoplay/profile-info")
 async def autoplay_profile_info(request: Request):
-    """Lấy thông tin tài khoản, số dư và bàn cược thời gian thực cho từng Profile trên Extension."""
-    name = (request.query_params.get("profile_name") or "Account01").strip()
-    is_acc2 = any(x in name.lower() for x in ["2", "sub", "phu", "xabai2"])
-    dn_target = "nicktestxxabai2" if is_acc2 else "nicktestxxabai1"
-    user_name = "nicktestxabai2" if is_acc2 else "nicktestxabai1"
-    gold = 77607 if is_acc2 else 57377
-    profile_key = "account02" if is_acc2 else "account01"
+    """Thông tin sống của MỘT profile: tên in-game, số dư, bàn đang ngồi.
 
-    from models.config_model import DATA_DIR as _DATA
-    import json as _json
-    cf = _DATA / "game_sim_debug" / "ws_capture.jsonl"
-    if cf.exists():
-        for line in reversed(cf.read_text(encoding="utf-8", errors="replace").splitlines()):
-            if '"cmd":100' in line or '"cmd\\":100' in line:
-                try:
-                    d = _json.loads(line)
-                    arr = _json.loads(d.get("text", ""))
-                    pl = arr[1] if isinstance(arr, list) and len(arr) > 1 else {}
-                    dn = pl.get("dn") or ""
-                    if dn == dn_target:
-                        as_ = pl.get("As") or {}
-                        if as_.get("gold") is not None:
-                            gold = as_.get("gold")
-                            break
-                except Exception:
-                    continue
+    Bản trước SUY ĐOÁN danh tính theo việc tên profile có chứa chữ "2"
+    (`is_acc2 = "2" in name.lower()`) rồi trả về SỐ DƯ HARDCODE (77607 / 57377).
+    Đó là giàn giáo thử nghiệm còn sót: sai account là chuyện thường, và số dư
+    hiển thị không liên quan gì tới thực tế. Nay đọc thẳng từ trang/Hub, không
+    có thì báo không có.
+    """
+    name = (request.query_params.get("profile_name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Thiếu profile_name")
 
-    # Lấy thông tin phòng hiện tại từ báo cáo extension hoặc quét page
+    adapter = _active_adapter(request)
+    hub = getattr(request.app.state, "ext_hub", None)
+    accounts = load_accounts()
+    acc = next((a for a in accounts
+                if (a.get("name") or "").strip().lower() == name.lower()), None)
+    if acc is None:
+        raise HTTPException(status_code=404, detail=f"Không có account tên {name}")
+
+    live = await check_one_profile(adapter, hub, acc)
+
     room_text = "Ở sảnh (Chưa vào bàn)"
     bet_text = "--"
-    rep = _REPORTED_ROOMS.get(profile_key) or _REPORTED_ROOMS.get(name.lower()) or _REPORTED_ROOMS.get(user_name.lower())
+    rep = _REPORTED_ROOMS.get((name or "").lower())
+    if not rep and live.get("ten_in_game"):
+        rep = _REPORTED_ROOMS.get(live["ten_in_game"].lower())
     if rep and rep.get("rid"):
         room_text = rep.get("rn") or f"Bàn #{rep['rid']}"
         bet_text = f"${int(rep['b']):,}" if rep.get("b") else "--"
 
     return {
         "ok": True,
-        "profile": "Account02" if is_acc2 else "Account01",
-        "user": user_name,
-        "dn": dn_target,
-        "gold": gold,
+        "profile": acc.get("name"),
+        "user": acc.get("username"),          # tên ĐĂNG NHẬP
+        "dn": live.get("ten_in_game"),        # tên IN-GAME (khoá xác minh)
+        "gold": live.get("so_du"),
+        "mo": live.get("mo"),
+        "dang_nhap": live.get("dang_nhap"),
+        "loi": live.get("loi"),
         "room": room_text,
         "bet": bet_text,
         "players": [],

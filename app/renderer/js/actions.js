@@ -448,6 +448,60 @@
   // ALL-IN-ONE PRO DASHBOARD ACTIONS
   // =========================================================================
 
+  // 0. Check Live: đọc trạng thái THẬT của profile rồi cập nhật database.
+  //
+  // Cơ chế ghép bàn xác minh đồng đội bằng cách khớp tên hiển thị in-game với
+  // `character_name` trong database. Trường đó cũ hoặc thiếu là ghép bàn hỏng,
+  // hoặc tệ hơn: khớp nhầm sang TÊN ĐĂNG NHẬP (hai tên chỉ khác một ký tự —
+  // đăng nhập `nicktestxabai1` vs in-game `nicktestxxabai1`) và Account chính
+  // có thể ngồi xả bài với khách lạ. Nút này để đồng bộ lại cho chắc.
+  if ($("btnQuickCheckLive")) {
+    $("btnQuickCheckLive").onclick = async () => {
+      const btn = $("btnQuickCheckLive");
+      const ids = Array.from(App.selectedProfileIds || []);
+      const accs = (App.state && App.state.accounts) || [];
+      // Tích profile nào thì check profile đó; không tích thì check tất cả.
+      const profiles = ids.length
+        ? accs.filter((a) => ids.some((id) => String(id) === String(a.id)))
+              .map((a) => a.name).filter(Boolean)
+        : [];
+
+      btn.disabled = true;
+      const nhan_cu = btn.textContent;
+      btn.textContent = "⏳ Đang kiểm tra...";
+      try {
+        const r = await App.api("/api/autoplay/check-live", {
+          method: "POST",
+          body: JSON.stringify({ profiles }),
+        });
+        const ds = r.ket_qua || [];
+        const doi = ds.filter((x) => (x.da_cap_nhat || []).length);
+        const hong = ds.filter((x) => x.loi || !x.mo);
+
+        // Báo cáo trung thực: nói rõ cái nào KHÔNG đọc được, không im lặng bỏ qua
+        for (const x of hong) {
+          App.toast(`${x.profile}: ${x.loi || "chưa mở trình duyệt"}`, "warn");
+        }
+        for (const c of (r.canh_bao || [])) App.toast(c, "error");
+
+        const ok = ds.filter((x) => x.ten_in_game).length;
+        App.toast(
+          `Check Live: ${ok}/${ds.length} đọc được, ${doi.length} profile được cập nhật.`,
+          doi.length || ok ? "success" : "warn",
+        );
+        if (doi.length) {
+          App.log.info("check-live cập nhật:", doi.map((x) => `${x.profile}: ${x.da_cap_nhat.join(", ")}`));
+        }
+        App.refresh();
+      } catch (err) {
+        App.toast("Check Live lỗi: " + err.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = nhan_cu;
+      }
+    };
+  }
+
   // 1. Thêm nhanh danh sách tài khoản từ textarea
   if ($("btnQuickAddAccounts")) {
     $("btnQuickAddAccounts").onclick = async () => {
