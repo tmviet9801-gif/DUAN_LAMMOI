@@ -140,7 +140,12 @@ class HitClubAdapter(GameAdapter):
         live = await self._read_token(page)
         if live and live.startswith(prefix):
             return live
-        saved = self.token_store.get(account_name)
+        # Tra theo ACCOUNT chứ không theo chuỗi thô: kho token có nhiều thế hệ
+        # khoá cho cùng một người (`Account 01` / `Account01` / tên đăng nhập),
+        # còn `get()` chỉ tra khoá chính xác nên trượt và profile phải đăng
+        # nhập lại dù token còn sống.
+        acc = self.account_lookup.get(account_name) or {"name": account_name}
+        saved, _khoa = self.token_store.find_for_account(acc)
         if saved:
             try:
                 await eval_page(page, f"localStorage.setItem('token', {json.dumps(saved)})")
@@ -991,7 +996,8 @@ class HitClubAdapter(GameAdapter):
         # Kiểm tra đã login chưa (token hợp lệ)
         if live and live.startswith("1-"):
             # luôn cập nhật token store bằng token live (bắt kịp token mới nhất)
-            self.token_store.save(account_name, live, extra={"username": (self.account_lookup.get(account_name) or {}).get("username")})
+            self.token_store.save_for_account(
+                self.account_lookup.get(account_name) or {"name": account_name}, live)
             self._persist_token_to_account(account_name, live)
             log.info("skip login for %s (token valid)", account_name)
             if auto_find_table:
@@ -1014,7 +1020,9 @@ class HitClubAdapter(GameAdapter):
         # ---- capture token MỚI ngay sau login (tránh lưu token cũ/hết hạn) ----
         new_tok = await self._read_token(page)
         if new_tok and new_tok.startswith("1-"):
-            self.token_store.save(account_name, new_tok, extra={"username": uname})
+            self.token_store.save_for_account(
+                self.account_lookup.get(account_name) or {"name": account_name, "username": uname},
+                new_tok)
             self._persist_token_to_account(account_name, new_tok, username=uname)
             log.info("captured NEW token for %s after login", account_name)
         else:

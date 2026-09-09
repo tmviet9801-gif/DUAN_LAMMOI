@@ -228,14 +228,15 @@ def canh_bao_trung_ten(accounts):
     ]
 
 
-async def check_live(adapter, hub, profile_names=None, *, ep_ws=False):
+async def check_live(adapter, hub, profile_names=None, *, ep_ws=False,
+                     token_store=None):
     """Check Live cho một hoặc nhiều profile, rồi cập nhật accounts.json.
 
     `profile_names=None` -> kiểm tra mọi account có trong database.
     `ep_ws=True` -> luôn dùng WebSocket, kể cả profile đang mở.
     """
     accounts = load_accounts()
-    store = TokenStore(DATA_DIR / "game_sim_token.json")
+    store = token_store or TokenStore(DATA_DIR / "game_sim_token.json")
     muon = None
     if profile_names:
         muon = {_norm(n).lower() for n in profile_names if _norm(n)}

@@ -595,6 +595,23 @@ async def _delete_accounts(manager, account_ids: list[str]) -> int:
     for account in to_delete.values():
         _delete_profile_dir(account)
 
+    # Token là thông tin đăng nhập — không được sống lâu hơn chủ của nó. Xoá
+    # profile mà bỏ token lại là để credential nằm trong data/ vô thời hạn, và
+    # `find_for_account` của một account mới trùng tên có thể nhặt phải nó.
+    # DATA_DIR import BÊN TRONG hàm: bind ở mức module thì fixture test không
+    # ghi đè được, và test xoá account sẽ đụng file credential THẬT.
+    try:
+        from game_sim.token_store import TokenStore
+        from models.config_model import DATA_DIR
+
+        store = TokenStore(DATA_DIR / "game_sim_token.json")
+        for account in to_delete.values():
+            n = store.clear_for_account(account)
+            if n:
+                log.info("đã xoá %d khoá token của %s", n, account.get("name"))
+    except Exception as e:
+        log.warning("xoá token khi xoá account thất bại: %s", e)
+
     log.info("deleted %d accounts", len(to_delete))
     return len(to_delete)
 

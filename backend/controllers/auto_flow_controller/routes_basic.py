@@ -10,6 +10,7 @@ from models.config_model import load_accounts
 
 from .constants import AUTOPLAY_CONFIG_FILE, FIXED_TABLE_RIDS
 from .check_live import check_live, check_one_profile
+from .context import resolve_profile_name
 from .deps import _active_adapter, _build_adapter, _load_game_config
 from .lobby import (
     _clear_hunt_state,
@@ -189,7 +190,14 @@ async def autoplay_debug_test_join(body: dict, request: Request):
 async def autoplay_start(body: dict, request: Request):
     from game_sim.auto_flow import AutoFlow
 
-    profile_names = [n.strip() for n in (body.get("profile_names") or []) if n.strip()]
+    # Chuẩn hoá về TÊN PROFILE trong accounts.json. Trước đây chuỗi thô của
+    # client chảy thẳng xuống `adapter.join()` -> `token_store.save(<chuỗi thô>)`.
+    # Vì `account_lookup` nhận cả username, gửi "nicktestxabai1" vẫn mở đúng
+    # Chrome (không lỗi gì) nhưng ghi token dưới khoá username, trong khi
+    # đường đọc tra khoá khác -> profile phải đăng nhập lại dù token còn sống.
+    _accounts = load_accounts()
+    profile_names = [resolve_profile_name(n.strip(), _accounts)
+                     for n in (body.get("profile_names") or []) if n.strip()]
     if not profile_names:
         raise HTTPException(status_code=400, detail="Chưa chọn profile nào")
     if len(profile_names) > 10:
@@ -422,7 +430,10 @@ async def autoplay_capture(body: dict, request: Request):
     """Mở profile + bật WS sniffer, chờ user chơi thủ công để ghi protocol."""
     from game_sim.auto_flow import AutoFlow
 
-    profile_names = [n.strip() for n in (body.get("profile_names") or []) if n.strip()]
+    # Cùng lý do như /api/autoplay/start: tên thô của client sinh khoá token lạ.
+    _accounts = load_accounts()
+    profile_names = [resolve_profile_name(n.strip(), _accounts)
+                     for n in (body.get("profile_names") or []) if n.strip()]
     if not profile_names:
         raise HTTPException(status_code=400, detail="Chưa chọn profile nào")
 
@@ -801,7 +812,15 @@ async def autoplay_session_token(body: dict, request: Request):
             from models.config_model import DATA_DIR
             from game_sim.token_store import TokenStore
 
-            TokenStore(DATA_DIR / "game_sim_token.json").save(name, token)
+            _acc = next(
+                (a for a in load_accounts()
+                 if str(a.get("name") or "").strip().lower() == name.strip().lower()),
+                None)
+            store = TokenStore(DATA_DIR / "game_sim_token.json")
+            if _acc:
+                store.save_for_account(_acc, token)
+            else:
+                store.save(name, token)
         except Exception:
             pass
     return {"profile": name, "token": token, "found": data or []}

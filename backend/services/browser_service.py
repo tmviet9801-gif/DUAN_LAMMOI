@@ -410,7 +410,7 @@ class BrowserManager:
             # ---- capture token MỚI nhất vào token store ----
             tok = TokenStore.extract_from_storage(data.get("local", {})) or TokenStore.extract_from_storage(data.get("session", {}))
             if tok:
-                if self.token_store.save(session.account.get("name") or acc_id, tok,
+                if self.token_store.save_for_account(session.account, tok,
                                          extra={"username": session.account.get("username")}):
                     log.info("auto-saved NEW token for %s", session.account.get("name"))
 
@@ -635,15 +635,19 @@ class BrowserManager:
                 await page.evaluate(f"document.title = {json.dumps(tab_title)}")
             except Exception:
                 pass
-            if account and account.get("web_storage"):
+            # Đọc token TRƯỚC và NGOÀI điều kiện web_storage. Trước đây cả khối
+            # tiêm nằm trong `if account.get("web_storage")`, nên một account mới
+            # (chưa từng lưu web_storage) KHÔNG BAO GIỜ được tiêm token — đúng
+            # trường hợp cần nó nhất.
+            fresh = ""
+            if account:
+                _tok, _ = self.token_store.find_for_account(account)
+                fresh = _tok or ""
+            if account and (account.get("web_storage") or fresh):
                 try:
-                    ws = account["web_storage"]
+                    ws = account.get("web_storage") or {}
                     local = dict(ws.get("local", {}))
                     session = dict(ws.get("session", {}))
-                    # Token MỚI NHẤT từ token store: chỉ dùng làm FALLBACK khi profile
-                    # (Chromium persist native) chưa có token nào. KHÔNG ghi đè token
-                    # tươi đang nằm trong localStorage tự nhiên của profile.
-                    fresh = self.token_store.get(account.get("name") or account.get("id")) or ""
                     local = json.dumps(local)
                     session = json.dumps(session)
                     fresh = json.dumps(fresh)
@@ -939,7 +943,7 @@ class BrowserManager:
                 # ---- capture token MỚI nhất vào token store ----
                 tok = TokenStore.extract_from_storage(saved.get("local", {})) or TokenStore.extract_from_storage(saved.get("session", {}))
                 if tok:
-                    self.token_store.save(session.account.get("name") or session.account.get("id"), tok,
+                    self.token_store.save_for_account(session.account, tok,
                                            extra={"username": session.account.get("username")})
             except Exception as e:
                 log.debug("save web storage %s fail: %s", session_id, e)

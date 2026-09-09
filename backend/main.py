@@ -98,6 +98,26 @@ def create_app() -> FastAPI:
         except Exception:
             log.exception("migrate accounts save_session failed")
 
+        # Gộp kho token về khoá `account.id`. Kho từng tích tụ 9 khoá cho 5
+        # account: `bulk_names` sinh tên liền ("Account01"), người dùng đổi tên
+        # thành "Account 01" mà khoá cũ không di trú theo, và có đường ghi dùng
+        # cả tên đăng nhập làm khoá. Migration idempotent, giữ nguyên khoá nhập
+        # nhằng/không chủ, và chỉ sao lưu khi thật sự có gì để gộp.
+        try:
+            from game_sim.token_store import TokenStore
+            from models.config_model import DATA_DIR
+
+            bc = TokenStore(DATA_DIR / "game_sim_token.json").migrate(
+                load_accounts(),
+                backup_path=DATA_DIR / "game_sim_token.pre-migrate.json")
+            if bc.get("gop"):
+                log.info("kho token: gộp %d khoá -> %d (sao lưu: %s)",
+                         bc["truoc"], bc["sau"], bc.get("backup"))
+            for x in bc.get("giu_nhap_nhang", []):
+                log.warning("kho token: giữ nguyên khoá nhập nhằng — %s", x)
+        except Exception:
+            log.exception("migrate token store failed")
+
         # Dọn process chrome mồ côi để lại từ lần chạy trước (restart/kill cứng).
         # Phải chạy TRƯỚC khi mở trình duyệt mới để không tự kill chính mình.
         from services.browser_service import reap_orphan_chrome
