@@ -64,6 +64,23 @@ def test_nhan_dong_doi_qua_character_name_trong_database():
                                       "character_name": DONG_DOI}]}) is True
 
 
+def test_nhan_uid_khi_controller_gui_dang_chuoi_tran():
+    """Extension đẩy `anchor_uid` vào danh sách dưới dạng chuỗi, không phải object.
+
+    uid của game có dạng `1_643156061` — có gạch dưới. Phép thử "toàn chữ số"
+    trượt, làm mất đường khớp uid.
+    """
+    assert la_dong_doi({"uid": "1_643156423"},
+                       {"partners": ["1_643156423"]}) is True
+    assert la_dong_doi({"uid": "1_643156999"},
+                       {"partners": ["1_643156423"]}) is False
+
+
+def test_ten_co_chu_cai_khong_bi_hieu_thanh_uid():
+    """`player777` là TÊN, không phải uid — không được khớp uid `777`."""
+    assert la_dong_doi({"uid": "777"}, {"partners": ["player777"]}) is False
+
+
 def test_nhan_anchor_dang_cho_ghep_ban():
     assert la_dong_doi({"dn": DONG_DOI}, {"expected": {"dn": DONG_DOI}}) is True
 

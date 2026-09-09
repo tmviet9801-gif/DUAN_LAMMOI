@@ -42,9 +42,12 @@
       // Chuỗi trần: có thể là dn hoặc u — chấp nhận cả hai, nhưng CHÍNH XÁC.
       const s = chuanHoa(pt);
       if (s) { dn.add(s); u.add(s); }
-      // Chuỗi toàn số coi như uid (controller có gửi anchor_uid dạng chuỗi).
+      // Chuỗi KHÔNG có chữ cái coi là uid. Extension đẩy `anchor_uid` vào
+      // danh sách dưới dạng chuỗi trần, mà uid của game có dạng
+      // `1_643156061` — có gạch dưới, nên phép thử "toàn chữ số" trượt và
+      // mất luôn đường khớp uid.
       const n = chiSo(pt);
-      if (n && n === String(pt).trim()) uid.add(n);
+      if (n && !/[a-z]/.test(s)) uid.add(n);
       return { dn: dn, u: u, uid: uid };
     }
 
