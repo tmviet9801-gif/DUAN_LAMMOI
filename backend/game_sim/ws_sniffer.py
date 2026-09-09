@@ -389,7 +389,15 @@ class WsSniffer:
         return True
 
     async def inject_http(self, page):
-        """Bắt HTTP request/response (login API, config...) qua page.on('request'/'response')."""
+        """Bắt HTTP request/response (login API, thông tin tài khoản, config...).
+
+        Bản trước có lỗi làm MẤT TOÀN BỘ request GET: `post` để None cho GET rồi
+        vẫn cắt `post[:2000]` -> TypeError -> bị except nuốt -> không ghi gì.
+        Vì vậy các endpoint GET (vd /lobby/info.aspx) chỉ thấy phía response,
+        không biết tham số lẫn header xác thực.
+
+        Response body cũng chỉ đọc cho POST, nên body JSON của GET bị bỏ.
+        """
         if not page:
             return False
         self._http_file = self.save_dir / "http_capture.jsonl"
@@ -397,11 +405,19 @@ class WsSniffer:
             def _on_request(req):
                 try:
                     post = None
-                    if req.method in ("POST", "PUT"):
-                        post = req.post_data or ""
+                    if req.method in ("POST", "PUT", "PATCH"):
+                        post = (req.post_data or "")[:4000]
+                    headers = {}
+                    try:
+                        # Header mang token/uỷ quyền — thứ cần để gọi lại API
+                        # từ Python mà không phải mở trình duyệt.
+                        headers = {k.lower(): v[:300] for k, v in req.headers.items()}
+                    except Exception:
+                        pass
                     self._save_http({
                         "ts": int(time.time() * 1000), "dir": "req",
-                        "method": req.method, "url": req.url[:500], "post": post[:2000],
+                        "method": req.method, "url": req.url[:800],
+                        "post": post, "headers": headers,
                     })
                 except Exception:
                     pass
@@ -409,15 +425,23 @@ class WsSniffer:
             async def _on_response(resp):
                 try:
                     body = None
-                    if resp.request.method == "POST":
+                    ctype = ""
+                    try:
+                        ctype = (resp.headers or {}).get("content-type", "").lower()
+                    except Exception:
+                        pass
+                    # Đọc body cho MỌI method khi là JSON/text — không chỉ POST.
+                    if ("json" in ctype or "text" in ctype
+                            or resp.request.method in ("POST", "PUT", "PATCH")):
                         try:
                             b = await resp.body()
-                            body = b.decode("utf-8", errors="replace")[:2000]
+                            body = b.decode("utf-8", errors="replace")[:4000]
                         except Exception:
                             pass
                     self._save_http({
                         "ts": int(time.time() * 1000), "dir": "resp",
-                        "status": resp.status, "url": resp.url[:500], "body": body,
+                        "status": resp.status, "url": resp.url[:800],
+                        "method": resp.request.method, "ctype": ctype[:80], "body": body,
                     })
                 except Exception:
                     pass
