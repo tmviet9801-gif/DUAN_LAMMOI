@@ -90,6 +90,15 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     """
     import json as _json
 
+    # Chụp mốc Dừng NGAY ĐẦU HÀM, trước cả preflight và trước lúc mở trang.
+    # Phần mở đầu (mở Chrome + inject 3 script cho từng profile) mất 3-30 giây.
+    # Bấm Dừng trong khoảng đó: /api/autoplay/stop tăng gom_ban_stop_epoch và
+    # duyệt active_match_tasks — nhưng task này CHƯA được đăng ký nên không có
+    # gì bị huỷ; ngay sau đó MatchContext mới đọc stop_epoch và đọc trúng giá
+    # trị MỚI, nên _should_stop() trả False vĩnh viễn. Kết quả: đã bấm Dừng,
+    # giao diện báo "Đã dừng", mà mọi nick vẫn vào bàn và đánh hết ván.
+    stop_epoch_vao = int(getattr(request.app.state, "gom_ban_stop_epoch", 0))
+
     bm = getattr(request.app.state, "manager", None)
     open_acc_names = []
     if bm and hasattr(bm, "sessions"):
@@ -195,6 +204,12 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         _moi = {str(a.get("name")): a for a in _dat}
         accounts = [_moi.get(str(a.get("name")), a) for a in accounts]
 
+    # Chốt kiểm Dừng TRƯỚC khi mở Chrome. Preflight (kiểm live + số dư qua
+    # WebSocket) chạy tuần tự trên từng profile nên có thể mất vài giây; bấm
+    # Dừng trong khoảng đó phải có hiệu lực ngay, không phải chờ mở xong hết.
+    if int(getattr(request.app.state, "gom_ban_stop_epoch", 0)) != stop_epoch_vao:
+        return {"ok": False, "error": "Đã dừng theo lệnh của bạn.", "stopped": True}
+
     page_a = await adapter._page(profile_a)
     if not page_a:
         raise HTTPException(status_code=400, detail=f"Không mở được profile {profile_a}")
@@ -228,6 +243,8 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
 
     ctx = MatchContext(request, adapter, pages, profiles_input, body)
+    # Dùng mốc chụp lúc VÀO hàm, không phải mốc tại thời điểm này.
+    ctx.stop_epoch = stop_epoch_vao
 
     # Bí danh cục bộ trỏ vào ctx. Nhờ đó THÂN VÒNG LẶP bên dưới giữ nguyên
     # từng ký tự so với bản trước khi tách — không có chỗ nào để lọt lỗi.
@@ -256,6 +273,14 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         active_match_tasks = set()
         request.app.state.active_match_tasks = active_match_tasks
     active_match_tasks.add(current_match_task)
+    # Ghi danh profile của lượt chạy này để nút Dừng biết ĐƯỢC ĐỤNG TỚI AI.
+    # Dùng SET hợp nhất (không phải danh sách phẳng) vì nhiều lượt có thể chạy
+    # đồng thời — một danh sách sẽ bị lượt sau ghi đè lượt trước.
+    dang_chay = getattr(request.app.state, "gom_ban_profiles", None)
+    if dang_chay is None:
+        dang_chay = set()
+        request.app.state.gom_ban_profiles = dang_chay
+    dang_chay.update(profiles_input)
     # Giữ field cũ để tương thích các điểm gọi khác; Stop sử dụng cả tập task.
     request.app.state.active_match_task = current_match_task
 
@@ -1400,6 +1425,10 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         # Không điều hướng/click sau cancellation: Stop phải thực sự dừng ngay.
         return {"ok": False, "error": "Đã dừng chu trình gom bàn theo lệnh của bạn.", "stopped": True}
     finally:
+        dang_chay = getattr(request.app.state, "gom_ban_profiles", None)
+        if dang_chay is not None:
+            for _t in profiles_input:
+                dang_chay.discard(_t)
         active_match_tasks = getattr(request.app.state, "active_match_tasks", None)
         if active_match_tasks is not None:
             active_match_tasks.discard(asyncio.current_task())

@@ -4,7 +4,7 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 
 from models.config_model import load_accounts
 
@@ -245,15 +245,75 @@ _GOM_BAN_RUN_ID = 0
 _GOM_BAN_ACTIVE_RUN_ID = None
 
 
-@router.post("/api/autoplay/leave-all")
-@router.post("/api/autoplay/stop")
-async def autoplay_stop(request: Request):
-    """Dừng auto và thoát tất cả các profile đang mở khỏi bàn về lại sảnh bàn Đếm Lá:
-    - Ngắt tức thì tiến trình gom bàn / xả bài đang chạy (active_match_task.cancel())
-    - Thoát khỏi bàn chơi và ĐẢM BẢO 100% ĐỨNG TRƯỚC SẢNH BÀN ĐẾM LÁ (không ở sảnh chính game)
-    - Reset room_id = -1, log = "Đang ở sảnh bàn Đếm Lá" trên session
+def _pham_vi_dung(request, body):
+    """Những profile nào được phép đụng tới khi bấm Dừng.
+
+    Bản trước dừng MỌI session đang mở. Người dùng mở 6 Chrome, tích 2 cái để
+    gom bàn, 4 cái còn lại đang tự tay chơi bài — bấm Dừng là cả 4 nick kia bị
+    gửi lệnh rời bàn GIỮA VÁN, mất tiền cược.
+
+    Thứ tự: tên do người gọi chỉ định (nút trên từng dòng) -> các profile của
+    lượt chạy đang hoạt động -> nếu không biết gì thì mới đụng tất cả.
+
+    Trả `(ten_set, toan_bo)`. `toan_bo=True` nghĩa là không giới hạn.
     """
+    ten = set()
+    if isinstance(body, dict):
+        mot = str(body.get("profile_name") or "").strip()
+        if mot:
+            ten.add(mot)
+        for x in (body.get("profile_names") or []):
+            x = str(x or "").strip()
+            if x:
+                ten.add(x)
+    if ten:
+        return ten, False
+
+    dang_chay = getattr(request.app.state, "gom_ban_profiles", None)
+    if dang_chay:
+        return set(dang_chay), False
+
+    return set(), True
+
+
+def _thuoc_pham_vi(session, sid, ten, toan_bo):
+    if toan_bo:
+        return True
+    acc = session.account or {}
+    goc = {str(acc.get("name") or "").strip().lower(),
+           str(acc.get("username") or "").strip().lower(),
+           str(acc.get("character_name") or "").strip().lower(),
+           str(acc.get("id") or "").strip().lower(),
+           str(sid or "").strip().lower()}
+    goc.discard("")
+    return any(str(t).strip().lower() in goc for t in ten)
+
+
+@router.post("/api/autoplay/leave-all")
+async def autoplay_leave_all(request: Request):
+    """Dừng auto và thoát TẤT CẢ profile đang mở khỏi bàn. Không giới hạn phạm vi."""
+    return await _dung_auto(request, None, ep_toan_bo=True)
+
+
+@router.post("/api/autoplay/stop")
+async def autoplay_stop(request: Request, body: dict | None = Body(default=None)):
+    """Dừng auto — CHỈ trong phạm vi liên quan.
+
+    Body (tuỳ chọn):
+      - profile_name / profile_names: chỉ dừng đúng những profile này.
+      - bỏ trống: chỉ dừng các profile thuộc lượt gom bàn đang chạy.
+
+    Trước đây hàm này KHÔNG đọc body, nên nút "Dừng"/"Thoát.P" trên từng dòng
+    (vốn đã gửi `profile_name`) vẫn dừng toàn bộ nhóm.
+    """
+    return await _dung_auto(request, body, ep_toan_bo=False)
+
+
+async def _dung_auto(request: Request, body, ep_toan_bo=False):
     global _GOM_BAN_STOP, _GOM_BAN_ACTIVE_RUN_ID
+    ten_pham_vi, toan_bo = _pham_vi_dung(request, body)
+    if ep_toan_bo:
+        ten_pham_vi, toan_bo = set(), True
     _GOM_BAN_STOP = True
     _GOM_BAN_ACTIVE_RUN_ID = None  # invalidate run_id: chặn mọi lệnh/task mang run_id cũ
     request.app.state.gom_ban_stop_epoch = int(getattr(request.app.state, "gom_ban_stop_epoch", 0)) + 1
@@ -264,8 +324,20 @@ async def autoplay_stop(request: Request):
     if ext_hub:
         try:
             ext_hub.set_room_share(False)
-            await ext_hub.broadcast_command("STOP_HUNT", {"reset": True})
-            log.info("autoplay_stop: Đã broadcast STOP_HUNT tới tất cả các extensions!")
+            if toan_bo:
+                await ext_hub.broadcast_command("STOP_HUNT", {"reset": True})
+                log.info("autoplay_stop: Đã broadcast STOP_HUNT tới tất cả các extensions!")
+            else:
+                # Broadcast chạm tới MỌI extension đang online, kể cả profile
+                # người dùng đang tự chơi. Trong phạm vi hẹp thì gửi đích danh.
+                for t in ten_pham_vi:
+                    try:
+                        if ext_hub.is_connected(t):
+                            await ext_hub.send_command(t, "STOP_HUNT", {"reset": True})
+                    except Exception:
+                        pass
+                log.info("autoplay_stop: Đã gửi STOP_HUNT tới %d profile trong phạm vi: %s",
+                         len(ten_pham_vi), sorted(ten_pham_vi))
         except Exception as e:
             log.warning("autoplay_stop broadcast error: %s", e)
 
@@ -273,6 +345,8 @@ async def autoplay_stop(request: Request):
     manager = getattr(request.app.state, "manager", None)
     if manager and manager.sessions:
         for sid, s in list(manager.sessions.items()):
+            if not _thuoc_pham_vi(s, sid, ten_pham_vi, toan_bo):
+                continue
             if s.page:
                 try:
                     await _clear_hunt_state(s.page)
@@ -311,6 +385,8 @@ async def autoplay_stop(request: Request):
     stopped_profiles = []
     if manager and manager.sessions:
         for sid, s in list(manager.sessions.items()):
+            if not _thuoc_pham_vi(s, sid, ten_pham_vi, toan_bo):
+                continue
             acc_name = (s.account or {}).get("name") or sid
             s.room_id = -1
             s.log = "Đã dừng tự động"

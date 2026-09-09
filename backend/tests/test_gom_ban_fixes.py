@@ -360,13 +360,15 @@ def test_stop_is_immediate_and_lobby_preparation_is_parallel():
     đã đồng bộ được sảnh chọn bàn."""
     from pathlib import Path
 
-    from controllers.auto_flow_controller.routes_basic import autoplay_stop
+    from controllers.auto_flow_controller.routes_basic import _dung_auto
 
     source = _controller_source()
     assert "lobby_results = await asyncio.gather(" in source
     assert "Không cho Anchor gửi cmd=308 cho" in source
-    # Lấy source theo chính function object: không phụ thuộc thứ tự hàm trong file.
-    stop_fn = inspect.getsource(autoplay_stop)
+    # Thân xử lý đã tách sang `_dung_auto` để `/stop` (có phạm vi) và
+    # `/leave-all` (toàn bộ) là hai endpoint riêng. Lấy source theo function
+    # object: không phụ thuộc thứ tự hàm trong file.
+    stop_fn = inspect.getsource(_dung_auto)
     assert "Đã dừng tức thì" in stop_fn
     assert "await _ensure_in_tldl_lobby_util(s.page" not in stop_fn
 
