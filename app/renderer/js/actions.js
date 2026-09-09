@@ -568,9 +568,13 @@
       const bet = $("gcBetSelect") ? $("gcBetSelect").value : "100";
       const slot = $("gcSlotCount") ? $("gcSlotCount").value : "2";
 
-      const selected = Array.from(document.querySelectorAll("#profileTbody tr.row-selected, #profileTbody tr.selected"));
-      const mainProfile = $("gcProfileMain") ? $("gcProfileMain").value : "";
-      const profile_name = (selected.length > 0 ? selected[0].dataset.name : "") || mainProfile || (App.profiles && App.profiles[0] ? App.profiles[0].name : "Account 1");
+      // Profile được tích ĐẦU TIÊN. Bản trước lùi về "Account 1" khi không có
+      // gì được chọn -> thao tác lên một account người dùng không hề chọn.
+      const profile_name = App.profileDaTichDauTien ? App.profileDaTichDauTien() : "";
+      if (!profile_name) {
+        App.toast("Hãy tích 1 profile trên bảng danh sách trước.", "warn");
+        return;
+      }
 
       App.toast(`Đang tìm bàn công cộng mới trống ${game} cược ${bet} cho ${profile_name}...`, "info");
       try {
@@ -628,9 +632,13 @@
       const game = $("gcGameSelect") ? $("gcGameSelect").value : "TLDL";
       const bet = $("gcBetSelect") ? $("gcBetSelect").value : "100";
       const slot = $("gcSlotCount") ? $("gcSlotCount").value : "2";
-      const selected = Array.from(document.querySelectorAll("#profileTbody tr.row-selected, #profileTbody tr.selected"));
-      const mainProfile = $("gcProfileMain") ? $("gcProfileMain").value : "";
-      const profile_name = (selected.length > 0 ? selected[0].dataset.name : "") || mainProfile || (App.profiles && App.profiles[0] ? App.profiles[0].name : "Account 1");
+      // Profile được tích ĐẦU TIÊN. Bản trước lùi về "Account 1" khi không có
+      // gì được chọn -> thao tác lên một account người dùng không hề chọn.
+      const profile_name = App.profileDaTichDauTien ? App.profileDaTichDauTien() : "";
+      if (!profile_name) {
+        App.toast("Hãy tích 1 profile trên bảng danh sách trước.", "warn");
+        return;
+      }
 
       App.toast(`Random vào phòng ${game} cược ${bet} cho ${profile_name}...`, "info");
       try {

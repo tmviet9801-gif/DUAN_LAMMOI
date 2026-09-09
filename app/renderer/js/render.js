@@ -227,15 +227,24 @@
         App.openEditProfile(a);
       };
 
-      // Tìm.P button: Chọn nick này làm Chính và kích hoạt Gom Bàn đồng bộ
+      // Tìm.P: đưa nick này lên ĐẦU danh sách chạy (account giữ tiền) rồi
+      // kích hoạt Gom Bàn. Trước đây nút này ghi vào dropdown Chính — dropdown
+      // đã bỏ, nay nó thao tác thẳng trên danh sách đã tích.
       tr.querySelector(".btn-row-find").onclick = async (e) => {
         e.stopPropagation();
-        if ($("gcProfileMain")) $("gcProfileMain").value = a.name;
-        if ($("btnGcSyncMatch")) {
-          $("btnGcSyncMatch").click();
-        } else {
-          App.toast(`Đã chọn ${a.name} làm Account Chính`, "info");
+        const conLai = Array.from(App.selectedProfileIds).filter((x) => x !== a.id);
+        App.selectedProfileIds.clear();
+        App.selectedProfileIds.add(a.id);
+        conLai.forEach((x) => App.selectedProfileIds.add(x));
+        renderProfilesTable();
+        if (App.selectedProfileIds.size < 2) {
+          App.toast(
+            `${a.name} sẽ giữ tiền. Hãy tích thêm ít nhất 1 profile nữa rồi bấm GOM BÀN & XẢ.`,
+            "warn",
+          );
+          return;
         }
+        if ($("btnGcSyncMatch")) $("btnGcSyncMatch").click();
       };
 
       // Thoát.P button
@@ -291,16 +300,8 @@
   function toggleRowSelection(id) {
     if (App.selectedProfileIds.has(id)) App.selectedProfileIds.delete(id);
     else App.selectedProfileIds.add(id);
-
-    // Tự động gán cặp ghép Chính & Phụ nếu chọn từ 2 nick
-    const sel = Array.from(App.selectedProfileIds);
-    if (sel.length >= 2 && App.setSyncPair) {
-      const a1 = (App.state.accounts || []).find((x) => x.id === sel[0]);
-      const a2 = (App.state.accounts || []).find((x) => x.id === sel[1]);
-      if (a1 && a2) {
-        App.setSyncPair(a1.name, a2.name);
-      }
-    }
+    // Thứ tự tích chính là thứ tự chạy (profile đầu giữ tiền); Set giữ đúng
+    // thứ tự chèn nên bỏ tích rồi tích lại sẽ đẩy profile đó xuống cuối.
     renderProfilesTable();
   }
   App.toggleRowSelection = toggleRowSelection;
@@ -320,6 +321,9 @@
   function updateSelectionCounter() {
     const total = state.accounts.length;
     $("pickerBtn").textContent = `Đã chọn ${App.selectedProfileIds.size}/${total}`;
+    // Thanh Gom Bàn hiển thị đúng những profile sẽ chạy -> phải vẽ lại cùng lúc
+    // với mọi thay đổi lựa chọn (tích, bỏ tích, chọn tất cả, xoá chọn).
+    if (App.autoplayRenderProfiles) App.autoplayRenderProfiles();
   }
   App.updateSelectionCounter = updateSelectionCounter;
 

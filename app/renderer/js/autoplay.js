@@ -1,34 +1,52 @@
 (function () {
-  // Auto gom bàn & xả bài — Quản lý Profile Chính (A) & Profile Phụ (B) đồng bộ
+  // Auto gom bàn & xả bài — chạy đúng các profile được tích trên bảng.
+  // Không còn chọn Chính/Phụ: profile tích đầu tiên là account giữ tiền,
+  // các profile còn lại cùng dò bàn và vào ghép.
   const App = (window.App = window.App || {});
   const $ = App.$;
   if (!App.state.gcRunId) App.state.gcRunId = 0;
 
-  function populateSelect(selectEl, accounts, defaultIndex) {
-    if (!selectEl) return;
-    const prev = selectEl.value;
-    selectEl.innerHTML = "";
-    if (!accounts.length) {
-      selectEl.innerHTML = '<option value="">-- Chưa có nick --</option>';
-      return;
-    }
-    accounts.forEach((a, idx) => {
-      const name = a.name || a.username;
-      const opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = `${name} (${a.username || "Chưa login"})`;
-      if (prev ? prev === name : idx === defaultIndex) opt.selected = true;
-      selectEl.appendChild(opt);
-    });
+  /** Các profile được TÍCH trên bảng, theo đúng thứ tự người dùng tích.
+   *
+   * Đây là NGUỒN SỰ THẬT DUY NHẤT cho việc chạy profile nào. Bản trước có 7
+   * tầng dự phòng, tầng cuối lấy đại 2 account đầu danh sách — nghĩa là không
+   * tích gì cũng chạy, và chạy nhầm người.
+   */
+  function profilesDaChon() {
+    const ids = Array.from(App.selectedProfileIds || []);
+    const accs = (App.state && App.state.accounts) || [];
+    const theoId = new Map();
+    for (const a of accs) theoId.set(String(a.id), a);
+    return ids.map((id) => theoId.get(String(id))).filter(Boolean);
   }
 
+  /** Vẽ danh sách profile sẽ chạy. Thứ tự chip = thứ tự gửi xuống backend. */
   function renderProfiles() {
-    const accs = App.state.accounts || [];
-    const gameAccs = accs.filter((a) => a.username || a.name);
-
-    // Dashboard dropdowns (Chính / Phụ)
-    populateSelect($("gcProfileMain"), gameAccs, 0);
-    populateSelect($("gcProfileSub"), gameAccs, gameAccs.length > 1 ? 1 : 0);
+    const hop = $("gcSelectedChips");
+    if (!hop) return;
+    const chon = profilesDaChon();
+    if (!chon.length) {
+      hop.innerHTML = '<span class="gc-chip-empty">Chưa tích profile nào</span>';
+      return;
+    }
+    hop.innerHTML = "";
+    chon.forEach((a, i) => {
+      const ten = a.name || a.username || "(không tên)";
+      const tenGame = (a.character_name || "").trim();
+      const el = document.createElement("span");
+      el.className = "gc-chip" + (i === 0 ? " anchor" : "") + (tenGame ? "" : " thieu-ten");
+      el.textContent = `${i === 0 ? "💰 " : ""}${ten}`;
+      // Đối chiếu đồng đội dùng TÊN IN-GAME. Thiếu nó thì extension không nhận
+      // ra nhau (isPartner trả false) -> đánh như người thường.
+      el.title = tenGame
+        ? `${i === 0 ? "Account giữ tiền. " : ""}Tên in-game: ${tenGame}`
+        : "Chưa có tên in-game — chạy Check Live trước, nếu không sẽ không nhận ra đồng đội";
+      const idx = document.createElement("span");
+      idx.className = "gc-chip-idx";
+      idx.textContent = `${i + 1}.`;
+      el.prepend(idx);
+      hop.appendChild(el);
+    });
   }
 
   function setStatus(text, type = "info") {
@@ -51,116 +69,38 @@
     }
   }
 
-  async function start(isFromDashboard = false) {
-    // 1. Thu thập danh sách tài khoản được chọn (đa tầng dự phòng đảm bảo luôn có tài khoản hoạt động)
-    let selectedProfiles = [];
-
-    // Với 4/6 profile được tick, ghép theo thứ tự hiển thị: 1-2, 3-4, 5-6.
-    // Dropdown chỉ biểu diễn được một cặp, nên không được ghi đè lựa chọn này.
-    if (isFromDashboard && window.App && App.selectedProfileIds && App.selectedProfileIds.size >= 4) {
-      const accs = App.state && App.state.accounts ? App.state.accounts : [];
-      selectedProfiles = accs
-        .filter((a) => App.selectedProfileIds.has(a.id) || App.selectedProfileIds.has(String(a.id)) || App.selectedProfileIds.has(Number(a.id)))
-        .map((a) => a.name || a.username)
-        .filter(Boolean);
-    }
-
-    // Ưu tiên 1: 2 dropdown Chính & Phụ trên thanh Gom Bàn.
+  async function start() {
+    // Chạy ĐÚNG những profile được tích trên bảng, theo thứ tự đã tích.
     //
-    // KHÔNG còn ràng buộc `isFromDashboard`: trước đây bấm từ panel Game thì
-    // nhánh này bị bỏ qua, rơi xuống danh sách tích checkbox và lấy phần tử
-    // ĐẦU TIÊN làm Account chính. Thứ tự checkbox theo accounts.json chứ không
-    // theo lựa chọn của người dùng -> vai trò chính/phụ bị đảo, Account được
-    // chọn làm Chính lại chạy với vai phụ.
-    if (selectedProfiles.length < 4) {
-      const mainSelect = $("gcProfileMain");
-      const subSelect = $("gcProfileSub");
-      const mainName = mainSelect ? mainSelect.value : "";
-      const subName = subSelect ? subSelect.value : "";
-      if (mainName && subName && mainName !== subName) {
-        selectedProfiles = [mainName, subName];
-      }
+    // Bản trước dò qua 7 tầng dự phòng (dropdown Chính/Phụ, checkbox, dòng
+    // được bôi, session đang mở, DOM, rồi cuối cùng "2 account đầu danh
+    // sách"). Hậu quả: không tích gì cũng chạy, và chạy nhầm account. Nay chỉ
+    // một nguồn — không đoán, thiếu thì báo.
+    const chon = profilesDaChon();
+    if (chon.length < 2) {
+      const msg = "Hãy tích ít nhất 2 profile trên bảng danh sách bên dưới rồi bấm lại.";
+      setStatus("⚠️ " + msg, "error");
+      App.toast(msg, "warn");
+      return;
     }
 
-    // Ưu tiên 2: Lấy từ App.selectedProfileIds (các profile được tích checkbox trên bảng)
-    if (selectedProfiles.length < 2 && window.App && App.selectedProfileIds && App.selectedProfileIds.size >= 2) {
-      const accs = App.state && App.state.accounts ? App.state.accounts : [];
-      selectedProfiles = accs
-        .filter((a) => App.selectedProfileIds.has(a.id) || App.selectedProfileIds.has(String(a.id)) || App.selectedProfileIds.has(Number(a.id)))
-        .map((a) => a.name || a.username)
-        .filter(Boolean);
-    }
-
-    // Ưu tiên 3: Lấy từ các dòng có class row-selected hoặc selected trên #profileTbody
+    const selectedProfiles = chon.map((a) => a.name || a.username).filter(Boolean);
     if (selectedProfiles.length < 2) {
-      const selectedRows = Array.from(document.querySelectorAll("#profileTbody tr.row-selected, #profileTbody tr.selected, #accTbody tr.selected"));
-      const fromRows = selectedRows.map((r) => r.dataset.name).filter(Boolean);
-      if (fromRows.length >= 2) {
-        selectedProfiles = fromRows;
-      }
+      setStatus("⚠️ Profile đã tích không có tên hợp lệ.", "error");
+      return;
     }
 
-    // Ưu tiên 4: Lấy từ 2 dropdown trên thanh Gom Bàn
-    if (selectedProfiles.length < 2) {
-      const mainSelect = $("gcProfileMain");
-      const subSelect = $("gcProfileSub");
-      const mainName = mainSelect ? mainSelect.value : "";
-      const subName = subSelect ? subSelect.value : "";
-      if (mainName && subName && mainName !== subName) {
-        selectedProfiles = [mainName, subName];
-      }
-    }
-
-    // Ưu tiên 5: Tự động lấy các profile ĐANG MỞ (có session Chrome đang chạy trong App.state.sessions)
-    if (selectedProfiles.length < 2 && window.App && App.state && App.state.sessions) {
-      const openSessions = (App.state.sessions || []).filter(
-        (s) => s.account && (s.state === "ready" || s.state === "busy" || s.page || s.pid)
+    // Thiếu tên in-game thì extension không nhận ra đồng đội (isPartner trả
+    // false) -> đánh như người thường. Báo trước, đừng để người dùng ngồi đoán.
+    const thieuTen = chon.filter((a) => !String(a.character_name || "").trim())
+                         .map((a) => a.name || a.username);
+    if (thieuTen.length) {
+      App.toast(
+        `Chưa có tên in-game cho: ${thieuTen.join(", ")}. Chạy Check Live trước, `
+        + "nếu không các nick sẽ không nhận ra nhau.",
+        "warn",
       );
-      const openNames = openSessions
-        .map((s) => s.account.name || s.account.username)
-        .filter(Boolean);
-      const uniqueOpen = Array.from(new Set(openNames));
-      if (uniqueOpen.length >= 2) {
-        selectedProfiles = uniqueOpen;
-      }
     }
-
-    // Ưu tiên 6: Lấy trực tiếp từ các dòng hiển thị trên bảng DOM (#profileTbody tr)
-    if (selectedProfiles.length < 2) {
-      const allRows = Array.from(document.querySelectorAll("#profileTbody tr"));
-      const domNames = allRows.map((r) => r.dataset.name).filter(Boolean);
-      if (domNames.length >= 2) {
-        selectedProfiles = [domNames[0], domNames[1]];
-      }
-    }
-
-    // Ưu tiên 7: Fallback lấy 2 tài khoản đầu tiên trong danh sách accounts
-    if (selectedProfiles.length < 2 && window.App && App.state && App.state.accounts && App.state.accounts.length >= 2) {
-      selectedProfiles = [
-        App.state.accounts[0].name || App.state.accounts[0].username,
-        App.state.accounts[1].name || App.state.accounts[1].username,
-      ];
-    }
-
-    if (selectedProfiles.length < 2) {
-      setStatus("⚠️ Vui lòng mở ít nhất 2 profile hoặc chọn 2 tài khoản trên bảng danh sách!", "error");
-      App.toast("Vui lòng mở ít nhất 2 profile hoặc chọn 2 tài khoản trên bảng danh sách!", "warn");
-      return;
-    }
-
-    // Đa cặp nhận 4 hoặc 6 profile; tối đa 3 cặp.
-    if (selectedProfiles.length > 6) {
-      selectedProfiles = selectedProfiles.slice(0, 6);
-    }
-    const multiPairMode = selectedProfiles.length >= 4;
-    if (multiPairMode && selectedProfiles.length % 2 !== 0) {
-      setStatus("⚠️ Chạy nhiều cặp cần chọn số profile chẵn: 4 hoặc 6.", "error");
-      App.toast("Chọn 4 hoặc 6 profile theo thứ tự từng cặp (1–2, 3–4).", "warn");
-      return;
-    }
-    const pairs = multiPairMode
-      ? Array.from({ length: selectedProfiles.length / 2 }, (_, i) => selectedProfiles.slice(i * 2, i * 2 + 2))
-      : [];
 
     const hostName = selectedProfiles[0];
     const clientProfiles = selectedProfiles.slice(1);
@@ -191,12 +131,14 @@
       btnSync.textContent = "⏳ ĐANG DÒ TÌM PHÒNG...";
     }
 
-    const pairLabel = multiPairMode ? pairs.map((p) => `${p[0]} → ${p[1]}`).join(" | ") : `${hostName} → ${clientProfiles[0]}`;
-    setStatus(`[1/3] Đang điều phối ${multiPairMode ? `${pairs.length} cặp` : "1 cặp"}: ${pairLabel}; cược $${targetBet.toLocaleString()}...`);
-    App.toast(`Bắt đầu ${multiPairMode ? `${pairs.length} cặp` : "gom bàn"}: ${pairLabel}`, "info");
+    const nhan = `${hostName} (giữ tiền) + ${clientProfiles.join(", ")}`;
+    setStatus(`[1/3] Đang điều phối ${selectedProfiles.length} profile: ${nhan}; cược $${targetBet.toLocaleString()}...`);
+    App.toast(`Bắt đầu gom bàn: ${nhan}`, "info");
 
     try {
-      const res = await App.api(multiPairMode ? "/api/autoplay/find-and-match-pairs-ws" : "/api/autoplay/find-and-match-ws", {
+      // Một nhóm duy nhất: 1 account giữ tiền + N account cùng dò bàn.
+      // Chế độ "ghép cặp 1–2, 3–4, 5–6" đã bỏ cùng với dropdown Chính/Phụ.
+      const res = await App.api("/api/autoplay/find-and-match-ws", {
         method: "POST",
         body: JSON.stringify({
           profiles: selectedProfiles,
@@ -212,25 +154,21 @@
           auto_xa: autoXa,
           auto_start_guest_ss: autoStartGuestSS,
           auto_leave_after: autoLeaveAfter,
-          ...(multiPairMode ? { pairs } : {}),
         }),
       });
 
       if (res && res.ok) {
         if (autoXa) {
-          const roomInfo = multiPairMode
-            ? (res.pairs || []).map((p) => `Cặp ${p.pair}: ${p.room_name || "hoàn tất"}`).join(" | ")
-            : `${res.room_name || ""} ($${(res.bet || targetBet).toLocaleString()})`;
-          setStatus(`✅ THÀNH CÔNG! ${multiPairMode ? "Các cặp đã hoàn tất:" : "Đã ghép bàn"} ${roomInfo}`, "success");
+          const roomInfo = `${res.room_name || ""} ($${(res.bet || targetBet).toLocaleString()})`;
+          setStatus(`✅ THÀNH CÔNG! Đã ghép bàn ${roomInfo}`, "success");
         } else {
           setStatus(`✅ ĐÃ TÌM THẤY BÀN! Các nick ${selectedProfiles.join(", ")} đã ngồi chung bàn ${res.room_name || ""}. Tự động xả bài đang TẮT, dừng chờ thao tác tay.`, "success");
         }
-        App.toast(multiPairMode ? "Các cặp đã chạy xong!" : "Gom bàn và ghép cặp thành công!", "success");
+        App.toast("Gom bàn và ghép thành công!", "success");
         if (window.App && window.App.refreshAccounts) window.App.refreshAccounts();
       } else {
-        const pairErrors = multiPairMode ? (res.pairs || []).filter((p) => !p.ok).map((p) => `Cặp ${p.pair}: ${p.error || "thất bại"}`).join(" | ") : "";
-        setStatus(`⚠️ ${pairErrors || res.error || "Không tìm được bàn trống phù hợp, vui lòng thử lại"}`, "error");
-        App.toast(pairErrors || res.error || "Gom bàn thất bại", "warn");
+        setStatus(`⚠️ ${res.error || "Không tìm được bàn trống phù hợp, vui lòng thử lại"}`, "error");
+        App.toast(res.error || "Gom bàn thất bại", "warn");
       }
     } catch (e) {
       if (App.state.gcRunId === runId) {
@@ -266,17 +204,17 @@
   }
 
   // Bind Buttons (chỉ còn 1 cặp nút trên Dashboard: GOM BÀN & XẢ / Dừng)
-  if ($("btnGcSyncMatch")) $("btnGcSyncMatch").onclick = () => start(true);
+  if ($("btnGcSyncMatch")) $("btnGcSyncMatch").onclick = () => start();
   if ($("btnGcStopSync")) $("btnGcStopSync").onclick = stop;
 
-  // Cập nhật cặp ghép từ danh sách chọn
-  App.setSyncPair = function (mainName, subName) {
-    const selMain = $("gcProfileMain");
-    const selSub = $("gcProfileSub");
-    if (selMain && mainName) selMain.value = mainName;
-    if (selSub && subName) selSub.value = subName;
-  };
-
   App.autoplayRenderProfiles = renderProfiles;
+  App.profilesDaChon = profilesDaChon;
+  /** Tên profile được tích đầu tiên — dùng cho các thao tác đơn lẻ
+   *  (Tạo bàn, Random vào phòng). Rỗng nếu chưa tích gì: người gọi phải BÁO,
+   *  không được tự chọn thay người dùng. */
+  App.profileDaTichDauTien = function () {
+    const ds = profilesDaChon();
+    return ds.length ? (ds[0].name || ds[0].username || "") : "";
+  };
   renderProfiles();
 })();

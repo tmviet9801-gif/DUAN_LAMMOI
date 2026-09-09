@@ -154,17 +154,12 @@
             <button id="btnGcRandomJoin" class="btn-gc blue">RANDOM VÀO PHÒNG</button>
           </div>
 
-          <!-- TÍCH HỢP GOM BÀN ĐỒNG BỘ (ACCOUNT CHÍNH & PHỤ) -->
+          <!-- GOM BÀN ĐỒNG BỘ — chạy đúng các profile đã tích trên bảng bên dưới -->
           <div class="gc-sync-bar">
             <div class="gc-sync-pair">
-              <div class="gc-sync-field">
-                <span class="badge-role main" title="Account Chính sẽ quét tìm và giữ bàn trống trước">⭐ Chính:</span>
-                <select id="gcProfileMain" title="Chọn Account Chính vào bàn trước"></select>
-              </div>
-              <div class="gc-sync-arrow">➔</div>
-              <div class="gc-sync-field">
-                <span class="badge-role sub" title="Chờ Chính vào an toàn mới vào ghép">👥 Phụ:</span>
-                <select id="gcProfileSub" title="Chọn Account Phụ vào sau ghép bàn"></select>
+              <span class="gc-sync-label" title="Tích profile trên bảng danh sách bên dưới. Chỉ những profile đó mới chạy.">Sẽ chạy:</span>
+              <div id="gcSelectedChips" class="gc-chips">
+                <span class="gc-chip-empty">Chưa tích profile nào</span>
               </div>
             </div>
             <div class="gc-sync-actions">
@@ -186,7 +181,7 @@
             <label class="gc-check-lbl opt-leave" title="Tự động thoát bàn về sảnh sau khi hoàn thành chu trình">
               <input id="gcAutoLeaveAfter" type="checkbox" checked /> 🚪 Tự Out sau khi xả
             </label>
-            <span class="opt-tip">💡 2 profile: một cặp. Tick 4/6 profile: ghép 1–2, 3–4, 5–6 và chạy đồng thời.</span>
+            <span class="opt-tip">💡 Tích từ 2 profile trở lên trên bảng bên dưới. Profile tích ĐẦU TIÊN là account giữ tiền; các profile còn lại cùng dò bàn và vào ghép.</span>
           </div>
           <!-- Live Status Box for Synchronous Matching -->
           <div id="gcSyncStatusBox" class="gc-sync-status hidden">

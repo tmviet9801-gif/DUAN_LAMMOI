@@ -465,10 +465,13 @@ def test_multiple_pairs_are_isolated_and_stop_cancels_every_pair_task():
     assert "gom_ban_stop_epoch" in controller
     assert "active_match_tasks" in controller
 
+    # Endpoint ghép cặp VẪN CÒN ở backend (gọi trực tiếp được), nhưng giao
+    # diện không còn dùng: mô hình mới là MỘT nhóm (1 account giữ tiền + N
+    # account cùng dò bàn), không còn ghép 1–2 / 3–4 / 5–6.
     ui = (Path(__file__).parents[2] / "app" / "renderer" / "js" / "autoplay.js").read_text(encoding="utf-8")
-    assert '"/api/autoplay/find-and-match-pairs-ws"' in ui
-    assert "const multiPairMode" in ui
-    assert "1–2, 3–4" in ui
+    assert "multiPairMode" not in ui
+    assert '"/api/autoplay/find-and-match-pairs-ws"' not in ui
+    assert '"/api/autoplay/find-and-match-ws"' in ui
 
 
 def test_ready_start_and_quick_join_never_use_cross_role_or_blind_clicks():
@@ -769,21 +772,74 @@ def test_vao_sanh_uu_tien_dieu_huong_cua_extension():
     assert "OpenCV Template Matching" in src
 
 
-def test_ui_lay_account_chinh_tu_dropdown():
-    """Dropdown "Chính" phải quyết định anchor, không phụ thuộc bấm từ đâu.
-
-    Trước đây nhánh dropdown bị ràng buộc `isFromDashboard`; bấm từ panel Game
-    thì rơi xuống danh sách checkbox và lấy phần tử ĐẦU TIÊN làm Account chính
-    -> vai trò chính/phụ bị đảo.
-    """
+def _renderer(*phan):
     from pathlib import Path
 
-    src = (Path(__file__).parents[2] / "app" / "renderer" / "js"
-           / "autoplay.js").read_text(encoding="utf-8")
-    # Điều kiện cũ ràng buộc dropdown vào isFromDashboard — phải biến mất hẳn.
-    assert "if (isFromDashboard && selectedProfiles.length < 4) {" not in src, \
-        "nhánh dropdown vẫn còn phụ thuộc isFromDashboard"
-    assert "if (selectedProfiles.length < 4) {" in src
-    # Và nhánh đó vẫn phải đọc đúng hai dropdown
-    block = src.split("if (selectedProfiles.length < 4) {", 1)[1][:400]
-    assert "gcProfileMain" in block and "gcProfileSub" in block
+    return (Path(__file__).parents[2] / "app" / "renderer"
+            ).joinpath(*phan).read_text(encoding="utf-8")
+
+
+def _renderer_code(*phan):
+    """Chỉ các dòng CODE, bỏ dòng chú thích `//`.
+
+    Phần giải thích lỗi cũ nhắc lại chính những chuỗi bị cấm, và đó là chủ ý —
+    kiểm cả chú thích thì test đỏ vì tài liệu chứ không phải vì code.
+    """
+    return "\n".join(d for d in _renderer(*phan).splitlines()
+                      if not d.strip().startswith("//"))
+
+
+def test_ui_chi_co_mot_nguon_su_that_cho_profile_se_chay():
+    """Chạy đúng những profile được tích. Không đoán, không tự chọn thay.
+
+    Bản trước dò qua 7 tầng dự phòng — dropdown Chính/Phụ, checkbox, dòng được
+    bôi, session đang mở, DOM, và cuối cùng "2 account đầu danh sách". Tầng
+    cuối nghĩa là KHÔNG TÍCH GÌ CŨNG CHẠY, và chạy nhầm account.
+    """
+    src = _renderer_code("js", "autoplay.js")
+    assert "profilesDaChon" in src, "thiếu nguồn sự thật duy nhất"
+
+    for tan_du in ("Ưu tiên 2", "Ưu tiên 5", "Ưu tiên 7",
+                   "App.state.accounts[0].name",
+                   "#profileTbody tr.row-selected",
+                   "isFromDashboard"):
+        assert tan_du not in src, f"còn tầng dự phòng cũ: {tan_du}"
+
+    # Thiếu lựa chọn thì BÁO, không tự chọn thay người dùng
+    assert "Hãy tích ít nhất 2 profile" in src
+
+
+def test_ui_khong_con_chon_chinh_phu():
+    """Bỏ hai dropdown Chính/Phụ ở mọi nơi: HTML và JS."""
+    html = _renderer("index.html")
+    assert "gcProfileMain" not in html and "gcProfileSub" not in html
+    assert "gcSelectedChips" in html, "thiếu chỗ hiển thị profile sẽ chạy"
+
+    for f in ("autoplay.js", "render.js", "actions.js"):
+        src = _renderer_code("js", f)
+        assert "gcProfileMain" not in src, f"{f} còn đọc dropdown Chính"
+        assert "gcProfileSub" not in src, f"{f} còn đọc dropdown Phụ"
+        assert "setSyncPair" not in src, f"{f} còn gán cặp Chính/Phụ"
+
+
+def test_thao_tac_don_le_khong_tu_chon_account_thay_nguoi_dung():
+    """Tạo bàn / Random vào phòng từng lùi về "Account 1" khi chưa tích gì.
+
+    Đó là thao tác lên một account người dùng không hề chọn — trên tài khoản
+    có tiền thật.
+    """
+    src = _renderer_code("js", "actions.js")
+    assert '"Account 1"' not in src, "còn tự chọn Account 1 khi chưa tích gì"
+    assert "profileDaTichDauTien" in src
+    assert "Hãy tích 1 profile" in src
+
+
+def test_thu_tu_tich_duoc_hien_thi_ro_cho_nguoi_dung():
+    """Profile tích đầu tiên giữ tiền — người dùng phải THẤY thứ tự đó."""
+    src = _renderer("js", "autoplay.js")
+    assert "gc-chip" in src and "anchor" in src
+    assert "giữ tiền" in src
+    # Mọi thay đổi lựa chọn phải vẽ lại danh sách
+    assert "App.autoplayRenderProfiles()" in _renderer("js", "render.js")
+
+
