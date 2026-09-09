@@ -18,7 +18,12 @@ from .context import (
 )
 from .preflight import loc_profile_du_dieu_kien, so_du_toi_thieu
 from .deps import _build_adapter, _notify_all
-from .lobby import _clear_hunt_state, _do_leave_room, ly_do_chua_o_sanh
+from .lobby import (
+    _clear_hunt_state,
+    _do_leave_room,
+    dong_luot_chay,
+    ly_do_chua_o_sanh,
+)
 from .rounds import check_and_click_ready_or_start
 
 log = logging.getLogger("auto_flow_controller")
@@ -342,6 +347,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                        "KHÔNG chạy gom bàn: " + "; ".join(ly_do))
             log.warning("find-and-match: %s", err_msg)
             await _notify_all(getattr(request.app.state, "ext_hub", None), f"❌ {err_msg}", "error", "❌ Lỗi sảnh")
+            # Preflight ĐÃ bật cờ kích hoạt trên mọi trang -> phải tắt lại,
+            # nếu không extension vẫn tự động khi người dùng chơi tay.
+            await dong_luot_chay(pages, "không vào được sảnh")
             return {"ok": False, "error": err_msg, "stopped": False}
 
         # Anchor duy nhất là profile_a do UI/API chỉ định. Không suy đoán từ
@@ -371,6 +379,11 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 # JOIN_ROOM chuẩn (bet_val chính xác) cho từng nick phụ.
                 ext_hub.set_room_share(False)
                 await ext_hub.broadcast_command("RESET_STATE", {})
+                # "Bắt đầu nếu khách SS" chỉ hợp lệ khi KHÔNG có nick phụ đang
+                # chờ: có phụ mà bắt đầu với người lạ là phụ không vào được bàn
+                # nữa. Lớp gác Python ở dưới (`auto_start_guest_ss and not
+                # other_profiles`) đã đúng, nhưng extension hành động độc lập
+                # theo khung WS nên qua mặt được — phải TẮT CỜ ngay từ đây.
                 # Cấu hình Anchor (Chủ bàn) chạy CHẾ ĐỘ BACKEND-DRIVEN:
                 # - TẮT tự săn/self-join (__AUTOTOOL_AUTO_HUNT=false) -> không còn 2 engine
                 #   join song song (nguồn gốc lỗi nhầm bàn 100->500 & join zombie sau Dừng).
@@ -383,7 +396,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         window.__AUTOTOOL_MATCH_ROLE = 'anchor';
                         window.__is_hunt_initiator = true;
                         window.__AUTOTOOL_AUTO_DISCARD = {_json.dumps(auto_xa)};
-                        window.__auto_start_guest_ss = {_json.dumps(auto_start_guest_ss)};
+                        window.__auto_start_guest_ss = {_json.dumps(bool(auto_start_guest_ss) and not other_profiles)};
                         window.__target_hunt_bet = {bet_val};
                         window.__target_hunt_mu = {target_mu};
                     }}""")
@@ -1147,6 +1160,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
 
         if not found_match or not selected_rid:
+            await dong_luot_chay(pages, "không gom được bàn")
             return {
                 "ok": False,
                 "error": f"Sau {max_tries} lần thử, không thể gom chung bàn ${bet_val}. Vui lòng thử lại hoặc đổi mức cược.",
@@ -1225,6 +1239,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             for p_name, p in pages.items():
                 await _do_leave_room(p, name=p_name, target_mu=target_mu)
                 await _ensure_in_tldl_lobby(p, p_name)
+            await dong_luot_chay(pages, "không bắt đầu được ván")
             return {"ok": False, "error": "Chưa thể bắt đầu ván bài (Ready/Start thất bại).", "stopped": False}
 
         # 3. HỢP NHẤT 1 LUỒNG DUY NHẤT: EXTENSION V3 TỰ ĐỘNG XẢ BÀI QUA WEBSOCKET (cmd 253 / cmd 254)
@@ -1344,6 +1359,12 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             await _notify_all(ext_hub,
                               "⚠️ Chưa xác nhận kết thúc ván trong 45 giây; giữ nguyên bàn để kiểm tra, không tự out Account phụ.",
                               "warn", "⚠️ Chờ xác nhận ván")
+
+        # Đóng lượt chạy CHỈ khi ván đã kết thúc thật. Nhánh hết 45 giây bên
+        # trên cố ý giữ nguyên bàn để kiểm tra — ván CÓ THỂ VẪN ĐANG CHẠY, tắt
+        # AUTO_DISCARD giữa ván là nick phụ ngưng đánh và bị treo lượt/phạt bài.
+        if game_completed:
+            await dong_luot_chay(pages, "ván đã kết thúc")
 
         shot_a = None
         try:

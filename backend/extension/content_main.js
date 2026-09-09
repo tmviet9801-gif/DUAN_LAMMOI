@@ -289,6 +289,29 @@
   // Vai trò ghép bàn do backend ấn định cho từng lượt chạy.  Không suy đoán
   // bằng tên profile khi controller đã biết chính xác account nào là anchor:
   // tên nick có chữ/số "1" hoặc "2" rất dễ làm đảo chiều điều phối.
+  /** Đang chờ đồng đội vào bàn -> TUYỆT ĐỐI không được bắt đầu ván với người lạ.
+   *
+   * Thay cho `huntModeActive`, vốn đã CHẾT: nó đọc `__AUTOTOOL_AUTO_HUNT`, mà
+   * luồng gom bàn hiện tại đặt cờ đó = false trên MỌI trang (controller tự
+   * điều phối join). Nên điều kiện `!huntModeActive` luôn đúng, và lớp gác mà
+   * chú thích tuyên bố là "không bao giờ bắt đầu với khách lạ" thực tế không
+   * gác gì cả.
+   *
+   * Điều kiện SỐNG: có đồng đội trong danh sách đã xác minh, mà chưa ai trong
+   * số họ ngồi xuống bàn này.
+   */
+  function dangChoDongDoi() {
+    try {
+      const ds = G.__autotool_partners || [];
+      if (!ds.length) return false;
+      if (G.__is_matched_locked) return false;
+      const ngoi = (G.__room_players || []).some(isPartner);
+      return !ngoi;
+    } catch (e) {
+      return true;   // không chắc thì coi như đang chờ — hỏng an toàn
+    }
+  }
+
   function isSubMatchProfile() {
     if (G.__AUTOTOOL_MATCH_ROLE === "anchor") return false;
     if (G.__AUTOTOOL_MATCH_ROLE === "sub") return true;
@@ -1764,10 +1787,10 @@
                 // 2. BÀN CÓ KHÁCH LẠ HOẶC BÀN FULL
                 const guestSS = strangers.some((x) => x && (x.aRd === true || x.aRd === "true" || x.ss === true || x.ready === true));
 
-                // KHI ĐANG Ở CHẾ ĐỘ SĂN BÀN (tìm đồng đội cụ thể) -> LUÔN LUÔN OUT NGAY, không bao giờ bắt đầu với khách lạ!
-                const huntModeActive = !!(G.__AUTOTOOL_AUTO_HUNT && !G.__is_matched_locked && !partner);
-
-                if (!huntModeActive && G.__auto_start_guest_ss && !isSubProfile) {
+                // ĐANG CHỜ ĐỒNG ĐỘI -> LUÔN OUT, không bao giờ bắt đầu với khách lạ.
+                // Guard cũ đọc __AUTOTOOL_AUTO_HUNT, mà luồng gom bàn đặt cờ đó
+                // = false trên mọi trang, nên nó không gác gì cả.
+                if (!dangChoDongDoi() && G.__auto_start_guest_ss && !isSubProfile) {
                   // Chế độ bắt đầu với khách SS: CHỈ áp dụng khi KHÔNG trong hunt mode
                   if (guestSS) {
                     console.log("[AutoTool V3] ⚡ PHÁT HIỆN KHÁCH LẠ ĐÃ SẴN SÀNG (SS) & BẬT 'Bắt đầu nếu khách SS'! KÍCH HOẠT BẮT ĐẦU NGAY!");
@@ -1968,7 +1991,18 @@
               const isOther = rUid ? !isMe({ uid: rUid }) : true;
               if (isOther && (p.aRd === true || p.aRd === "true" || p.aRd === 1)) {
                 console.log("[AutoTool V3] ⚡ Nhận gói tin SẴN SÀNG từ đối phương (cmd " + p.cmd + ")!");
-                if (G.__auto_start_guest_ss && !G.__game_in_progress) {
+                // Nhánh này TỪNG không có lớp gác nào: không isAutoEngaged,
+                // không kiểm vai trò, không kiểm đang chờ đồng đội. Bất kỳ ai
+                // bấm Sẵn Sàng là ván TIỀN THẬT chạy — kể cả khi người dùng
+                // không hề bật tool (cờ guest_ss còn sót từ lượt chạy trước),
+                // và kể cả khi nick phụ đang chờ ở sảnh để vào cùng bàn.
+                if (!isAutoEngaged()) {
+                  console.log("[AutoTool V3] Chưa kích hoạt tool -> bỏ qua, không tự Bắt đầu.");
+                } else if (isSubMatchProfile()) {
+                  console.log("[AutoTool V3] Nick phụ không được tự Bắt đầu.");
+                } else if (dangChoDongDoi()) {
+                  console.log("[AutoTool V3] Đang chờ đồng đội -> KHÔNG bắt đầu với người lạ.");
+                } else if (G.__auto_start_guest_ss && !G.__game_in_progress) {
                   console.log("[AutoTool V3] ⚡ 'Bắt đầu nếu khách SS' đang bật -> KÍCH HOẠT BẮT ĐẦU NGAY!");
                   G.__is_matched_locked = true;
                   if (G.__guest_ss_wait_timer) {

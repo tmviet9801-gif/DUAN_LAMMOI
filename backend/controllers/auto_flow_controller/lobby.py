@@ -82,6 +82,64 @@ async def _is_in_tldl_lobby_util(p):
         return False
 
 
+async def dong_luot_chay(pages, ly_do=""):
+    """Tắt chế độ tự động trên MỌI trang khi lượt chạy kết thúc.
+
+    Khác `_clear_hunt_state` (dùng cho nút Dừng): hàm này KHÔNG đặt cờ
+    `AUTOTOOL_STOPPED`. Lượt chạy kết thúc bình thường không phải là "người
+    dùng đã bấm Dừng"; đặt cờ đó sẽ làm lượt sau phải tự xoá và dễ sinh lại
+    đúng lỗi "nick phụ không bao giờ đánh bài" đã từng gặp.
+
+    Vì sao cần: khối kết thúc cũ chỉ chạy trên trang anchor và chỉ tắt vài cờ.
+    `__AUTOTOOL_ENGAGED` không được tắt ở BẤT KỲ trang nào, `__target_hunt_bet`
+    còn nguyên. Người dùng không bấm Dừng (chẳng có lý do gì phải bấm — lượt
+    chạy đã xong), tự tay vào bàn khác chơi, và:
+      - nick phụ còn `__AUTOTOOL_AUTO_DISCARD` -> tool TỰ ĐÁNH BÀI hộ;
+      - hết ván nick phụ TỰ RỜI BÀN;
+      - vào bàn khác mức cược -> bị TỰ OUT sau ~150ms vì `__target_hunt_bet`
+        vẫn là mức của lượt trước.
+    Nguyên tắc đã thống nhất: chưa kích hoạt thì phải hành xử như người dùng
+    bình thường — đã chạy xong cũng vậy.
+    """
+    js = """() => {
+        window.__AUTOTOOL_ENGAGED = false;
+        window.__AUTOTOOL_ARMED = false;
+        window.__AUTOTOOL_AUTO_HUNT = false;
+        window.__AUTOTOOL_AUTO_DISCARD = false;
+        window.__auto_start_guest_ss = false;
+        window.__is_hunt_initiator = false;
+        window.__is_matched_locked = false;
+        window.__target_hunt_bet = 0;
+        window.__target_hunt_mu = 0;
+        window.__AUTOTOOL_MATCH_ROLE = null;
+        window.__AUTOTOOL_ROLE = null;
+        window.__AUTOTOOL_SUB_JOIN_TICKET = null;
+        window.__expected_anchor_profile = null;
+        window.__expected_anchor_dn = null;
+        window.__expected_anchor_u = null;
+        window.__expected_anchor_uid = null;
+        window.__active_room_invite = null;
+        // Bài của đồng đội từ lượt trước: không xoá thì ván đầu lượt sau đánh
+        // theo bài cũ.
+        window.__partner_cards = null;
+        window.__autotool_partners = [];
+        if (window.__hunt_retry_timer) { clearTimeout(window.__hunt_retry_timer); window.__hunt_retry_timer = null; }
+        if (window.__hunt_wait_timer) { clearTimeout(window.__hunt_wait_timer); window.__hunt_wait_timer = null; }
+        if (window.__start_retry_timer) { clearInterval(window.__start_retry_timer); window.__start_retry_timer = null; }
+        if (window.__auto_turn_timer) { clearTimeout(window.__auto_turn_timer); window.__auto_turn_timer = null; }
+        if (window.__guest_ss_wait_timer) { clearTimeout(window.__guest_ss_wait_timer); window.__guest_ss_wait_timer = null; }
+    }"""
+    for ten, p in list((pages or {}).items()):
+        if not p or (hasattr(p, "is_closed") and p.is_closed()):
+            continue
+        try:
+            await eval_page(p, js)
+        except Exception as e:
+            log.warning("đóng lượt chạy trên %s lỗi: %s", ten, e)
+    log.info("đã đóng lượt chạy trên %d trang%s", len(pages or {}),
+             f" ({ly_do})" if ly_do else "")
+
+
 async def ly_do_chua_o_sanh(p):
     """Vì sao profile này chưa ở sảnh chọn bàn — câu nói thẳng cho người dùng.
 
