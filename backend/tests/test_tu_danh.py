@@ -9,7 +9,10 @@ người dùng tự vào bàn, nên phải lo thêm đúng hai việc:
   2. mình có thể là KHÁCH trong bàn người khác -> phải Sẵn sàng, không phải
      Bắt đầu. Cờ chủ bàn đọc từ trường `C` của khung 202 (bản bắt WS: ngồi một
      mình C:true; vào bàn đã có chủ thì chủ C:true, mình C:false); cờ Sẵn sàng
-     là `r` (khung 202) / `aRd` (khung 363).
+     là `r` (khung 202).
+  3. server KHÔNG phát 363/aRd cho người khác: ai bấm Sẵn sàng/Bắt đầu thì mọi
+     người nhận [5,{uid,dn,cmd:5}] và không có khung 202 mới. Lỗi thật 17:59
+     ngày 10/09/2026: chủ bàn bật Tự đánh, khách Sẵn sàng, tool không Bắt đầu.
 Không đổi một dòng nào ở luật chọn nước.
 """
 import ast
@@ -182,6 +185,43 @@ def test_kiem_ngay_hanh_dong_theo_quyet_dinh_va_tra_ket_qua():
     assert "G.__autotool_exec_start()" in than
     assert "return hanhDong;" in than, "phải trả hành động để backend ghi log"
     assert "isSubMatchProfile()" in than, "nick phụ của lượt gom bàn không được đi đường này"
+
+
+def test_extension_bat_khung_cmd5_phat_lai_khach_san_sang():
+    """Server không gửi 363/aRd cho người khác (75.517 khung bắt được, không khung
+    nhận nào chứa aRd); khách bấm Sẵn sàng thì mọi người nhận [5,{uid,dn,cmd:5}]
+    và không có khung 202 mới. Chủ bàn phải Bắt đầu từ khung này."""
+    src = _code_js(EXT)
+    i = src.index("if (p.cmd === 5 && (p.uid || p.dn)) {")
+    khoi = src[i:i + 1700]
+    assert "isMe(nguoi)" in khoi, "cmd 5 phát lại của CHÍNH MÌNH thì bỏ qua"
+    assert "x.r = true; x.aRd = true;" in khoi, "phải ghi cờ SS vào danh sách người chơi"
+    assert 'G.__autotool_giu_ban_kiem_ngay("cmd:5")' in khoi
+    assert ("G.__AUTOTOOL_GIU_BAN && isAutoEngaged() && !isSubMatchProfile() "
+            "&& !G.__game_in_progress") in khoi
+    # cùng chuỗi handler, trước khối chia bài
+    assert i < src.index("if (p.cmd === 250)")
+
+
+def test_het_van_bao_ket_qua_len_backend():
+    """Log backend 17:59-18:03 (10/09/2026) chỉ thấy số dư nhảy -22.580 qua hai
+    ván, không một dòng nào nói ván thắng/thua hay tool có đánh không."""
+    src = _code_js(EXT)
+    i = src.index('type: "AUTOTOOL_GAME_ENDED"')
+    khoi = src[i:i + 300]
+    assert "cards_left: laConLai" in khoi
+    assert "won: p.fP ? isMe(p.fP) : null" in khoi
+    j = src.index("if (p.cmd === 252)")
+    assert "const laConLai" in src[j:src.index('type: "AUTOTOOL_GAME_ENDED"', j)], \
+        "phải đếm lá còn lại TRƯỚC khi xoá __my_cards"
+    cj = (BE / "extension" / "content.js").read_text(encoding="utf-8")
+    k = cj.index('ev.data.type === "AUTOTOOL_GAME_ENDED"')
+    assert 'type: "GAME_ENDED"' in cj[k:k + 900]
+    bg = (BE / "extension" / "background.js").read_text(encoding="utf-8")
+    assert 'message.type === "GAME_ENDED"' in bg, "background.js không chuyển tiếp thì Hub không nhận"
+    hub = _code_py(BE / "services" / "extension_hub.py")
+    assert '"GAME_ENDED"' in hub
+    assert 'd.get("cards_left")' in hub, "background.js gói message vào `data`, Hub phải đọc từ đó"
 
 
 def test_gui_san_sang_khong_gui_don():

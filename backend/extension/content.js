@@ -1189,6 +1189,15 @@
       updateViewBanner(`🏆 <b>VÁN BÀI KẾT THÚC!</b> (${winner} Thắng) | Chuẩn bị ván mới...`, "active");
       showToast(`🏆 <b>VÁN BÀI KẾT THÚC!</b><br>${winner} Về Nhất!<br>Chuẩn bị ván mới tự động...`, "success");
 
+      // Báo kết ván lên Hub để log backend nói được thắng/thua và còn mấy lá.
+      safeSendMessage({
+        type: "GAME_ENDED",
+        profile_name: activeProfileName,
+        winner: winner,
+        won: (typeof ev.data.won === "boolean") ? ev.data.won : null,
+        cards_left: (typeof ev.data.cards_left === "number") ? ev.data.cards_left : null,
+      });
+
       safeSendMessage({
         type: "CARDS_UPDATED",
         profile_name: activeProfileName,

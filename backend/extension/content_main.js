@@ -2755,6 +2755,39 @@
               }
             }
 
+            // cmd 5 do server PHÁT LẠI: một người trong bàn vừa bấm Sẵn sàng /
+            // Bắt đầu. Bản bắt WS 75.517 khung (10/09/2026): server KHÔNG gửi
+            // khung 363/aRd cho người khác — khách bấm Sẵn sàng thì mọi người
+            // nhận [5,{"uid":"1_155152908","dn":"CongAnXaBaHien","cmd":5}], và
+            // cũng KHÔNG có khung 202 mới cho tới hết ván. Nhánh 363 ở trên vì
+            // thế chưa từng chạy; không bắt khung này thì chủ bàn ở chế độ GIỮ
+            // BÀN / TỰ ĐÁNH không bao giờ biết khách đã SS -> người dùng phải
+            // tự bấm Bắt đầu (lỗi thật 17:59 ngày 10/09/2026).
+            if (p.cmd === 5 && (p.uid || p.dn)) {
+              const nguoi = { uid: p.uid, dn: p.dn };
+              if (!isMe(nguoi)) {
+                console.log(`[AutoTool V3] ⚡ ${p.dn || p.uid} vừa bấm Sẵn sàng/Bắt đầu (cmd 5 phát lại).`);
+                // Ghi cờ SS vào danh sách người chơi để mọi quyết định sau đó
+                // (kiểm ngay lúc bật Tự đánh, khung 202 muộn) đều thấy.
+                if (!Array.isArray(G.__room_players)) G.__room_players = [];
+                let thay = false;
+                for (const x of G.__room_players) {
+                  if (!x || typeof x !== "object") continue;
+                  const cungUid = !!p.uid && !!cleanUid(x.uid) && cleanUid(x.uid) === cleanUid(p.uid);
+                  const cungDn = !!p.dn && String(x.dn || "").trim().toLowerCase() === String(p.dn).trim().toLowerCase();
+                  if (cungUid || cungDn) { x.r = true; x.aRd = true; thay = true; }
+                }
+                if (!thay && G.__AUTOTOOL_GIU_BAN) {
+                  // Khung 200 của người này chưa tới (hoặc đã lỡ) -> ghi tạm để
+                  // quyết định GIỮ BÀN vẫn thấy có khách đã SS.
+                  G.__room_players.push({ uid: p.uid, dn: p.dn, r: true, aRd: true, C: false });
+                }
+                if (G.__AUTOTOOL_GIU_BAN && isAutoEngaged() && !isSubMatchProfile() && !G.__game_in_progress) {
+                  G.__autotool_giu_ban_kiem_ngay("cmd:5");
+                }
+              }
+            }
+
             // cmd 250: Chia bài & Bắt đầu ván (Cards dealt)
             if (p.cmd === 250) {
               // DỪNG NGAY LẬP TỨC VÒNG LẶP RETRY BẮT ĐẦU VÁN
@@ -2863,6 +2896,10 @@
                 G.__start_retry_timer = null;
               }
               G.__game_in_progress = false;
+              // Số lá còn trên tay lúc kết ván: 0 = mình về nhất; 13 = "cóng".
+              // Báo lên backend để log nói được ván thắng/thua và tool có đánh
+              // hay không — log 17:59-18:03 ngày 10/09/2026 chỉ thấy số dư nhảy.
+              const laConLai = Array.isArray(G.__my_cards) ? G.__my_cards.length : 0;
               G.__my_cards = [];
               G.__last_table_cards = null;
               G.__last_table_player = null;
@@ -2881,6 +2918,8 @@
                 type: "AUTOTOOL_GAME_ENDED",
                 profile_name: getProfileName(),
                 winner: winner,
+                won: p.fP ? isMe(p.fP) : null,
+                cards_left: laConLai,
                 result: p,
               }, "*");
 

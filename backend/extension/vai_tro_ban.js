@@ -69,7 +69,11 @@
   //   ngồi một mình:            {dn:"nicktestxxabai1", C:true,  r:false, sit:0}
   //   vào bàn đã có chủ:        {dn:"khanh1112221960", C:true,  r:true }
   //                             {dn:"nicktestxxabai1", C:false, r:false}
-  // `C` = chủ bàn; `r` = đã Sẵn sàng (khung 363 dùng `aRd`, boolean hoặc "true").
+  // `C` = chủ bàn; `r` = đã Sẵn sàng. Server KHÔNG phát khung 363/aRd cho
+  // người khác (75.517 khung bắt được, không khung nhận nào chứa aRd): ai bấm
+  // Sẵn sàng/Bắt đầu thì mọi người nhận [5,{uid,dn,cmd:5}], và content_main.js
+  // ghi cờ `r` vào danh sách người chơi từ khung đó. `aRd` chỉ còn là cờ tool
+  // tự đặt cho chính mình.
   // ---------------------------------------------------------------------
 
   function laDung(v) {

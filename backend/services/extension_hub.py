@@ -625,6 +625,23 @@ class ExtensionHubManager:
             log.warning("ExtensionHub V3: Profile '%s' tới lượt nhưng KHÔNG tự đánh: %s",
                         profile_name, reason)
 
+        # 3b''. HẾT VÁN: ai thắng, mình còn mấy lá. Không có dòng này thì log
+        # backend chỉ thấy số dư nhảy (17:59-18:03 ngày 10/09/2026: -22.580 qua
+        # hai ván mà không một dòng nào nói ván thắng/thua, tool có đánh không).
+        elif msg_type in ("GAME_ENDED", "AUTOTOOL_GAME_ENDED"):
+            # background.js chỉ chuyển tiếp vài trường cố định và gói nguyên
+            # message vào `data` -> winner/won/cards_left nằm trong đó.
+            d = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+            winner = msg.get("winner") or d.get("winner") or "?"
+            won = msg.get("won") if msg.get("won") is not None else d.get("won")
+            con = msg.get("cards_left") if msg.get("cards_left") is not None else d.get("cards_left")
+            ket_qua = "THẮNG" if won is True else ("THUA" if won is False else "kết ván")
+            chi_tiet = f"{ket_qua}: {winner} về nhất"
+            if isinstance(con, int):
+                chi_tiet += f", mình còn {con} lá" + (" (cóng)" if con >= 13 else "")
+            state["log"] = f"🏆 Hết ván — {chi_tiet}"
+            log.info("ExtensionHub V3: Profile '%s' hết ván — %s", profile_name, chi_tiet)
+
         # 3c. PROFILE TỰ RỜI BÀN (khách lạ / hết giờ / sai bàn...) -> báo realtime cho đồng đội
         elif msg_type in ("AUTO_LEAVING", "AUTOTOOL_AUTO_LEAVING"):
             reason = msg.get("reason") or "Tự rời bàn"
