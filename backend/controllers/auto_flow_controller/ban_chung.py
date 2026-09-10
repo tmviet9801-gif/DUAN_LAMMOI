@@ -190,6 +190,10 @@ async def _chuan_bi(request, ten, bet, mu, auto_xa):
     # Cổng kích hoạt MỞ + vai anchor: gặp bàn có người ngoài thì extension tự
     # rời, đúng thứ vòng dò cần.
     await eval_page(trang, js_kich_hoat("anchor", auto_xa, _ten_dong_doi(ten), bet, mu))
+    # KHOÁ BẮT TAY trong suốt lúc dò. Mỗi mức cược chỉ có đúng một rid công
+    # cộng, nên hai nick cùng dò là chắc chắn có lúc rơi trúng bàn của nhau;
+    # không khoá thì extension bắt tay và vào ván tiền thật ngay.
+    await eval_page(trang, "() => { window.__AUTOTOOL_CHO_BAT_TAY = false; }")
     return trang
 
 
@@ -246,13 +250,50 @@ async def _do_va_giu(request, trang, ten, bet, mu, rid, auto_xa, so_lan):
         # đầy thì đồng đội không vào được nữa.
         await eval_page(trang, js_giu_ban(auto_xa, bet, mu,
                                           dong_doi=_ten_dong_doi(ten),
-                                          roi_khi_co_khach=True))
+                                          roi_khi_co_khach=True,
+                                          cho_bat_tay=False))
         _ghi_ban(request, ten, rid_that, bet, mu)
         log.info("TÌM BÀN: >>> %s ĐÃ GIỮ BÀN TRỐNG #%s ($%s) sau %d lần dò. <<<",
                  ten, rid_that, bet, lan)
         return True, rid_that, lan, ""
 
     return False, None, so_lan, ly_do
+
+
+async def _mo_cong_bat_tay(trang, ten, bet, mu, auto_xa):
+    """Cho phép bắt tay và thôi bỏ chạy khi thấy khách — CHỈ khi người dùng
+    đã bấm VÀO BÀN.
+
+    ĐÂY LÀ MỤC TIÊU CUỐI CỦA CẢ DỰ ÁN, người dùng nhắc lại 11/09/2026: bàn phải
+    là BÀN CÔNG CỘNG, để sau khi xả xong và một nick rời đi thì NGƯỜI CHƠI NGOÀI
+    vào được. (Đó cũng là lý do không dùng bàn đặt mật khẩu: bàn riêng thì không
+    ai vào được nữa.)
+
+    Cờ này chỉ đúng trong lúc ĐANG CHỜ đồng đội — lúc đó khách chen vào là bàn
+    hết ghế. Chờ xong mà vẫn để bật thì hết ván, nick ở lại sẽ bỏ chạy đúng lúc
+    người chơi thật ngồi xuống — hỏng cả mục tiêu.
+    """
+    try:
+        await eval_page(trang, js_giu_ban(auto_xa, bet, mu,
+                                          dong_doi=_ten_dong_doi(ten),
+                                          roi_khi_co_khach=False,
+                                          cho_bat_tay=True))
+        # Bắt tay PHẢI được đá lại bằng tay ở đây. Khung 200/202 báo đồng đội
+        # ngồi xuống đã đi qua từ lúc cổng còn khoá và bị bỏ; server không gửi
+        # lại khung nào nữa, nên không kích thì cả hai ngồi im tới lúc bị out.
+        # `__autotool_giu_ban_kiem_ngay` chọn việc theo CHỦ BÀN THẬT (cờ `C`
+        # của khung 202): chủ bàn chờ rồi Bắt đầu, người vào sau gửi Sẵn sàng.
+        hanh_dong = await eval_page(
+            trang, '() => (typeof window.__autotool_giu_ban_kiem_ngay === "function"'
+                   ' ? window.__autotool_giu_ban_kiem_ngay("mo_cong_vao_ban")'
+                   ' : "khong_co_ham")')
+        log.info("GIỮ BÀN: %s đã MỞ cổng bắt tay và thôi cờ 'khách vào là rời' "
+                 "— từ giờ ở lại cho người chơi ngoài vào được (hành động: %s).",
+                 ten, hanh_dong)
+        return True
+    except Exception as e:
+        log.warning("GIỮ BÀN: không mở được cổng bắt tay cho %s: %s", ten, e)
+        return False
 
 
 async def _canh_giu_ban(request, ten, bet, mu, rid, auto_xa):
@@ -263,6 +304,7 @@ async def _canh_giu_ban(request, ten, bet, mu, rid, auto_xa):
     """
     moc = int(getattr(request.app.state, "gom_ban_stop_epoch", 0))
     het = time.time() + HAN_CANH_BAN
+    da_bao_dong_doi = False
     while time.time() < het:
         await asyncio.sleep(1.2)
         if int(getattr(request.app.state, "gom_ban_stop_epoch", 0)) != moc:
@@ -280,9 +322,18 @@ async def _canh_giu_ban(request, ten, bet, mu, rid, auto_xa):
         if tt is None or tt.get("dang_van"):
             continue
         if int(tt.get("so_dong_doi") or 0) > 0:
-            log.info("CANH BÀN: ✅ %s — đồng đội %s đã vào bàn #%s, thôi canh.",
-                     ten, ", ".join(tt.get("ten_dong_doi") or []) or "?", ban.get("rid"))
-            return
+            # Đồng đội ngồi cùng nhưng người dùng CHƯA bấm VÀO BÀN (nick kia
+            # cũng đang dò và rơi trúng đây). TUYỆT ĐỐI không mở cổng bắt tay —
+            # mở là vào ván TIỀN THẬT ngoài ý muốn, đúng lỗi 11/09/2026. Cứ
+            # ngồi yên; nick kia thấy "bàn đã có người" sẽ tự đi dò chỗ khác.
+            if not da_bao_dong_doi:
+                da_bao_dong_doi = True
+                log.info("CANH BÀN: %s — đồng đội %s đang ở cùng bàn #%s nhưng chưa "
+                         "bấm VÀO BÀN -> giữ nguyên, KHÔNG tự bắt đầu.",
+                         ten, ", ".join(tt.get("ten_dong_doi") or []) or "?",
+                         ban.get("rid"))
+            continue
+        da_bao_dong_doi = False
 
         co_khach = int(tt.get("so_khach") or 0) > 0
         roi_ban = not tt.get("co_thong_tin") or int(tt.get("so_nguoi") or 0) == 0
@@ -473,7 +524,13 @@ async def vao_ban(body: dict, request: Request):
                       + ". Server có thể đã xếp sang bàn con khác; bấm TÌM BÀN lại."),
         }
 
-    await eval_page(trang, js_giu_ban(auto_xa, bet, mu, dong_doi=_ten_dong_doi(ten)))
+    # ĐÂY là chỗ DUY NHẤT mở cổng bắt tay: người dùng đã chủ động bấm VÀO BÀN.
+    # Mở cho cả hai bên, vì cả hai đều đang bị khoá từ lúc dò bàn.
+    await _mo_cong_bat_tay(trang, ten, bet, mu, auto_xa)
+    trang_chu = _trang_dang_mo(request, chu)
+    if trang_chu is not None:
+        await _mo_cong_bat_tay(trang_chu, chu, bet, mu, auto_xa)
+
     # Ghép xong thì bàn này không còn là chỗ trống để mời nữa.
     _xoa_ban(request, chu)
     _dung_canh(request, chu)

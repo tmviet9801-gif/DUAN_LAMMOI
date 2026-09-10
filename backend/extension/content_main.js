@@ -116,6 +116,7 @@
     G.__AUTOTOOL_GIU_BAN = false;
     G.__AUTOTOOL_TU_DANH = false;
     G.__AUTOTOOL_ROI_KHI_CO_KHACH = false;
+    G.__AUTOTOOL_CHO_BAT_TAY = true;
   }
 
   // Vai trò ghép bàn do backend ấn định cho từng lượt chạy.  Không suy đoán
@@ -1577,6 +1578,13 @@
       console.warn(`[AutoTool V3] Bỏ qua lệnh ghép bàn tồn đọng [${sourceReason || ''}] — tool chưa/không còn kích hoạt.`);
       return;
     }
+    // ĐANG DÒ BÀN: gặp đồng đội cũng KHÔNG bắt tay. Xem chú thích ở
+    // `khongDuocBatDauVoiNguoiLa`. Chặn ngay đây để không đặt
+    // `__is_matched_locked` và không chạy nhịp nhắc lại Bắt đầu.
+    if (G.__AUTOTOOL_CHO_BAT_TAY === false) {
+      console.warn(`[AutoTool V3] Đang DÒ BÀN -> gặp đồng đội cũng không tự Sẵn sàng/Bắt đầu [${sourceReason || ''}].`);
+      return;
+    }
     const seatedPlayers = G.__room_players || [];
     if (seatedPlayers.length < 2) {
       console.warn(`[AutoTool V3] ⚠️ TỪ CHỐI SẴN SÀNG: Bàn chỉ có ${seatedPlayers.length} người, không thể khớp khi ngồi một mình! [${sourceReason || ''}]`);
@@ -3030,11 +3038,17 @@
    * `triggerVerifiedMatchReadyAndStart` cũng gọi `exec_start` và luôn chạy với
    * MATCH_ROLE khác null; chặn cứng là nick chính không bao giờ bắt đầu được
    * ván hợp lệ.
+   *
+   * Cờ `__AUTOTOOL_CHO_BAT_TAY === false` (ĐANG DÒ BÀN) chặn tuyệt đối, kể cả
+   * khi ngồi cùng ĐỒNG ĐỘI. Lỗi thật 11/09/2026: hai nick cùng bấm TÌM BÀN;
+   * mỗi mức cược chỉ có đúng một rid công cộng nên nick sau dò trúng ngay bàn
+   * nick trước đang giữ. Extension thấy đồng đội là bắt tay và vào ván TIỀN
+   * THẬT, trong khi người dùng chưa hề bấm VÀO BÀN. Chỉ VÀO BÀN mới mở cờ.
    */
   function khongDuocBatDauVoiNguoiLa() {
-    // Chặn TUYỆT ĐỐI khi trong bàn có người không phải đồng đội — kể cả ở
-    // chế độ GIỮ BÀN. Trước đây GIỮ BÀN mở cổng này để chơi với khách;
-    // người dùng đã bỏ hẳn việc đó (11/09/2026).
+    // Đang DÒ BÀN -> cấm, kể cả với đồng đội (xem chú thích trên).
+    if (G.__AUTOTOOL_CHO_BAT_TAY === false) return true;
+    // Bàn có người không phải đồng đội -> chặn, kể cả ở chế độ GIỮ BÀN.
     return coKhachLaTrongBan();
   }
 

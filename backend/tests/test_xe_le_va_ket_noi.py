@@ -173,7 +173,11 @@ def test_vao_ban_theo_dung_ban_chung():
     khoi = code[i:i + 5000]
     assert "_chon_ban_de_vao(request, ten, chu_muon)" in khoi
     assert "status_code=409" in khoi, "không bàn nào ghép được thì phải báo rõ"
-    assert "js_giu_ban(auto_xa, bet, mu" in khoi
+    # Vào xong bật GIỮ BÀN cho nick vừa vào — qua `_mo_cong_bat_tay`, hàm duy
+    # nhất được gọi `js_giu_ban(..., cho_bat_tay=True)`.
+    assert "_mo_cong_bat_tay(trang, ten, bet, mu, auto_xa)" in khoi
+    j = code.index("async def _mo_cong_bat_tay")
+    assert "js_giu_ban(auto_xa, bet, mu" in code[j:j + 1600]
 
 
 def test_vao_ban_kiem_TRUOC_va_xac_minh_SAU_bang_ten_nhan_vat():
@@ -392,3 +396,114 @@ def test_giao_dien_co_nut_moi():
     render = (BE.parent / "app" / "renderer" / "js" / "render.js").read_text(encoding="utf-8")
     assert "btn-row-join" in render and "App.vaoBan" in render
     assert "App.timBan" in render
+
+
+# ===================== 7. Mục tiêu cuối: bàn phải để người ngoài vào được =====================
+
+def test_thoi_co_roi_khi_co_khach_sau_khi_dong_doi_da_vao():
+    """Mục tiêu cuối của cả dự án (người dùng nhắc lại 11/09/2026): bàn phải là
+    BÀN CÔNG CỘNG để sau khi xả xong, một nick rời đi thì NGƯỜI CHƠI NGOÀI vào
+    được. Đó cũng là lý do KHÔNG dùng bàn đặt mật khẩu.
+
+    Cờ "khách vào là rời" chỉ đúng trong lúc ĐANG CHỜ đồng đội. Để bật tiếp sau
+    đó thì hết ván, nick ở lại sẽ bỏ chạy đúng lúc người chơi thật ngồi xuống.
+    """
+    code = _code_py(AF / "ban_chung.py")
+    assert "async def _mo_cong_bat_tay" in code
+    i = code.index("async def _mo_cong_bat_tay")
+    than = code[i:i + 1600]
+    assert "roi_khi_co_khach=False" in than
+
+    # Tắt cờ ở ĐÚNG MỘT chỗ: endpoint VÀO BÀN, cho cả hai bên. Vòng canh KHÔNG
+    # được tự tắt — xem test_canh_ban_khong_tu_mo_cong_khi_gap_dong_doi.
+    k = code.index("async def vao_ban")
+    khoi_vao = code[k:k + 6000]
+    assert "_mo_cong_bat_tay(trang_chu, chu" in khoi_vao, "chủ bàn chưa được tắt cờ"
+    assert "_mo_cong_bat_tay(trang, ten" in khoi_vao, "nick vừa vào chưa được tắt cờ"
+
+
+def test_chi_bat_co_roi_khi_dang_cho_dong_doi():
+    """Bật cờ đúng một chỗ: lúc vừa giành được bàn trống và đang chờ đồng đội."""
+    code = _code_py(AF / "ban_chung.py")
+    assert code.count("roi_khi_co_khach=True") == 1, \
+        "chỉ được bật ở lúc giữ bàn chờ đồng đội"
+    i = code.index("roi_khi_co_khach=True")
+    j = code.index("async def _do_va_giu")
+    k = code.index("async def _mo_cong_bat_tay")
+    assert j < i < k, "cờ phải được bật trong _do_va_giu"
+
+
+# ============ 8. DÒ BÀN thì gặp đồng đội cũng không được vào ván ============
+#
+# Lỗi thật 11/09/2026 (log 05:11): Account 01 giữ bàn trống #2; Account 02 bấm
+# TÌM BÀN rồi dò trúng đúng bàn ấy. Vòng dò bên Python từ chối ("bàn đã có
+# người ngồi sẵn") nhưng extension thấy đồng đội là bắt tay và VÀO VÁN TIỀN
+# THẬT — người dùng chưa hề bấm VÀO BÀN. Mỗi mức cược chỉ có đúng một rid công
+# cộng, nên đây không phải trùng hợp hiếm: hai nick cùng dò kiểu gì cũng gặp
+# nhau. Cổng `__AUTOTOOL_CHO_BAT_TAY` khoá suốt lúc dò, chỉ VÀO BÀN mới mở.
+
+
+def test_js_giu_ban_co_cong_cho_bat_tay():
+    js_khoa = KH.js_giu_ban(True, 100, 2, cho_bat_tay=False)
+    assert "window.__AUTOTOOL_CHO_BAT_TAY = false;" in js_khoa
+    js_mo = KH.js_giu_ban(True, 100, 2)
+    assert "window.__AUTOTOOL_CHO_BAT_TAY = true;" in js_mo, "mặc định phải MỞ"
+
+
+def test_extension_dang_do_ban_thi_khong_bat_tay():
+    """Chặn ở CẢ HAI nút thắt: hàm bắt tay, và hai lệnh Sẵn sàng/Bắt đầu."""
+    src = _code_js(EXT / "content_main.js")
+    i = src.index("function triggerVerifiedMatchReadyAndStart(")
+    dau = src[i:i + 1400]
+    assert "if (G.__AUTOTOOL_CHO_BAT_TAY === false) {" in dau
+    assert dau.index("__AUTOTOOL_CHO_BAT_TAY") < dau.index("__room_players"), \
+        "phải chặn TRƯỚC khi khoá bàn và chạy nhịp nhắc lại Bắt đầu"
+
+    j = src.index("function khongDuocBatDauVoiNguoiLa()")
+    assert "if (G.__AUTOTOOL_CHO_BAT_TAY === false) return true;" in src[j:j + 400], \
+        "exec_ready/exec_start chưa gác cờ dò bàn"
+
+
+def test_do_ban_va_giu_ban_deu_khoa_bat_tay():
+    code = _code_py(AF / "ban_chung.py")
+    i = code.index("async def _chuan_bi")
+    assert "window.__AUTOTOOL_CHO_BAT_TAY = false;" in code[i:i + 4000], \
+        "lúc chuẩn bị dò phải khoá"
+    j = code.index("async def _do_va_giu")
+    k = code.index("async def _mo_cong_bat_tay")
+    assert "cho_bat_tay=False" in code[j:k], "giành được bàn rồi vẫn phải khoá"
+
+
+def test_chi_vao_ban_moi_mo_cong_bat_tay():
+    """Mở cổng đúng một chỗ, và mở xong phải ĐÁ LẠI bắt tay."""
+    code = _code_py(AF / "ban_chung.py")
+    assert code.count("cho_bat_tay=True") == 1
+    i = code.index("cho_bat_tay=True")
+    j = code.index("async def _mo_cong_bat_tay")
+    k = code.index("async def _canh_giu_ban")
+    assert j < i < k, "chỉ _mo_cong_bat_tay được mở cổng"
+    # Khung 200/202 báo đồng đội ngồi xuống đã trôi qua lúc cổng còn khoá;
+    # server không gửi lại. Không kích thì cả hai ngồi im tới lúc bị out.
+    assert "__autotool_giu_ban_kiem_ngay" in code[j:k], \
+        "mở cổng xong phải kích lại bắt tay"
+
+
+def test_canh_ban_khong_tu_mo_cong_khi_gap_dong_doi():
+    """Vòng canh thấy đồng đội KHÔNG có nghĩa là người dùng đã bấm VÀO BÀN."""
+    code = _code_py(AF / "ban_chung.py")
+    i = code.index("async def _canh_giu_ban")
+    than = code[i:i + 3000]
+    j = than.index('if int(tt.get("so_dong_doi") or 0) > 0:')
+    nhanh = than[j:j + 800]
+    assert "_mo_cong_bat_tay" not in nhanh, \
+        "vòng canh tự mở cổng là vào ván tiền thật ngoài ý muốn"
+    assert "continue" in nhanh, "phải ngồi yên giữ bàn, không thôi canh"
+
+
+def test_dung_va_dong_luot_deu_mo_lai_cong_bat_tay():
+    """Dừng / hết lượt: trả trang về đúng trạng thái người dùng chơi tay."""
+    code = _code_py(AF / "lobby.py")
+    assert code.count("window.__AUTOTOOL_CHO_BAT_TAY = true;") >= 2
+    src = _code_js(EXT / "content_main.js")
+    i = src.index("function clearRunConfig()")
+    assert "G.__AUTOTOOL_CHO_BAT_TAY = true;" in src[i:i + 1200]

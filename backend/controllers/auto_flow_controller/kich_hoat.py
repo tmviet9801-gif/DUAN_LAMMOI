@@ -62,7 +62,8 @@ def js_kich_hoat(vai_tro, auto_xa, dong_doi, bet, mu):
     }}"""
 
 
-def js_giu_ban(auto_xa, bet, mu, tu_danh=False, dong_doi=None, roi_khi_co_khach=False):
+def js_giu_ban(auto_xa, bet, mu, tu_danh=False, dong_doi=None,
+               roi_khi_co_khach=False, cho_bat_tay=True):
     """JS đưa trang CHÍNH vào chế độ GIỮ BÀN sau khi phụ đã out.
 
     Chính ở lại bàn, cổng kích hoạt vẫn MỞ, auto-xả vẫn BẬT: khách lạ ngồi vào
@@ -70,6 +71,12 @@ def js_giu_ban(auto_xa, bet, mu, tu_danh=False, dong_doi=None, roi_khi_co_khach=
     một dòng nào của luật chọn nước. Không còn đồng đội để chờ, nên xoá danh
     sách đồng đội: các lớp gác "đang chờ đồng đội -> rời bàn khi thấy khách
     lạ" không được phép nổ trong chế độ này (extension kiểm `__AUTOTOOL_GIU_BAN`).
+
+    `cho_bat_tay=False`: KHÔNG được Sẵn sàng / Bắt đầu, kể cả khi ngồi cùng
+    đồng đội. Dùng cho lúc ĐANG DÒ BÀN. Lỗi thật 11/09/2026: hai nick cùng
+    bấm TÌM BÀN, nick sau dò trúng bàn nick trước đang giữ, extension thấy
+    đồng đội là bắt tay và VÀO VÁN TIỀN THẬT ngay — trong khi người dùng chưa
+    hề bấm VÀO BÀN. Chỉ nút VÀO BÀN mới được mở cổng này.
 
     `roi_khi_co_khach=True` (luồng TÌM BÀN): khách lạ ngồi vào là RỜI ngay để
     đi dò bàn khác. Không có cờ này thì nick giữ bàn đứng im, khách lấp nốt
@@ -112,6 +119,7 @@ def js_giu_ban(auto_xa, bet, mu, tu_danh=False, dong_doi=None, roi_khi_co_khach=
         window.__AUTOTOOL_AUTO_HUNT = false;
         window.__AUTOTOOL_GIU_BAN = true;
         window.__AUTOTOOL_ROI_KHI_CO_KHACH = {json.dumps(bool(roi_khi_co_khach))};
+        window.__AUTOTOOL_CHO_BAT_TAY = {json.dumps(bool(cho_bat_tay))};
         window.__AUTOTOOL_TU_DANH = {json.dumps(bool(tu_danh))};
         window.__AUTOTOOL_MATCH_ROLE = "anchor";
         window.__is_hunt_initiator = true;
