@@ -174,6 +174,7 @@
           window: {
             width: +$("cfgWinW").value || 0,
             height: +$("cfgWinH").value || 0,
+            scale: Math.min(1, Math.max(0.25, +$("cfgWinScale").value || 1)),
           },
           open_direction: $("cfgDirection").value,
           anti_detect: {

@@ -565,7 +565,26 @@ class BrowserManager:
             win_cfg = self.config.get("window", {})
             win_w = win_cfg.get("width") or 1024
             win_h = win_cfg.get("height") or 768
-            offset = len(self.sessions) * 40
+
+            # TỈ LỆ HIỂN THỊ — cách các trình duyệt antidetect xếp được nhiều tab.
+            #
+            # `--window-size` tính bằng DIP, còn `--force-device-scale-factor=f`
+            # đặt devicePixelRatio = f. Nên trang VẪN thấy đúng `win_w x win_h`
+            # pixel CSS, nhưng cửa sổ chỉ chiếm `win_w*f x win_h*f` pixel THẬT
+            # trên màn hình. Đặt 1280x800 với tỉ lệ 0.5 thì game có đủ khung
+            # hình mà cửa sổ chỉ to 640x400 — xếp được 10 tab trên một màn hình.
+            #
+            # Vì sao không đụng tới phép bấm: `_get_screen_size_util` đọc
+            # `window.innerWidth/innerHeight` (pixel CSS) và chuột Playwright
+            # cũng nhận pixel CSS. Hai bên cùng đơn vị nên toạ độ vẫn đúng.
+            try:
+                win_scale = float(win_cfg.get("scale") or 1.0)
+            except (TypeError, ValueError):
+                win_scale = 1.0
+            # Dưới 0.25 thì chữ nát không đọc nổi; trên 1 là phóng to, không phải
+            # mục đích của ô này.
+            win_scale = min(1.0, max(0.25, win_scale))
+            offset = int(len(self.sessions) * 40 * win_scale)
             pos_x = 100 + offset
             pos_y = 100 + offset
             # Cấp phát / sử dụng User-Agent riêng cho profile
@@ -575,6 +594,10 @@ class BrowserManager:
                 ua = get_random_user_agent()
                 if account:
                     account["user_agent"] = ua
+
+            if win_scale != 1.0:
+                args.append(f"--force-device-scale-factor={win_scale}")
+                args.append(f"--high-dpi-support={win_scale}")
 
             args += [
                 f"--window-position={pos_x},{pos_y}",

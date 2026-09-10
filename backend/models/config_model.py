@@ -41,6 +41,10 @@ DEFAULT_CONFIG = {
     "window": {
         "width": 0,
         "height": 0,
+        # Tỉ lệ hiển thị (0.25–1.0). Trang vẫn thấy đủ `width x height` pixel
+        # CSS, nhưng cửa sổ chỉ chiếm `width*scale x height*scale` pixel thật
+        # trên màn hình — xếp được nhiều tab mà game không bị hụt khung hình.
+        "scale": 1.0,
     },
     "open_direction": "row",
     "anti_detect": {

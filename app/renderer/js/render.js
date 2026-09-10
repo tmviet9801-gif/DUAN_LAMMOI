@@ -47,6 +47,7 @@
     $("cfgDirection").value = state.config.open_direction || "row";
     $("cfgWinW").value = w.width || 0;
     $("cfgWinH").value = w.height || 0;
+    $("cfgWinScale").value = w.scale || 1;
     $("cfgCount").value = state.config.default_count;
     $("cfgAutoLayout").checked = !!state.config.auto_layout;
     $("cfgMuteAll").checked = !!state.config.mute_all_sites;

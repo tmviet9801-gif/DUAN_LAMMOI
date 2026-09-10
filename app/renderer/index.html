@@ -311,6 +311,15 @@
             <input id="cfgWinH" type="number" min="0" max="4000" />
           </div>
           <div class="field">
+            <label for="cfgWinScale">Tỉ lệ hiển thị</label>
+            <input id="cfgWinScale" type="number" min="0.25" max="1" step="0.05"
+                   title="1 = kích thước thật. 0.5 = cửa sổ chỉ to bằng nửa nhưng trang vẫn thấy đủ khung hình — xếp được nhiều tab hơn." />
+            <p class="hint">Trang vẫn thấy đủ <b>Chiều rộng × Chiều cao</b> ở trên;
+               tỉ lệ chỉ thu nhỏ cửa sổ trên màn hình. Ví dụ 1280×800 với tỉ lệ
+               0.5 thì cửa sổ chỉ chiếm 640×400 — game vẫn đủ khung để bấm được
+               mọi ô. Đặt 1 nếu muốn kích thước thật.</p>
+          </div>
+          <div class="field">
             <label for="cfgCount">Số tab mặc định</label>
             <input id="cfgCount" type="number" min="1" max="100" />
           </div>
