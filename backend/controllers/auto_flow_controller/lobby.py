@@ -664,7 +664,17 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
     return await _is_in_tldl_lobby_util(p)
 
 
-async def _do_leave_room(p, name="Profile", target_mu=2):
+async def _do_leave_room(p, name="Profile", target_mu=2, buoc_ngay=False):
+    """Đưa một profile về sảnh chọn bàn.
+
+    `buoc_ngay=False` (mặc định): ĐANG GIỮA VÁN thì HOÃN, không rời. Bỏ giữa ván
+    là mất cược và bị phạt bài — đắt hơn nhiều so với đánh nốt rồi ra. Extension
+    đã có chốt này trong `__autotool_exec_leave`, nhưng đoạn dự phòng bên dưới
+    trước đây gửi thẳng `[4,"Simms",-1]` khi chốt đó trả `false`, tức vô hiệu
+    hoá đúng lớp bảo vệ vừa áp.
+
+    Chỉ đặt `buoc_ngay=True` khi thực sự chấp nhận mất ván đang chơi.
+    """
     if not p or (hasattr(p, "is_closed") and p.is_closed()):
         return
     sw, sh = await _get_screen_size_util(p)
@@ -677,23 +687,45 @@ async def _do_leave_room(p, name="Profile", target_mu=2):
 
     # 1. Gửi lệnh WebSocket và Cocos rời bàn tức thì chuẩn giao thức Simms
     try:
-        await eval_page(p, """(() => {
+        ket_qua = await eval_page(p, """((buocNgay) => {
             try {
-                let sent = false;
+                // ĐANG GIỮA VÁN -> tuyệt đối không gửi gói rời.
+                //
+                // Kiểm ĐỘC LẬP với `exec_leave`, vì extension cũ có thể chưa
+                // export helper — khi đó không có ai chốt và gói thô đi thẳng.
+                const giuaVan = !!window.__game_in_progress
+                    || (Array.isArray(window.__my_cards) && window.__my_cards.length > 0);
+                if (giuaVan && !buocNgay) {
+                    window.__leave_after_round = true;
+                    return { hoan: true, ly_do: 'đang giữa ván' };
+                }
+
+                let ketQua = null;
                 if (typeof window.__autotool_exec_leave === 'function') {
-                    sent = window.__autotool_exec_leave() !== false;
+                    ketQua = window.__autotool_exec_leave(buocNgay);
                 }
-                if (!sent && typeof window.__ws_send === 'function') {
+                // `false` = extension tự hoãn. KHÔNG được lùi về gói thô.
+                if (ketQua === false) {
+                    return { hoan: true, ly_do: 'extension hoãn tới cuối ván' };
+                }
+                if (ketQua !== null) return { ok: true };
+
+                // Chỉ tới đây khi extension chưa export helper.
+                if (typeof window.__ws_send === 'function') {
                     window.__ws_send('[4,"Simms",-1]');
-                    sent = true;
+                    return { ok: true, tho: true };
                 }
-                // Fallback cuối cho extension/script cũ chưa export helper.
-                if (!sent && Array.isArray(window.__ws_instances)) {
+                if (Array.isArray(window.__ws_instances)) {
                     const ws = window.__ws_instances.find((item) => item && item.readyState === 1);
-                    if (ws) ws.send('[4,"Simms",-1]');
+                    if (ws) { ws.send('[4,"Simms",-1]'); return { ok: true, tho: true }; }
                 }
-            } catch(e) {}
-        })()""")
+                return { ok: false, ly_do: 'không có đường gửi' };
+            } catch(e) { return { ok: false, ly_do: String(e) }; }
+        })""", bool(buoc_ngay))
+        if isinstance(ket_qua, dict) and ket_qua.get("hoan"):
+            log.warning("%s: HOÃN rời bàn (%s) — bỏ giữa ván là mất cược. "
+                        "Sẽ tự rời khi hết ván.", name, ket_qua.get("ly_do"))
+            return
     except Exception:
         pass
 

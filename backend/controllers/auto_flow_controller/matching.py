@@ -1272,17 +1272,22 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                     sub_dn = str(sub_user_info.get("dn") or "").lower().strip()
                     sub_uid = str(sub_user_info.get("uid") or "").strip()
 
-                    sub_pls = []
+                    # Đọc HAI danh sách trong CÙNG MỘT NHỊP.
+                    #
+                    # Hai lời gọi `eval_page` nối tiếp cách nhau ít nhất một vòng
+                    # CDP, mà mỗi trang cập nhật danh sách người ngồi theo khung
+                    # WS của riêng nó. Đọc lệch nhịp thì rất dễ thấy "một bên đã
+                    # có, bên kia chưa" — rồi kết luận sai là không cùng bàn.
+                    sub_pls, anchor_pls = [], []
                     try:
-                        sub_pls = await eval_page(sub_p, "() => window.__room_players || []")
+                        sub_pls, anchor_pls = await asyncio.gather(
+                            eval_page(sub_p, "() => window.__room_players || []"),
+                            eval_page(anchor_page, "() => window.__room_players || []"),
+                        )
                     except Exception:
                         pass
-
-                    anchor_pls = []
-                    try:
-                        anchor_pls = await eval_page(anchor_page, "() => window.__room_players || []")
-                    except Exception:
-                        pass
+                    sub_pls = sub_pls or []
+                    anchor_pls = anchor_pls or []
 
                     # 1. Account 2 phải nhìn thấy Account 1 trong phòng của mình:
                     has_anchor = False
@@ -1313,13 +1318,33 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         log.info("find-and-match: >>> XÁC NHẬN CHÍNH XÁC: %s và %s ĐÃ Ở CHUNG BÀN! <<<", sub_name, anchor_name)
                         break
                     else:
-                        # CƠ CHẾ BẢO VỆ: Nếu Account 2 vào phòng mà KHÔNG CÓ Account 1 (hoặc phòng người lạ)
-                        # LẬP TỨC OUT VỀ SẢNH BÀN ĐẾM LÁ NGAY, không bao giờ được ở lại phòng người lạ!
-                        log.warning("find-and-match: BẢO VỆ: %s không ở chung bàn với %s (has_anchor=%s, has_sub=%s)! Thoát ngay về sảnh bàn Đếm Lá!", 
-                                    sub_name, anchor_name, has_anchor, has_sub)
-                        await _do_leave_room(sub_p, name=sub_name, target_mu=target_mu)
-                        await _ensure_in_tldl_lobby(sub_p, sub_name)
-                        break
+                        # CHƯA THẤY NHAU ≠ KHÔNG CÙNG BÀN.
+                        #
+                        # Vòng này viết ra để thử 9 lần, nhưng bản cũ kết bằng
+                        # `break` ngay lần đầu lệch — nên thực tế chỉ lấy ĐÚNG
+                        # MỘT mẫu. Danh sách người ngồi tới theo khung WS, chậm
+                        # vài trăm mili-giây là chuyện thường; rời bàn vì thế là
+                        # rời oan, và nick phụ mất luôn lượt.
+                        #
+                        # Chỉ rời NGAY khi chính nick phụ báo khẳng định DƯƠNG là
+                        # có người lạ. Còn "chưa thấy" thì thử lại cho hết vòng.
+                        co_khach_la = False
+                        try:
+                            co_khach_la = bool(await eval_page(sub_p, """() => !!(
+                                window.__last_room_info && window.__last_room_info.has_stranger
+                            )"""))
+                        except Exception:
+                            pass
+                        if co_khach_la:
+                            log.warning("find-and-match: BẢO VỆ: %s báo CÓ NGƯỜI LẠ trong bàn "
+                                        "-> thoát ngay về sảnh bàn Đếm Lá!", sub_name)
+                            await _do_leave_room(sub_p, name=sub_name, target_mu=target_mu)
+                            await _ensure_in_tldl_lobby(sub_p, sub_name)
+                            break
+                        log.info("find-and-match: %s và %s chưa thấy nhau "
+                                 "(has_anchor=%s, has_sub=%s) -> thử lại.",
+                                 sub_name, anchor_name, has_anchor, has_sub)
+                        continue
 
                 if sub_matched:
                     da_ngoi.append(sub_name)
