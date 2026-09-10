@@ -125,3 +125,31 @@ def test_khong_bat_nham_o_game_khac():
     ok, buf = cv2.imencode(".png", nen)
     loc, diem = _match_template_cv(buf.tobytes(), str(ASSETS / "o_tldl_1264.png"))
     assert loc is None, f"bắt nhầm trên nền trơn (điểm {diem:.3f})"
+
+
+def test_duong_dan_thu_muc_mau_dung_ba_cap():
+    """Bản cũ dùng hai cấp parent -> trỏ vào `backend/controllers/data/templates`
+    vốn không tồn tại. Ảnh mẫu CHƯA BAO GIỜ được đọc, và mọi lần khớp trả 0.00
+    vì thiếu file — nguyên nhân gốc của dòng log lặp hai phút.
+
+    Kiểm bằng chính phép tính đường dẫn, không kiểm chuỗi ký tự.
+    """
+    lobby = BE / "controllers" / "auto_flow_controller" / "lobby.py"
+    goc = lobby.resolve().parent.parent.parent
+    assert goc.name == "backend", f"ba cấp parent phải ra backend, ra {goc}"
+    assert (goc / "assets" / "templates").is_dir()
+    # và hai cấp thì KHÔNG ra được — khoá lại để không ai rút bớt
+    assert not (lobby.resolve().parent.parent / "data" / "templates").exists()
+
+    src = lobby.read_text(encoding="utf-8")
+    code = "\n".join(d for d in src.splitlines() if not d.strip().startswith("#"))
+    assert "parent.parent.parent" in code
+    assert 'Path(__file__).resolve().parent.parent / "data"' not in code
+
+
+def test_moi_anh_mau_deu_doc_duoc_that():
+    """Có file mà cv2 không đọc nổi cũng ra 0.00 — kiểm luôn."""
+    for f in sorted(ASSETS.glob("*.png")):
+        img = cv2.imread(str(f), cv2.IMREAD_COLOR)
+        assert img is not None, f"cv2 không đọc được {f.name}"
+        assert img.shape[0] >= 10 and img.shape[1] >= 10, f"{f.name} quá nhỏ"

@@ -397,8 +397,17 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
     #
     # Nay đọc từ `backend/assets/templates/` (có trong git) trước, và vẫn lùi về
     # thư mục cũ để không phá máy đang chạy.
-    _assets = Path(__file__).resolve().parent.parent / "assets" / "templates"
-    _data = Path(__file__).resolve().parent.parent / "data" / "templates"
+    # BA cấp parent, không phải hai: file này ở
+    # backend/controllers/auto_flow_controller/lobby.py, nên `parent.parent` ra
+    # `backend/controllers` chứ không phải `backend`.
+    #
+    # Bản cũ dùng hai cấp -> trỏ vào `backend/controllers/data/templates` vốn
+    # không tồn tại. Ảnh mẫu CHƯA BAO GIỜ được đọc, và mọi lần khớp đều trả
+    # 0.00 vì thiếu file. Đó là nguyên nhân gốc của dòng log lặp hai phút
+    # "không nhận ra tab GAME BÀI (độ khớp cao nhất 0.00 < 0.75)".
+    _backend = Path(__file__).resolve().parent.parent.parent
+    _assets = _backend / "assets" / "templates"
+    _data = _backend / "data" / "templates"
     tpl_dir = _assets if _assets.exists() else _data
     # Ảnh mẫu: ưu tiên bản cắt từ MÀN HÌNH THẬT ở khung 1264x705, lùi về bản cũ
     # nếu thiếu file.
