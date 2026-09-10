@@ -73,14 +73,31 @@ def js_cai_dat_join():
             f" if (!window.__last_join_ts) window.__last_join_ts = 0; }}")
 
 
-# Đọc trạng thái bàn đang ngồi: đủ để biết "bàn trống" hay "có người ngoài".
+# Đọc trạng thái bàn đang ngồi.
+#
+# Tách rõ ĐỒNG ĐỘI và KHÁCH LẠ bằng chính `isPartner` của extension (khớp CHÍNH
+# XÁC theo tên nhân vật in-game), không đếm đầu người rồi suy diễn: bàn 2 người
+# có thể là "mình + đồng đội" (tốt) hoặc "mình + khách" (phải rời ngay).
 JS_DOC_BAN = """() => {
     const pls = window.__room_players || [];
     const info = window.__last_room_info;
+    const laMinh = (x) => (typeof window.__is_me === 'function') ? window.__is_me(x) : false;
+    const laDongDoi = (x) => (typeof window.__is_partner === 'function') ? window.__is_partner(x) : false;
+    const ten = (x) => (x && (x.dn || x.u)) ? String(x.dn || x.u) : '';
+    const khac = pls.filter((x) => x && !laMinh(x));
+    const dongDoi = khac.filter(laDongDoi);
+    const khach = khac.filter((x) => !laDongDoi(x));
     return {
         co_thong_tin: !!info,
         so_nguoi: pls.length,
-        co_khach_la: info ? !!info.has_stranger : false,
+        so_dong_doi: dongDoi.length,
+        so_khach: khach.length,
+        ten_dong_doi: dongDoi.map(ten).filter(Boolean),
+        ten_khach: khach.map(ten).filter(Boolean),
+        // `has_stranger` của extension đếm cả người chưa kịp nhận diện; giữ lại
+        // để đối chiếu nhưng quyết định thì dựa vào `so_khach`.
+        co_khach_la: khach.length > 0,
+        has_stranger_ext: info ? !!info.has_stranger : false,
         ban_trong: info ? !!info.is_verified_empty : false,
         rid: info ? info.rid : null,
         dang_van: !!window.__game_in_progress,

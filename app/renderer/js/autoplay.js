@@ -335,7 +335,11 @@
       const r = await App.api("/api/autoplay/ban-chung");
       if (r && r.co) {
         hop.style.display = "";
-        chu.textContent = `Bàn chung: #${r.rid} ($${Number(r.bet).toLocaleString()}, ${r.mu} chỗ) — ${r.chu} đang giữ`;
+        // Nhiều nick giữ bàn song song được — liệt kê hết, nick nào bấm "Vào
+        // bàn" sẽ được ghép vào bàn giữ lâu nhất còn ghế.
+        chu.textContent = `Đang giữ ${r.so_ban} bàn: ` + (r.ban || [])
+          .map((b) => `#${b.rid} ($${Number(b.bet).toLocaleString()}) — ${b.chu}`)
+          .join(" | ");
       } else {
         hop.style.display = "none";
       }

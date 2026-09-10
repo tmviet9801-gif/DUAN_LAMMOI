@@ -62,7 +62,7 @@ def js_kich_hoat(vai_tro, auto_xa, dong_doi, bet, mu):
     }}"""
 
 
-def js_giu_ban(auto_xa, bet, mu, tu_danh=False, dong_doi=None):
+def js_giu_ban(auto_xa, bet, mu, tu_danh=False, dong_doi=None, roi_khi_co_khach=False):
     """JS đưa trang CHÍNH vào chế độ GIỮ BÀN sau khi phụ đã out.
 
     Chính ở lại bàn, cổng kích hoạt vẫn MỞ, auto-xả vẫn BẬT: khách lạ ngồi vào
@@ -70,6 +70,12 @@ def js_giu_ban(auto_xa, bet, mu, tu_danh=False, dong_doi=None):
     một dòng nào của luật chọn nước. Không còn đồng đội để chờ, nên xoá danh
     sách đồng đội: các lớp gác "đang chờ đồng đội -> rời bàn khi thấy khách
     lạ" không được phép nổ trong chế độ này (extension kiểm `__AUTOTOOL_GIU_BAN`).
+
+    `roi_khi_co_khach=True` (luồng TÌM BÀN): khách lạ ngồi vào là RỜI ngay để
+    đi dò bàn khác. Không có cờ này thì nick giữ bàn đứng im, khách lấp nốt
+    ghế còn lại và đồng đội KHÔNG VÀO ĐƯỢC NỮA vì bàn đã đầy — đúng lỗi
+    người dùng gặp ngày 11/09/2026. Nút TỰ ĐÁNH thì để False: bàn đó do
+    người dùng tự chọn, tự ý rời hộ là sai.
 
     `dong_doi` là danh sách tên nhân vật in-game được coi là đồng đội. Bản
     trước XOÁ TRẮNG hai danh sách này, và điều đó đã thành lỗi từ khi luật
@@ -105,6 +111,7 @@ def js_giu_ban(auto_xa, bet, mu, tu_danh=False, dong_doi=None):
         window.__AUTOTOOL_ARMED = true;
         window.__AUTOTOOL_AUTO_HUNT = false;
         window.__AUTOTOOL_GIU_BAN = true;
+        window.__AUTOTOOL_ROI_KHI_CO_KHACH = {json.dumps(bool(roi_khi_co_khach))};
         window.__AUTOTOOL_TU_DANH = {json.dumps(bool(tu_danh))};
         window.__AUTOTOOL_MATCH_ROLE = "anchor";
         window.__is_hunt_initiator = true;

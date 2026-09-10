@@ -115,6 +115,7 @@
     G.__leave_after_round = false;
     G.__AUTOTOOL_GIU_BAN = false;
     G.__AUTOTOOL_TU_DANH = false;
+    G.__AUTOTOOL_ROI_KHI_CO_KHACH = false;
   }
 
   // Vai trò ghép bàn do backend ấn định cho từng lượt chạy.  Không suy đoán
@@ -1975,10 +1976,21 @@
                     console.log(`[AutoTool V3] [cmd 200] ĐỒNG ĐỘI ${player.dn || player.u} VỪA BƯỚC VÀO BÀN!`);
                     triggerVerifiedMatchReadyAndStart(player.dn || player.u, "cmd:200 Join");
                   } else if (G.__AUTOTOOL_GIU_BAN) {
-                    // GIỮ BÀN: khách lạ vào bàn của chính là ĐÚNG MỤC ĐÍCH.
-                    // Không huỷ, không out — chờ khách Sẵn sàng (cmd 363/202)
-                    // rồi Bắt đầu, bộ xả hiện có tự đánh như thường.
-                    console.log(`[AutoTool V3] [GIỮ BÀN] Khách ${player.dn || player.u || "?"} vào bàn -> giữ nguyên, chờ khách Sẵn sàng.`);
+                    // GIỮ BÀN. Khách lạ ngồi vào thì bàn hết chỗ và ĐỒNG ĐỘI
+                    // KHÔNG VÀO ĐƯỢC NỮA — lỗi người dùng gặp 11/09/2026.
+                    // Luồng TÌM BÀN bật cờ dưới đây để rời ngay và đi dò bàn
+                    // khác; nút TỰ ĐÁNH thì không, vì bàn đó người dùng tự chọn.
+                    if (G.__AUTOTOOL_ROI_KHI_CO_KHACH && !(G.__room_players || []).some(isPartner)) {
+                      console.warn(`[AutoTool V3] [GIỮ BÀN] Khách ${player.dn || player.u || "?"} vào bàn -> RỜI để dò bàn khác.`);
+                      window.postMessage({
+                        type: "AUTOTOOL_AUTO_LEAVING",
+                        profile_name: getProfileName(),
+                        reason: `Giữ bàn nhưng khách lạ vào: ${player.dn || player.u || "?"}`,
+                      }, "*");
+                      setTimeout(() => G.__autotool_exec_leave(), 250);
+                    } else {
+                      console.log(`[AutoTool V3] [GIỮ BÀN] Khách ${player.dn || player.u || "?"} vào bàn -> giữ nguyên chỗ ngồi, không tự làm gì.`);
+                    }
                   } else {
                     // KHÁCH LẠ VÀO BÀN -> HỦY LỆNH CHO ĐỒNG ĐỘI & TỰ ĐỘNG OUT BÀN NGAY
                     const strangerName = player.dn || player.u || "Khách";
@@ -2189,6 +2201,20 @@
                     G.__autotool_exec_start();
                   } else if (hanhDong === "san_sang") {
                     guiSanSangGiuBan("cmd:202");
+                  } else if (hanhDong !== "dang_van"
+                             && G.__AUTOTOOL_ROI_KHI_CO_KHACH
+                             && strangers.length > 0
+                             && !(p.ps || []).some(isPartner)) {
+                    // Khung 202 cũng là đường phát hiện khách (vào trước khi
+                    // mình kịp nhận cmd 200). Cùng một xử lý: rời để dò tiếp.
+                    const tenKhach = strangers.map((g) => g.dn || g.u || "Khách").join(", ");
+                    console.warn(`[AutoTool V3] [GIỮ BÀN] Bàn có khách (${tenKhach}) -> RỜI để dò bàn khác.`);
+                    window.postMessage({
+                      type: "AUTOTOOL_AUTO_LEAVING",
+                      profile_name: getProfileName(),
+                      reason: `Giữ bàn nhưng có khách: ${tenKhach}`,
+                    }, "*");
+                    setTimeout(() => G.__autotool_exec_leave(), 250);
                   } else {
                     console.log("[AutoTool V3] [GIỮ BÀN] " + (hanhDong === "dang_van" ? "Ván đang chạy, bộ xả đang lo." : "Chưa có đồng đội sẵn sàng -> giữ bàn, không tự làm gì."));
                   }

@@ -102,19 +102,21 @@ def test_dung_va_dong_luot_deu_tat_giu_ban():
 
 def test_extension_khong_roi_ban_khi_dang_giu():
     src = _code_js(EXT)
-    # cmd 200: khách vào bàn
+    # cmd 200: khách vào bàn -> có nhánh riêng cho GIỮ BÀN, không rơi xuống
+    # nhánh "huỷ lệnh & out" của lúc đang gom đồng đội.
     i = src.index("VÀO BÀN -> Hủy lệnh cho đồng đội & Out bàn ngay")
-    truoc = src[i - 700:i]
+    truoc = src[max(0, i - 1800):i]
     assert "else if (G.__AUTOTOOL_GIU_BAN)" in truoc, "cmd 200 chưa gác giữ bàn"
     # cmd 202: bàn có khách lạ / full
     j = src.index("const guestSS = strangers.some(")
-    sau = src[j:j + 900]
+    sau = src[j:j + 3000]
     assert "G.__AUTOTOOL_GIU_BAN && !isSubProfile" in sau
     assert "G.__autotool_exec_start()" in sau
     k = sau.index("G.__AUTOTOOL_GIU_BAN && !isSubProfile")
-    # Nhánh này có thêm đường "mình là khách -> Sẵn sàng" (test_tu_danh.py),
-    # nên dài hơn bản đầu; vẫn phải kết bằng return trước nhánh rời bàn.
-    assert "return;" in sau[k:k + 1000], "giữ bàn thì phải thoát trước nhánh rời bàn"
+    # Nhánh này có thêm hai đường: "mình là khách -> Sẵn sàng" (test_tu_danh.py)
+    # và "khách chen vào -> rời" (test_xe_le_va_ket_noi.py), nên dài hơn bản
+    # đầu; vẫn phải kết bằng return trước nhánh rời bàn của luồng gom.
+    assert "return;" in sau[k:k + 2800], "giữ bàn thì phải thoát trước nhánh rời bàn"
 
 
 def test_extension_cac_lop_gac_dong_doi_nhuong_cho_giu_ban():

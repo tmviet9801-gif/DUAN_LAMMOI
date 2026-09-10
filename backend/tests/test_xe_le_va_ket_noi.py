@@ -147,30 +147,80 @@ def test_ban_chung_dung_lai_ham_join_chung():
 
 def test_tim_ban_giu_ban_khi_gap_ban_trong():
     code = _code_py(AF / "ban_chung.py")
-    i = code.index("async def tim_ban")
-    khoi = code[i:i + 4000]
-    assert "js_kich_hoat(" in _code_py(AF / "ban_chung.py"), "phải mở cổng trước khi dò"
-    assert "js_giu_ban(auto_xa, bet, mu)" in khoi, "ngồi được bàn trống thì phải GIỮ"
-    assert "request.app.state.ban_chung" in khoi
-    assert 'so_nguoi") or 0) <= 1 and not tt.get("co_khach_la")' in khoi, \
-        "bàn trống = một mình VÀ không có khách"
+    assert "js_kich_hoat(" in code, "phải mở cổng trước khi dò"
+    assert "_ghi_ban(request, ten, rid_that, bet, mu)" in code
+    i = code.index("async def _do_va_giu")
+    khoi = code[i:i + 2500]
+    assert "js_giu_ban(auto_xa, bet, mu," in khoi, "ngồi được bàn trống thì phải GIỮ"
+
+
+def test_ban_trong_xac_minh_theo_TEN_NHAN_VAT_khong_dem_dau_nguoi():
+    """Bàn 2 người có thể là mình + đồng đội (đúng) hoặc mình + khách (phải
+    rời). Đếm đầu người là không phân biệt được."""
+    code = _code_py(AF / "ban_chung.py")
+    i = code.index("async def _do_va_giu")
+    khoi = code[i:i + 2500]
+    assert 'tt.get("so_khach")' in khoi, "phải tách khách bằng isPartner"
+    assert "roi_khi_co_khach=True" in khoi, "giữ bàn mà khách vào thì phải rời"
+    js = (AF / "join_js.py").read_text(encoding="utf-8")
+    for truong in ("window.__is_partner", "so_khach", "ten_khach", "so_dong_doi"):
+        assert truong in js, truong
 
 
 def test_vao_ban_theo_dung_ban_chung():
     code = _code_py(AF / "ban_chung.py")
     i = code.index("async def vao_ban")
+    khoi = code[i:i + 5000]
+    assert "_chon_ban_de_vao(request, ten, chu_muon)" in khoi
+    assert "status_code=409" in khoi, "không bàn nào ghép được thì phải báo rõ"
+    assert "js_giu_ban(auto_xa, bet, mu" in khoi
+
+
+def test_vao_ban_kiem_TRUOC_va_xac_minh_SAU_bang_ten_nhan_vat():
+    """Lỗi thật 11/09/2026: khách chen vào bàn đang giữ, nick thứ hai bấm Vào
+    bàn thì bàn đã đầy nên không vào được. Phải hỏi trang của nick giữ bàn
+    TRƯỚC khi join, và sau khi join phải thấy đúng TÊN NHÂN VẬT của nick đó."""
+    code = _code_py(AF / "ban_chung.py")
+    i = code.index("async def _chon_ban_de_vao")
+    truoc = code[i:i + 2500]
+    assert "_trang_dang_mo(request, chu)" in truoc, "phải hỏi trang của nick giữ bàn"
+    assert 'tt.get("so_khach")' in truoc, "kiểm khách TRƯỚC khi join"
+    assert 'ban.get("mu")' in truoc, "bàn đã đủ người thì không ghép nữa"
+    j = code.index("async def vao_ban")
+    sau = code[j:j + 5000]
+    assert "dung_chu" in sau and "chu_cn" in sau, "xác minh theo character_name"
+    assert "_character_name(" in code
+
+
+def test_canh_ban_do_lai_khi_khach_chen_vao():
+    code = _code_py(AF / "ban_chung.py")
+    assert "async def _canh_giu_ban" in code
+    i = code.index("async def _canh_giu_ban")
     khoi = code[i:i + 3000]
-    assert "_lay_ban_chung(request)" in khoi
-    assert "status_code=409" in khoi, "chưa có bàn chung thì phải báo rõ"
-    assert "js_giu_ban(auto_xa, bet, mu)" in khoi
+    assert 'tt.get("so_dong_doi")' in khoi, "đồng đội vào rồi thì thôi canh"
+    assert "_do_va_giu(" in khoi, "khách vào thì phải dò bàn khác"
+    assert "gom_ban_stop_epoch" in khoi, "bấm Dừng là phải thôi canh"
+    assert "HAN_CANH_BAN" in khoi, "không để task sống mãi"
+
+
+def test_extension_giu_ban_roi_khi_khach_vao():
+    src = _code_js(EXT / "content_main.js")
+    assert "G.__AUTOTOOL_ROI_KHI_CO_KHACH" in src
+    # cmd 200 (khách vừa bước vào) và cmd 202 (khung tả lại cả bàn) — cả hai
+    # đường phát hiện khách đều phải rời.
+    assert src.count("RỜI để dò bàn khác") >= 2, "thiếu một đường phát hiện khách"
+    i = src.index("RỜI để dò bàn khác")
+    khoi = src[max(0, i - 700):i + 700]
+    assert "__autotool_exec_leave()" in khoi, "khách vào bàn đang giữ thì phải rời"
+    assert "some(isPartner)" in khoi, "đồng đội đã ngồi rồi thì không rời"
 
 
 def test_ban_chung_co_han_su_dung():
     """Người giữ bàn có thể đã rời từ đời nào — bàn chung cũ phải hết hạn."""
     code = _code_py(AF / "ban_chung.py")
     assert "HAN_BAN_CHUNG" in code
-    i = code.index("def _lay_ban_chung")
-    assert "> HAN_BAN_CHUNG" in code[i:i + 500]
+    i = code.index("def _ds_ban")
+    assert "> HAN_BAN_CHUNG" in code[i:i + 700], "đọc bảng bàn là phải dọn bàn quá hạn"
 
 
 # ===================== 4. Đo lượt đi trước =====================
@@ -203,6 +253,8 @@ class _FakeSession:
         self.page = page
         self.room_id = 5
         self.log = ""
+        self.state = "ready"
+        self.browser_ctx = None
 
 
 class _FakePage:
@@ -220,7 +272,8 @@ def phien(client):
     man = client.app.state.manager
     assert man is not None
     man.sessions = {"s1": _FakeSession("Account 01", "s1", trang)}
-    client.app.state.ban_chung = None
+    client.app.state.ban_dang_giu = {}
+    client.app.state.canh_ban_tasks = {}
     return trang
 
 
@@ -252,28 +305,74 @@ def test_tim_ban_chan_tham_so_vo_nghia(client, phien):
     assert r.status_code == 400 and "không có trong game" in r.json()["detail"]
 
 
-def test_tim_ban_doi_chrome_dang_mo(client, phien):
-    r = client.post("/api/autoplay/tim-ban", json={"profile_name": "Khong Ton Tai"})
-    assert r.status_code == 400 and "chưa mở Chrome" in r.json()["detail"]
+def test_tim_ban_TU_MO_chrome_khong_bat_nguoi_dung_mo_tay():
+    """Người dùng báo lỗi thật 11/09/2026: bấm Tìm bàn khi Chrome chưa mở thì
+    tool từ chối. Phải dùng lại nguyên luồng của gom bàn: tự mở Chrome, nạp
+    extension, dẹp popup rồi điều hướng vào sảnh Đếm Lá."""
+    code = _code_py(AF / "ban_chung.py")
+    i = code.index("async def _chuan_bi")
+    khoi = code[i:i + 2500]
+    assert "adapter._page(ten)" in khoi, "phải MỞ Chrome, không chỉ peek"
+    assert "load_extension_scripts()" in khoi, "thiếu script thì hàm join trả no_socket"
+    assert "_ensure_in_tldl_lobby_util(" in khoi, "phải dẹp popup + vào sảnh Đếm Lá"
+    i2 = code.index("async def _chuan_bi")
+    assert "chưa mở Chrome" not in code[i2:i2 + 2500]
+
+    assert "Không mở được Chrome" in code, "mở không được thì phải báo rõ, không treo"
 
 
 def test_xem_va_xoa_ban_chung(client, phien):
     import time
-    client.app.state.ban_chung = {"rid": 2, "bet": 100, "mu": 2,
-                                  "chu": "Account 01", "luc": time.time()}
+    client.app.state.ban_dang_giu = {
+        "Account 01": {"rid": 2, "bet": 100, "mu": 2, "chu_cn": "nick1", "luc": time.time()},
+    }
     r = client.get("/api/autoplay/ban-chung").json()
-    assert r["co"] is True and r["rid"] == 2 and r["chu"] == "Account 01"
+    assert r["co"] is True and r["so_ban"] == 1
+    assert r["ban"][0]["rid"] == 2 and r["ban"][0]["chu"] == "Account 01"
 
     assert client.post("/api/autoplay/ban-chung/xoa", json={}).status_code == 200
     assert client.get("/api/autoplay/ban-chung").json()["co"] is False
 
 
+def test_nhieu_nick_giu_ban_song_song(client, phien):
+    """Người dùng chốt 11/09/2026: 2-3 nick cùng bấm TÌM BÀN, mỗi nick giữ một
+    bàn riêng; nick khác bấm VÀO BÀN thì ghép vào MỘT trong số đó."""
+    import time
+    now = time.time()
+    client.app.state.ban_dang_giu = {
+        "Account 01": {"rid": 2, "bet": 100, "mu": 2, "chu_cn": "nick1", "luc": now - 5},
+        "Account 02": {"rid": 4, "bet": 500, "mu": 2, "chu_cn": "nick2", "luc": now},
+    }
+    r = client.get("/api/autoplay/ban-chung").json()
+    assert r["so_ban"] == 2
+    # Xếp theo thứ tự giữ: bàn giữ lâu nhất đứng trước, đó cũng là bàn được ghép trước.
+    assert [b["chu"] for b in r["ban"]] == ["Account 01", "Account 02"]
+
+    # Xoá đích danh một bàn, bàn còn lại phải nguyên.
+    assert client.post("/api/autoplay/ban-chung/xoa",
+                       json={"profile_name": "Account 01"}).status_code == 200
+    r2 = client.get("/api/autoplay/ban-chung").json()
+    assert r2["so_ban"] == 1 and r2["ban"][0]["chu"] == "Account 02"
+
+
+def test_vao_ban_bao_ro_khi_moi_ban_deu_ket(client, phien):
+    """Chrome của nick giữ bàn đã đóng -> phải nói rõ vì sao, không im lặng."""
+    import time
+    client.app.state.ban_dang_giu = {
+        "Account 09": {"rid": 2, "bet": 100, "mu": 2, "chu_cn": "nick9", "luc": time.time()},
+    }
+    r = client.post("/api/autoplay/vao-ban", json={"profile_name": "Account 01"})
+    assert r.status_code == 409
+    assert "Chrome đã đóng" in r.json()["detail"]
+
+
 def test_vao_ban_tu_choi_chinh_nick_dang_giu(client, phien):
     import time
-    client.app.state.ban_chung = {"rid": 2, "bet": 100, "mu": 2,
-                                  "chu": "Account 01", "luc": time.time()}
+    client.app.state.ban_dang_giu = {
+        "Account 01": {"rid": 2, "bet": 100, "mu": 2, "chu_cn": "nick1", "luc": time.time()},
+    }
     r = client.post("/api/autoplay/vao-ban", json={"profile_name": "Account 01"})
-    assert r.status_code == 400 and "đang giữ bàn" in r.json()["detail"]
+    assert r.status_code == 409 and "đang giữ bàn" in r.json()["detail"]
 
 
 # ===================== 6. Giao diện =====================
