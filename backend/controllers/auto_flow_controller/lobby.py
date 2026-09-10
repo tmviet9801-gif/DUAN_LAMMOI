@@ -242,12 +242,21 @@ def _match_template_cv(screenshot_bytes, template_path, threshold=0.75):
     try:
         import cv2
         import numpy as np
+        # Ba nguyên nhân hỏng khác hẳn nhau mà trước đây đều báo "0.00": thiếu
+        # file mẫu, không giải mã được ảnh, và khớp kém thật. Không phân biệt
+        # được thì đọc log xong vẫn không biết phải sửa gì.
         if not os.path.exists(template_path):
+            log.warning("_match_template_cv: THIẾU FILE MẪU %s", template_path)
             return None, 0.0
         nparr = np.frombuffer(screenshot_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         tpl = cv2.imread(template_path, cv2.IMREAD_COLOR)
-        if img is None or tpl is None:
+        if img is None:
+            log.warning("_match_template_cv: KHÔNG GIẢI MÃ ĐƯỢC ảnh chụp (%d byte)",
+                        len(screenshot_bytes or b""))
+            return None, 0.0
+        if tpl is None:
+            log.warning("_match_template_cv: KHÔNG ĐỌC ĐƯỢC file mẫu %s", template_path)
             return None, 0.0
 
         th, tw = tpl.shape[:2]
@@ -255,7 +264,11 @@ def _match_template_cv(screenshot_bytes, template_path, threshold=0.75):
         best_loc = None
         best_scale = 1.0
 
-        for scale in np.linspace(0.7, 1.3, 13):
+        # Dải tỉ lệ RỘNG. `cv2.matchTemplate` không bất biến theo tỉ lệ, mà kích
+        # thước cửa sổ thì người dùng đổi được (800x600 -> 1280x800 -> có thêm
+        # tỉ lệ hiển thị). Ảnh mẫu cắt ở khung 1264 rộng: cửa sổ 800 cần ~0.63,
+        # cửa sổ 1920 cần ~1.52 — dải 0.7–1.3 cũ không phủ nổi cả hai.
+        for scale in np.linspace(0.4, 2.0, 33):
             nw, nh = int(tw * scale), int(th * scale)
             if nw >= img.shape[1] or nh >= img.shape[0] or nw < 10 or nh < 10:
                 continue
@@ -271,8 +284,10 @@ def _match_template_cv(screenshot_bytes, template_path, threshold=0.75):
             nw, nh = int(tw * best_scale), int(th * best_scale)
             cx = best_loc[0] + nw // 2
             cy = best_loc[1] + nh // 2
+            log.info("_match_template_cv: %s khớp %.3f ở tỉ lệ %.2f -> (%d, %d)",
+                     os.path.basename(template_path), best_val, best_scale, cx, cy)
             return (cx, cy), float(best_val)
-        return None, float(best_val)
+        return None, float(max(0.0, best_val))
     except Exception as e:
         log.warning("_match_template_cv error: %s", e)
         return None, 0.0
@@ -373,10 +388,39 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
 
     log.info("%s chưa ở sảnh Tiến Lên Đếm Lá -> Kích hoạt điều hướng thông minh (OpenCV Template Matching)...", name)
 
-    tpl_dir = Path(__file__).resolve().parent.parent / "data" / "templates"
-    tpl_close = str(tpl_dir / "btn_close_popup.png")
-    tpl_gb = str(tpl_dir / "btn_game_bai.png")
-    tpl_tldl = str(tpl_dir / "btn_tldl_icon.png")
+    # Ảnh mẫu là TÀI SẢN CỦA MÃ NGUỒN, không phải dữ liệu người dùng.
+    #
+    # Trước đây chúng nằm trong `backend/data/templates/` — mà `backend/data/`
+    # bị gitignore (nơi đó giữ thông tin đăng nhập thật). Hệ quả: chưa một ảnh
+    # mẫu nào từng được commit, nên máy cài mới hoặc bản build không có file
+    # nào và đường OpenCV báo "thiếu file mẫu" ngay từ đầu.
+    #
+    # Nay đọc từ `backend/assets/templates/` (có trong git) trước, và vẫn lùi về
+    # thư mục cũ để không phá máy đang chạy.
+    _assets = Path(__file__).resolve().parent.parent / "assets" / "templates"
+    _data = Path(__file__).resolve().parent.parent / "data" / "templates"
+    tpl_dir = _assets if _assets.exists() else _data
+    # Ảnh mẫu: ưu tiên bản cắt từ MÀN HÌNH THẬT ở khung 1264x705, lùi về bản cũ
+    # nếu thiếu file.
+    #
+    # ĐO ĐƯỢC trên profile đang chạy (chụp thật rồi khớp lại):
+    #   ô Tiến Lên Đếm Lá : mẫu cũ 0.447  -> mẫu mới 1.000 tại (361, 267)
+    #   tab Game Bài      : mẫu cũ 0.477  -> mẫu mới 1.000 tại (540, 152)
+    #   nút X cảnh báo    : mẫu cũ 0.761  -> mẫu mới 1.000 tại (1076, 128)
+    # Ngưỡng là 0.75, nên hai mẫu đầu TRƯỢT SẠCH — đúng dòng log
+    # "không nhận ra tab GAME BÀI (độ khớp cao nhất 0.00 < 0.75)". Đường OpenCV
+    # chưa bao giờ chạy được, không phải vì thuật toán mà vì ảnh mẫu quá cũ.
+    def _mau(ten_moi, ten_cu):
+        for thu_muc in (tpl_dir, _data):
+            for ten in (ten_moi, ten_cu):
+                f = thu_muc / ten
+                if f.exists():
+                    return str(f)
+        return str(tpl_dir / ten_moi)
+
+    tpl_close = _mau("x_canhbao_1264.png", "btn_close_popup.png")
+    tpl_gb = _mau("tab_gamebai_1264.png", "btn_game_bai.png")
+    tpl_tldl = _mau("o_tldl_1264.png", "btn_tldl_icon.png")
 
     # 0. Kiểm tra nếu đang ở trong bàn chơi -> PHẢI rời bàn trước khi thao tác sảnh!
     try:
