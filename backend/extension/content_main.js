@@ -1044,6 +1044,91 @@
    * Đây KHÔNG phải toạ độ đoán: nó lấy từ chính node cần bấm, nên đúng ở mọi
    * kích thước cửa sổ và mọi lần game đổi bố cục.
    */
+  /** Vị trí node quy về tỉ lệ 0..1 trên canvas, hoặc null nếu ngoài khung.
+   *
+   * `viTriNodeChiTiet` trả CẢ số đo khi ngoài khung, để log nói được lệch bao
+   * nhiêu và lệch chiều nào — "ngoài khung hình?" trần không truy được gì.
+   */
+  function viTriNodeChiTiet(node) {
+    try {
+      if (!node || typeof cc === "undefined" || !cc.view) return null;
+      let cx, cy, w = 0, h = 0;
+      if (typeof node.getBoundingBoxToWorld === "function") {
+        const b = node.getBoundingBoxToWorld();
+        cx = b.x + b.width / 2;
+        cy = b.y + b.height / 2;
+        w = b.width; h = b.height;
+      } else if (typeof node.convertToWorldSpaceAR === "function") {
+        const pt = node.convertToWorldSpaceAR(cc.v2 ? cc.v2(0, 0) : { x: 0, y: 0 });
+        cx = pt.x; cy = pt.y;
+      } else {
+        return null;
+      }
+      const vs = cc.view.getVisibleSize ? cc.view.getVisibleSize() : null;
+      if (!vs || !vs.width || !vs.height) return null;
+      const nx = cx / vs.width;
+      const ny = 1 - cy / vs.height;
+      return {
+        nx: nx, ny: ny, w: w, h: h,
+        vw: vs.width, vh: vs.height,
+        trongKhung: nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1,
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** Kéo danh sách cuộn để `node` lọt vào khung nhìn. Trả true nếu có kéo.
+   *
+   * Vì sao cần: dãy card game trong màn Game Bài là một `cc.ScrollView` cuộn
+   * ngang. Cửa sổ profile hẹp (đo được 780px) thì ô "Tiến Lên Đếm Lá" nằm ngoài
+   * mép phải — `viTriNodeTrenCanvas` trả null và luồng đứng mãi ở màn Game Bài
+   * với đúng một dòng "không tính được vị trí".
+   *
+   * Đây là thao tác trên DỮ LIỆU (đặt vị trí content), không phải sự kiện chuột
+   * tổng hợp — nên nó tới được Cocos, khác với việc bấm.
+   */
+  function keoNodeVaoKhung(node) {
+    try {
+      if (!node || typeof cc === "undefined") return false;
+      // Tìm ScrollView gần nhất trong chuỗi cha.
+      let sv = null, cha = node.parent;
+      for (let i = 0; i < 12 && cha; i++, cha = cha.parent) {
+        try {
+          const c = cha.getComponent && (cha.getComponent("cc.ScrollView")
+            || (typeof cc.ScrollView !== "undefined" && cha.getComponent(cc.ScrollView)));
+          if (c) { sv = c; break; }
+        } catch (e) {}
+      }
+      if (!sv) return false;
+
+      // Đường chính thức của Cocos: cuộn tới đúng node.
+      if (typeof sv.scrollToOffset === "function" && sv.content) {
+        try {
+          const noiDung = sv.content;
+          const p = noiDung.convertToNodeSpaceAR
+            ? noiDung.convertToNodeSpaceAR(node.convertToWorldSpaceAR(
+                cc.v2 ? cc.v2(0, 0) : { x: 0, y: 0 }))
+            : null;
+          if (p) {
+            const dx = Math.max(0, p.x + noiDung.width / 2 - (sv.node.width / 2));
+            // Thời lượng 0 = đặt tức thời. Có thời lượng thì Cocos chạy
+            // tween và phép đo ngay sau đó vẫn ra vị trí cũ.
+            sv.scrollToOffset(cc.v2 ? cc.v2(dx, 0) : { x: dx, y: 0 }, 0);
+            // Đặt thẳng vị trí content làm đường thứ hai: một số bản Cocos chỉ
+            // áp dụng offset ở khung hình kế tiếp.
+            try { noiDung.x = -dx; } catch (e) {}
+            console.log(`[AutoTool V3] Kéo danh sách ${Math.round(dx)}px để lộ ô cần bấm.`);
+            return true;
+          }
+        } catch (e) {}
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function viTriNodeTrenCanvas(node) {
     try {
       if (!node || typeof cc === "undefined" || !cc.view) return null;
@@ -1284,8 +1369,22 @@
       if (!tim) return { ok: false, loi: "mục không biết: " + muc };
       const node = tim();
       if (!node) return { ok: false, loi: "không thấy mục đang hiển thị" };
-      const vt = viTriNodeTrenCanvas(node);
-      if (!vt) return { ok: false, loi: "không tính được vị trí (ngoài khung hình?)" };
+      let vt = viTriNodeTrenCanvas(node);
+      if (!vt) {
+        // Thử KÉO danh sách để ô lọt vào khung rồi đo lại. Dãy card game là
+        // một cc.ScrollView cuộn ngang; cửa sổ hẹp thì ô Đếm Lá nằm ngoài mép
+        // phải và không bao giờ bấm được.
+        if (keoNodeVaoKhung(node)) vt = viTriNodeTrenCanvas(node);
+      }
+      if (!vt) {
+        const ct = viTriNodeChiTiet(node);
+        const so = ct
+          ? ` nx=${ct.nx.toFixed(2)} ny=${ct.ny.toFixed(2)} cỡ=${Math.round(ct.w)}x${Math.round(ct.h)} khung=${Math.round(ct.vw)}x${Math.round(ct.vh)}`
+          : " (không đọc được số đo)";
+        return { ok: false,
+                 loi: `ô nằm ngoài khung nhìn, kéo vào không được —${so}`,
+                 node: node.name || "", sprite: tenSprite(node) };
+      }
       const de = deLenSanhKhac(vt.nx, vt.ny);
       if (de) return { ok: false, loi: 'điểm bấm nằm trong ô "' + de + '"' };
       return { ok: true, nx: vt.nx, ny: vt.ny,
@@ -1523,7 +1622,17 @@
             thay = `${node.name || "?"} (chữ "${text}")`;
             return;
           }
-          if ((/^(popup|dialog|quangcao|banner|announce|notice)/.test(name)
+          // `banner` ĐÃ BỎ khỏi danh sách khớp theo tên.
+          //
+          // Đo trên máy người dùng: cả Account 01 (KHÔNG có popup nào) lẫn
+          // Account 02 (có popup cảnh báo thật) đều báo `Banner 759x450` —
+          // đó là banner quảng cáo của màn Game Bài, luôn hiện, không chặn
+          // thao tác. Nó làm `isAlreadyInTLDLLobby()` luôn false nên profile
+          // không bao giờ được coi là sẵn sàng.
+          //
+          // Popup cảnh báo lừa đảo thật vẫn bắt được bằng CHỮ ở nhánh trên
+          // ("CẢNH BÁO LỪA ĐẢO" / "BỎ QUA"), nên bỏ `banner` không mất gì.
+          if ((/^(popup|dialog|quangcao|announce|notice)/.test(name)
                || name.includes("popup") || name.includes("dialog"))
               && coNoiDung(node)) {
             let co = "";
