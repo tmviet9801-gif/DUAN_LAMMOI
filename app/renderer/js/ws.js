@@ -11,6 +11,17 @@
     ws.onopen = () => App.setBackend(true);
     ws.onmessage = (e) => {
       const ev = JSON.parse(e.data);
+
+      // License chết giữa chừng (hết hạn / bị thu hồi / tạm treo): backend đã
+      // dừng auto flow và đóng trình duyệt, giao diện dựng lại màn hình khoá ngay
+      // thay vì đợi người dùng bấm sang tab khác mới biết.
+      if (ev.type === "license_invalid") {
+        if (App.toast) App.toast(ev.message || "License không còn hiệu lực", "error");
+        if (App.licenseRefresh) App.licenseRefresh();
+        if (App.renderProfilesTable) App.renderProfilesTable();
+        return;
+      }
+
       if (ev.type === "browser_installing") {
         const pct = ev.percent || 0;
         $("installModal").classList.remove("hidden");

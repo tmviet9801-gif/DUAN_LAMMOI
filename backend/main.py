@@ -1,5 +1,6 @@
 """Entry point FastAPI: tạo app, lifespan khởi tạo manager/hub, mount routers."""
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 import sys
@@ -59,8 +60,56 @@ async def _browser_watchdog(manager: "BrowserManager"):
             pass
 
 
-async def _license_watchdog():
-    """Định kỳ hỏi máy chủ license xem key còn hiệu lực (thu hồi/tạm treo) không.
+# Bao lâu soát lại trạng thái license một lần (giây). Chỉ đọc file nên rất rẻ,
+# nhờ đó license hết hạn hoặc bị khoá được phát hiện trong vòng một phút.
+LICENSE_LOCAL_CHECK = 60
+
+
+async def _khoa_app_vi_license(app, trang_thai: dict):
+    """License chết trong lúc app đang chạy — dừng mọi thứ đang dùng nó.
+
+    Kiểm tra lúc mở tab / lúc bấm chạy là chưa đủ: máy đã mở sẵn 10 tab và auto
+    flow đang chạy thì thu hồi license không chạm được tới nó, khách cứ để app
+    mở là dùng tiếp vô thời hạn.
+    """
+    ly_do = trang_thai.get("reason") or "invalid"
+    thong_bao = trang_thai.get("message") or "License không còn hiệu lực"
+    log.warning("License: %s — đang dừng auto flow và đóng trình duyệt", thong_bao)
+
+    # 1. Dừng auto flow trước, để nó không mở lại tab vừa bị đóng.
+    try:
+        auto = getattr(app.state, "auto_flow", None)
+        if auto and auto.get("flow"):
+            auto["flow"].stop()
+            log.info("License: đã dừng auto flow")
+    except Exception:
+        log.exception("License: dừng auto flow thất bại")
+
+    # 2. Đóng trình duyệt (close_all flush cookie nên khách không mất đăng nhập).
+    try:
+        manager = getattr(app.state, "manager", None)
+        if manager:
+            await manager.close_all()
+            log.info("License: đã đóng toàn bộ phiên trình duyệt")
+    except Exception:
+        log.exception("License: đóng trình duyệt thất bại")
+
+    # 3. Báo giao diện dựng lại màn hình khoá ngay, khỏi đợi người dùng bấm gì.
+    try:
+        events = getattr(app.state, "events", None)
+        if events:
+            events.emit("license_invalid", reason=ly_do, message=thong_bao)
+    except Exception:
+        log.exception("License: gửi sự kiện lên giao diện thất bại")
+
+
+async def _license_watchdog(app):
+    """Canh license trong suốt phiên làm việc.
+
+    Hai nhịp khác nhau:
+      - mỗi phút   : đọc lại license.json (rẻ) -> bắt được hết hạn theo đồng hồ
+                     và kết quả thu hồi mà lần hỏi máy chủ trước đã ghi xuống.
+      - mỗi vài giờ: hỏi máy chủ -> bắt được việc thu hồi mới xảy ra.
 
     Chạy ở task nền chứ không nhét vào license.status(): status() là hàm đồng bộ
     nằm trên đường đi nóng (mở tab / mở trình duyệt), gọi HTTP ở đó sẽ chặn
@@ -68,18 +117,36 @@ async def _license_watchdog():
     """
     import license as lic
 
-    if not lic.server_enabled():
-        log.info("License: chưa cấu hình LICENSE_SERVER_URL, bỏ qua kiểm tra online")
-        return
+    co_may_chu = lic.server_enabled()
+    if not co_may_chu:
+        log.info("License: chưa cấu hình LICENSE_SERVER_URL, chỉ soát hạn dùng tại chỗ")
+
+    da_khoa = False
+    lan_hoi_gan_nhat = 0.0
 
     while True:
         try:
-            result = await lic.check_online()
-            if result.get("ok") and result.get("verdict") != "valid":
-                log.warning("License: máy chủ từ chối key (%s)", result.get("verdict"))
+            # Tới hạn thì hỏi máy chủ; kết quả được ghi vào license.json.
+            if co_may_chu and (time.monotonic() - lan_hoi_gan_nhat) >= lic.CHECK_INTERVAL:
+                lan_hoi_gan_nhat = time.monotonic()
+                ket_qua = await lic.check_online()
+                if ket_qua.get("ok") and ket_qua.get("verdict") != "valid":
+                    log.warning("License: máy chủ từ chối key (%s)", ket_qua.get("verdict"))
+
+            trang_thai = lic.status()
+            con_hieu_luc = bool(trang_thai.get("valid"))
+
+            if not con_hieu_luc and not da_khoa and trang_thai.get("activated"):
+                await _khoa_app_vi_license(app, trang_thai)
+                da_khoa = True
+            elif con_hieu_luc and da_khoa:
+                # Khách nhập key mới -> cho dùng lại, không bắt khởi động lại app.
+                log.info("License: đã hợp lệ trở lại")
+                da_khoa = False
         except Exception:
             log.exception("license watchdog failed")
-        await asyncio.sleep(lic.CHECK_INTERVAL)
+
+        await asyncio.sleep(LICENSE_LOCAL_CHECK)
 
 
 def create_app() -> FastAPI:
@@ -151,7 +218,7 @@ def create_app() -> FastAPI:
             log.exception("reap orphan chrome failed")
 
         watchdog = asyncio.create_task(_browser_watchdog(manager))
-        lic_watchdog = asyncio.create_task(_license_watchdog())
+        lic_watchdog = asyncio.create_task(_license_watchdog(app))
         log.info("Backend ready (manager + hub + game_sim + ext_hub v3 initialized)")
         try:
             yield

@@ -74,8 +74,10 @@ LICENSE_SERVER_URL = "https://license-admin.baccarat-license-server.workers.dev"
 # kiểm tra lần trước, trong tối đa từng này ngày. Quá hạn đó mới khoá.
 LICENSE_OFFLINE_GRACE_DAYS = 7
 
-# Khoảng cách giữa hai lần tự kiểm tra nền (giây).
-LICENSE_CHECK_INTERVAL = 6 * 3600
+# Khoảng cách giữa hai lần hỏi máy chủ (giây). Đây chính là độ trễ tối đa của
+# việc thu hồi: bấm thu hồi trên portal thì chậm nhất từng này giây app mới biết.
+# Riêng hạn dùng thì app tự soát mỗi phút, không phụ thuộc con số này.
+LICENSE_CHECK_INTERVAL = 3600
 
 
 def data_dir() -> Path:
