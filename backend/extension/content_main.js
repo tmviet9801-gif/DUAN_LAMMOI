@@ -942,7 +942,14 @@
             const isCloseBtn =
               /^(btn[_-]?)?(close|dong|x|exit|cancel|huy|skip)([_-]?(btn|button))?$/i.test(name) ||
               /^(popup|dialog|banner)[_-]?(close|dong|x)$/i.test(name) ||
-              text === "ĐÓNG" || text === "BỎ QUA" || text === "CLOSE" || text === "X";
+              text === "ĐÓNG" || text === "BỎ QUA" || text === "CLOSE" || text === "X" ||
+              // Lời mời vào bàn của người lạ: LUÔN từ chối.
+              //
+              // Tool join bằng `cmd 308` theo rid, không bao giờ cần bấm CHẤP
+              // NHẬN — `__active_room_invite` chỉ là cờ điều phối nội bộ do
+              // controller đặt, không liên quan tới popup này. Nhận lời mời
+              // nghĩa là ngồi vào bàn của khách, sai hẳn luồng gom bàn.
+              text === "TỪ CHỐI HẾT";
 
             // isNodeVisible = activeInHierarchy: Cocos tắt popup bằng cách hạ cờ
             // active của node CHA, nên kiểm `node.active` của chính nút đóng sẽ

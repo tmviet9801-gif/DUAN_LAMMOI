@@ -421,6 +421,7 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
     tpl_close = _mau("x_canhbao_1264.png", "btn_close_popup.png")
     tpl_gb = _mau("tab_gamebai_1264.png", "btn_game_bai.png")
     tpl_tldl = _mau("o_tldl_1264.png", "btn_tldl_icon.png")
+    tpl_tuchoi = _mau("tu_choi_het_1264.png", "tu_choi_het_1264.png")
 
     # 0. Kiểm tra nếu đang ở trong bàn chơi -> PHẢI rời bàn trước khi thao tác sảnh!
     try:
@@ -465,7 +466,31 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
     except Exception as e:
         log.warning("%s engine Cocos-native điều hướng sảnh lỗi (fallback OpenCV): %s", name, e)
 
+    async def _tu_choi_moi(anh=None):
+        """Từ chối MỌI lời mời vào bàn. Trả True nếu vừa bấm.
+
+        Tool join bằng `cmd 308` theo rid, không bao giờ cần nhận lời mời. Bấm
+        CHẤP NHẬN là ngồi vào bàn của khách — sai hẳn luồng gom bàn, và mức
+        cược trong lời mời cũng thường khác mức đang cấu hình.
+        """
+        try:
+            anh = anh or await p.screenshot(type="png")
+            loc, diem = _match_template_cv(anh, tpl_tuchoi, threshold=0.75)
+            if loc:
+                log.info("%s: có lời mời vào bàn -> bấm TỪ CHỐI HẾT tại %s (khớp %.2f)",
+                         name, loc, diem)
+                await p.mouse.click(loc[0], loc[1])
+                await asyncio.sleep(0.5)
+                return True
+        except Exception as e:
+            log.warning("%s: lỗi khi từ chối lời mời: %s", name, e)
+        return False
+
     try:
+        # Bước 0: Từ chối lời mời vào bàn (nếu có). Phải làm TRƯỚC nút X: đóng
+        # bằng X thì lời mời còn nguyên và popup hiện lại ở bước sau.
+        await _tu_choi_moi()
+
         # Bước 1: Quét đóng popup nếu có (Chỉ đóng khi thực sự phát hiện nút X, tuyệt đối không click mù)
         shot1 = await p.screenshot(type="png")
         loc_close, score_close = _match_template_cv(shot1, tpl_close, threshold=0.75)
@@ -492,8 +517,11 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
                         "-> DỪNG, không click mò. Sẽ thử lại lượt sau.", name, score_gb)
             return False
 
-        # Bước 3: Đóng popup phát sinh (nếu có)
+        # Bước 3: Đóng popup phát sinh (nếu có). Lời mời có thể tới bất cứ lúc
+        # nào nên phải xét lại ở đây, không chỉ một lần ở đầu.
         shot3 = await p.screenshot(type="png")
+        if await _tu_choi_moi(shot3):
+            shot3 = await p.screenshot(type="png")
         loc_close2, _ = _match_template_cv(shot3, tpl_close, threshold=0.75)
         if loc_close2:
             await p.mouse.click(loc_close2[0], loc_close2[1])
