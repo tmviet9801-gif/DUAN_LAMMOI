@@ -392,6 +392,13 @@ async def _dung_auto(request: Request, body, ep_toan_bo=False):
             s.log = "Đã dừng tự động"
             stopped_profiles.append(acc_name)
 
+    # Dừng cũng tắt TỰ ĐÁNH trên các profile này (_clear_hunt_state đóng cùng
+    # một cổng) -> gỡ khỏi danh sách để nút trên giao diện không báo BẬT sai.
+    tap_tu_danh = getattr(request.app.state, "tu_danh_profiles", None)
+    if tap_tu_danh:
+        for _t in stopped_profiles:
+            tap_tu_danh.discard(_t)
+
     log.info("autoplay_stop: Đã dừng tức thì %d profile, không chạy thêm điều hướng/click: %s", len(stopped_profiles), stopped_profiles)
     return {
         "ok": True, 

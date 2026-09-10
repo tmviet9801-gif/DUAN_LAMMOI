@@ -37,6 +37,7 @@
 
   /** Vẽ danh sách profile sẽ chạy. Thứ tự chip = thứ tự gửi xuống backend. */
   function renderProfiles() {
+    veNutTuDanh();
     const hop = $("gcSelectedChips");
     if (!hop) return;
     const chon = profilesDaChon();
@@ -237,9 +238,100 @@
     }
   }
 
-  // Bind Buttons (chỉ còn 1 cặp nút trên Dashboard: GOM BÀN & XẢ / Dừng)
+  // ---- TỰ ĐÁNH: bật bộ xả cho 1 profile mà KHÔNG chạy gom bàn ----
+  //
+  // Người dùng tự vào bàn (có khách sẵn, hoặc ngồi chờ khách); tool tự Sẵn
+  // sàng / Bắt đầu và xả như sau ván gom bàn (chế độ GIỮ BÀN). Trạng thái
+  // BẬT/TẮT đọc từ backend, và backend đọc từ TRANG: trang tải lại là mất
+  // chế độ, nút phải trả về TẮT chứ không tin lần bấm trước.
+  if (!App.state.tuDanhOn) App.state.tuDanhOn = new Set();
+
+  function veNutTuDanh() {
+    const btn = $("btnGcTuDanh");
+    if (!btn) return;
+    const ten = App.profileDaTichDauTien ? App.profileDaTichDauTien() : "";
+    const bat = !!ten && App.state.tuDanhOn.has(ten);
+    btn.textContent = bat ? `🟢 TỰ ĐÁNH: BẬT (${ten}) — bấm để tắt` : "🤖 Tự đánh";
+    btn.classList.toggle("lime", bat);
+    btn.classList.toggle("blue", !bat);
+  }
+
+  async function docTrangThaiTuDanh() {
+    try {
+      const r = await App.api("/api/autoplay/tu-danh/status");
+      const truoc = new Set(App.state.tuDanhOn);
+      App.state.tuDanhOn = new Set(r.profiles || []);
+      for (const ten of (r.da_roi || [])) {
+        if (!truoc.has(ten)) continue;
+        setStatus(`⚠️ Tự đánh trên ${ten} đã TẮT (trang tải lại / đã Dừng / Chrome đóng). Vào bàn lại rồi bấm Tự đánh.`, "error");
+        App.toast(`Tự đánh trên ${ten} đã tắt`, "warn");
+      }
+    } catch (_) {
+      // backend chưa lên: giữ trạng thái cũ, lần đọc sau sẽ sửa
+    }
+    veNutTuDanh();
+  }
+
+  async function batTatTuDanh() {
+    // Profile tích ĐẦU TIÊN — cùng luật với "Random vào phòng". Không tích gì
+    // thì BÁO, không tự chọn thay người dùng.
+    const ten = App.profileDaTichDauTien ? App.profileDaTichDauTien() : "";
+    if (!ten) {
+      App.toast("Tích 1 profile trên bảng danh sách trước (profile tích ĐẦU TIÊN sẽ tự đánh).", "warn");
+      return;
+    }
+    const btn = $("btnGcTuDanh");
+    if (btn) btn.disabled = true;
+    try {
+      if (App.state.tuDanhOn.has(ten)) {
+        await App.api("/api/autoplay/tu-danh/tat", {
+          method: "POST",
+          body: JSON.stringify({ profile_name: ten }),
+        });
+        App.state.tuDanhOn.delete(ten);
+        setStatus(`⏹ Đã tắt Tự đánh cho ${ten}: vẫn ngồi nguyên bàn, bạn tự chơi tiếp.`);
+        App.toast(`Đã tắt Tự đánh: ${ten}`, "info");
+      } else {
+        const autoXa = $("gcAutoXaBai") ? $("gcAutoXaBai").checked : true;
+        const tuBatTay = $("gcAutoStartGuestSS") ? $("gcAutoStartGuestSS").checked : true;
+        const r = await App.api("/api/autoplay/tu-danh/bat", {
+          method: "POST",
+          body: JSON.stringify({ profile_name: ten, auto_xa: autoXa, auto_start_guest_ss: tuBatTay }),
+        });
+        const tenThat = r.profile || ten;
+        App.state.tuDanhOn.add(tenThat);
+        const oDau = r.trong_ban
+          ? `đang trong bàn (${r.so_nguoi} người)`
+          : "chưa vào bàn — tự vào bàn nào cũng được";
+        // Extension đã kiểm ngay bàn đang ngồi lúc bật — nói rõ nó vừa làm gì.
+        const vuaLam = {
+          san_sang: " Mình là khách: ĐÃ GỬI Sẵn sàng, chờ chủ bàn Bắt đầu.",
+          bat_dau: " Khách đã Sẵn sàng: ĐÃ Bắt đầu.",
+          dang_van: " Ván đang chạy: tool đánh từ lượt tới của mình.",
+        }[r.hanh_dong_ngay] || "";
+        setStatus(
+          `🤖 TỰ ĐÁNH BẬT cho ${tenThat} — ${oDau}.${vuaLam} Là khách: tự Sẵn sàng; là chủ bàn: khách Sẵn sàng là tự Bắt đầu; xả xong ở lại bàn.`
+          + (tuBatTay ? "" : " (Ô 'Bắt đầu nếu khách SS' đang TẮT: bạn tự bấm Sẵn sàng/Bắt đầu, tool chỉ tự đánh.)"),
+          "success",
+        );
+        App.toast(`Tự đánh BẬT: ${tenThat}`, "success");
+      }
+    } catch (e) {
+      setStatus(`❌ Tự đánh: ${e.message}`, "error");
+      App.toast("Tự đánh lỗi: " + e.message, "error");
+    } finally {
+      if (btn) btn.disabled = false;
+      veNutTuDanh();
+    }
+  }
+
+  // Bind Buttons (GOM BÀN & XẢ / Dừng / Tự đánh)
   if ($("btnGcSyncMatch")) $("btnGcSyncMatch").onclick = () => start();
   if ($("btnGcStopSync")) $("btnGcStopSync").onclick = stop;
+  if ($("btnGcTuDanh")) $("btnGcTuDanh").onclick = batTatTuDanh;
+  // Đọc trạng thái thật lúc mở app, rồi cứ 8s một lần khi đang có profile BẬT.
+  docTrangThaiTuDanh();
+  setInterval(() => { if (App.state.tuDanhOn.size) docTrangThaiTuDanh(); }, 8000);
 
   // Đổi mức cược thì ngưỡng số dư đổi theo -> vẽ lại cảnh báo.
   if ($("gcBetSelect")) {

@@ -15,12 +15,13 @@ from .lobby import (
     _is_in_tldl_lobby_util,
     _match_template_cv,
 )
-from . import matching, routes_basic, routes_debug
+from . import matching, routes_basic, routes_debug, tu_danh
 
 router = APIRouter()
 router.include_router(routes_basic.router)
 router.include_router(matching.router)
 router.include_router(routes_debug.router)
+router.include_router(tu_danh.router)
 
 __all__ = [
     "router",
@@ -40,4 +41,5 @@ __all__ = [
     "matching",
     "routes_basic",
     "routes_debug",
+    "tu_danh",
 ]

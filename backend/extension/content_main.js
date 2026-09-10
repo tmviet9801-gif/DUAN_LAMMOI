@@ -286,6 +286,7 @@
     G.__active_room_invite = null;
     G.__leave_after_round = false;
     G.__AUTOTOOL_GIU_BAN = false;
+    G.__AUTOTOOL_TU_DANH = false;
   }
 
   // Vai trò ghép bàn do backend ấn định cho từng lượt chạy.  Không suy đoán
@@ -317,28 +318,6 @@
     }
   }
 
-  // Bàn theo rid, lấy từ khung server đẩy về: cmd 305 `ri` (từng bàn) và
-  // cmd 300 `rs[]` (dự phòng). `uC` = số người đang ngồi. Controller hỏi số
-  // này TRƯỚC KHI vào bàn — bàn đang có khách thì đứng ở sảnh chờ, không
-  // "vào rồi mới nhìn": khách ngồi sẵn thường đã bấm Bắt đầu, nhảy vào là
-  // server chia bài ngay, lệnh rời không kịp (10/09/2026 16:04:27).
-  G.__ban_theo_rid = G.__ban_theo_rid || {};
-  function ghiBanTheoRid(r) {
-    const rid = Number(r && r.rid);
-    if (!(rid > 0)) return;
-    G.__ban_theo_rid[rid] = {
-      rid: rid,
-      uC: (r.uC === undefined || r.uC === null) ? null : Number(r.uC),
-      b: Number(r.b || 0),
-      Mu: Number(r.Mu || 0),
-      rn: r.rn || "",
-      ts: Date.now(),
-    };
-  }
-  G.__autotool_ban_theo_rid = function (rid) {
-    return G.__ban_theo_rid[Number(rid)] || null;
-  };
-
   // Vai trò CHỈ đọc từ giá trị do controller đặt — xem vai_tro_ban.js.
   //
   // Bản cũ đoán theo hình dạng tên profile khi thiếu vai trò: `includes("1")`
@@ -367,6 +346,77 @@
     if (G.__AUTOTOOL_MATCH_ROLE === "sub") return false;
     return !!G.__is_hunt_initiator;
   }
+
+  // ---- GIỮ BÀN / TỰ ĐÁNH: mình là chủ bàn hay khách, và phải làm gì ----
+  //
+  // Luật thuần nằm ở vai_tro_ban.js (kiểm thử bằng node với khung 202 thật).
+  // Thiếu module thì rơi về đúng hành vi GIỮ BÀN đã chạy thật: coi mình là
+  // chủ bàn, chờ khách Sẵn sàng rồi Bắt đầu.
+  function daSanSangNguoiChoi(x) {
+    const M = vaiTroApi();
+    if (M && typeof M.daSanSang === "function") return M.daSanSang(x);
+    return !!(x && (x.aRd === true || x.aRd === "true" || x.r === true || x.ss === true || x.ready === true));
+  }
+
+  function laChuBanHienTai(me, players) {
+    const M = vaiTroApi();
+    if (M && typeof M.laChuBan === "function") return M.laChuBan(me, players);
+    return true;
+  }
+
+  function quyetDinhGiuBan(me, players, khachSSNgay) {
+    const ds = Array.isArray(players) ? players : [];
+    const khach = ds.filter((x) => x && !isMe(x) && !isPartner(x));
+    const t = {
+      dangVan: !!G.__game_in_progress,
+      coKhach: khach.length > 0,
+      tuBatTay: !!G.__auto_start_guest_ss,
+      laChu: laChuBanHienTai(me, ds),
+      khachSS: !!khachSSNgay || khach.some((x) => daSanSangNguoiChoi(x)),
+      minhSS: !!me && daSanSangNguoiChoi(me),
+    };
+    const M = vaiTroApi();
+    if (M && typeof M.hanhDongGiuBan === "function") return M.hanhDongGiuBan(t);
+    if (t.dangVan) return "dang_van";
+    if (!t.coKhach || !t.tuBatTay) return "cho";
+    return t.khachSS ? "bat_dau" : "cho";
+  }
+
+  /** Mình là KHÁCH trong bàn người khác -> gửi Sẵn sàng, không gửi dồn.
+   *
+   * Khung 202 tới nhiều lần cho cùng một trạng thái bàn; chặn theo mốc thời
+   * gian để mỗi lượt chỉ một lệnh. `exec_ready` đã có lớp gác đăng xuất và
+   * lớp gác khách lạ (mở trong GIỮ BÀN), không gác lại ở đây.
+   */
+  function guiSanSangGiuBan(nguon) {
+    const luc = Date.now();
+    if (G.__giu_ban_ss_luc && luc - G.__giu_ban_ss_luc < 4000) return false;
+    G.__giu_ban_ss_luc = luc;
+    console.log(`[AutoTool V3] [GIỮ BÀN] Mình là KHÁCH trong bàn người khác -> gửi SẴN SÀNG [${nguon || ""}].`);
+    G.__autotool_exec_ready();
+    return true;
+  }
+
+  /** Kiểm NGAY bàn đang ngồi và hành động, không chờ khung mới từ server.
+   *
+   * Cần cho hai lúc không có khung 202/363 nào sắp tới: (1) người dùng bấm
+   * TỰ ĐÁNH khi đã ngồi sẵn trong bàn — chủ bàn đang chờ mình Sẵn sàng;
+   * (2) 2.5s sau khi hết ván, nếu server không phát lại 202. Trả về hành động
+   * đã chọn để backend ghi log ("san_sang" / "bat_dau" / "cho" / "dang_van").
+   */
+  G.__autotool_giu_ban_kiem_ngay = function (nguon) {
+    if (!isAutoEngaged() || !G.__AUTOTOOL_GIU_BAN || isSubMatchProfile()) return "khong_bat";
+    const ps = G.__room_players || [];
+    const hanhDong = quyetDinhGiuBan(ps.find(isMe), ps, false);
+    if (hanhDong === "bat_dau") {
+      console.log(`[AutoTool V3] [GIỮ BÀN] Khách đã Sẵn sàng -> BẮT ĐẦU [${nguon || ""}].`);
+      G.__is_matched_locked = true;
+      G.__autotool_exec_start();
+    } else if (hanhDong === "san_sang") {
+      guiSanSangGiuBan(nguon || "kiem_ngay");
+    }
+    return hanhDong;
+  };
 
   function findBestPlay(myCards, tableCards, role, isPartnerTurn) {
     if (!myCards || !myCards.length) return null;
@@ -2224,15 +2274,6 @@
               }
             }
 
-            // cmd 305 / 300: thông tin từng bàn (uC = số người) -> ghi theo rid
-            // để controller hỏi trước khi vào bàn.
-            if (p.cmd === 305 && p.ri && Number(p.ri.rid) > 0) {
-              ghiBanTheoRid(p.ri);
-            }
-            if (p.cmd === 300 && Array.isArray(p.rs)) {
-              for (const r of p.rs) ghiBanTheoRid(r);
-            }
-
             // (cleanUid, isMe, isPartner, triggerVerifiedMatchReadyAndStart đã được khai báo ở top-level scope)
             // cmd 200: Người chơi mới bước vào bàn (t: 1) hoặc rời bàn (t: 2)
             if (p.cmd === 200 && p.p) {
@@ -2457,18 +2498,25 @@
                 triggerVerifiedMatchReadyAndStart(partner.dn || partner.u, "cmd:202 RoomPlayers");
               } else if (hasStrangerOrFull) {
                 // 2. BÀN CÓ KHÁCH LẠ HOẶC BÀN FULL
-                const guestSS = strangers.some((x) => x && (x.aRd === true || x.aRd === "true" || x.ss === true || x.ready === true));
+                // Khung 202 báo Sẵn sàng bằng `r`, khung 363 bằng `aRd` — đọc
+                // qua một chỗ (vai_tro_ban.js) cho khỏi lệch.
+                const guestSS = strangers.some((x) => daSanSangNguoiChoi(x));
 
-                // GIỮ BÀN (sau khi phụ đã out): khách lạ ngồi vào chính là mục
-                // đích. KHÔNG rời, không "chờ 3s rồi out". Khách Sẵn sàng ->
-                // Bắt đầu (nếu bật) và bộ xả hiện có tự đánh, không sửa gì thêm.
+                // GIỮ BÀN (sau khi phụ đã out) / TỰ ĐÁNH (người dùng tự vào bàn):
+                // khách lạ ngồi cùng chính là mục đích. KHÔNG rời, không "chờ 3s
+                // rồi out". Mình là CHỦ: khách Sẵn sàng -> Bắt đầu (nếu bật).
+                // Mình là KHÁCH (tự vào bàn đã có chủ): gửi Sẵn sàng, chủ bàn
+                // Bắt đầu. Ván chạy thì bộ xả hiện có tự đánh, không sửa gì thêm.
                 if (G.__AUTOTOOL_GIU_BAN && !isSubProfile) {
-                  if (guestSS && G.__auto_start_guest_ss && !G.__game_in_progress) {
-                    console.log("[AutoTool V3] [GIỮ BÀN] Khách lạ đã Sẵn sàng -> BẮT ĐẦU, xả như thường.");
+                  const hanhDong = quyetDinhGiuBan(me, p.ps || [], guestSS);
+                  if (hanhDong === "bat_dau") {
+                    console.log("[AutoTool V3] [GIỮ BÀN] Khách đã Sẵn sàng -> BẮT ĐẦU, xả như thường.");
                     G.__is_matched_locked = true;
                     G.__autotool_exec_start();
+                  } else if (hanhDong === "san_sang") {
+                    guiSanSangGiuBan("cmd:202");
                   } else {
-                    console.log("[AutoTool V3] [GIỮ BÀN] Có khách lạ trong bàn, chờ khách Sẵn sàng.");
+                    console.log("[AutoTool V3] [GIỮ BÀN] " + (hanhDong === "dang_van" ? "Ván đang chạy, bộ xả đang lo." : "Có khách lạ trong bàn, chờ khách Sẵn sàng."));
                   }
                   return;
                 }
@@ -2818,6 +2866,11 @@
               G.__my_cards = [];
               G.__last_table_cards = null;
               G.__last_table_player = null;
+              // Hết ván là cờ Sẵn sàng của mọi người đều hết hạn. Giữ lại thì
+              // ván sau GIỮ BÀN tưởng mình (khách) đã SS rồi mà không gửi lại.
+              for (const nc of (G.__room_players || [])) {
+                if (nc && typeof nc === "object") { nc.r = false; nc.aRd = false; }
+              }
               // Chốt trước khi nhánh dưới xoá cờ: hai nhánh cùng hẹn lệnh rời
               // (400ms cho lệnh hoãn, 700ms cho nick phụ) là hai lần rời chồng
               // nhau, mỗi lần lại phát ba cú click mù lên canvas.
@@ -2885,6 +2938,17 @@
                     }
                   }, 2700);
                 }
+              }
+
+              // GIỮ BÀN / TỰ ĐÁNH mà mình là KHÁCH trong bàn người khác: hết ván
+              // chủ bàn chờ mình Sẵn sàng lại. Mình là chủ thì không cần gì —
+              // khách SS là khung 363 tới, nhánh trên tự Bắt đầu. Chờ 2.5s cho
+              // bảng kết quả qua và khung 202 mới (nếu có) tới trước.
+              if (isAutoEngaged() && G.__AUTOTOOL_GIU_BAN && !isSubMatchProfile()) {
+                setTimeout(() => {
+                  if (!isAutoEngaged() || !G.__AUTOTOOL_GIU_BAN || G.__game_in_progress) return;
+                  G.__autotool_giu_ban_kiem_ngay("cmd:252");
+                }, 2500);
               }
 
               // VÒNG LẶP CHƠI TIẾP TỰ ĐỘNG (CONTINUOUS LOOP):

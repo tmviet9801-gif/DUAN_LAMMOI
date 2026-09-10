@@ -1,18 +1,17 @@
-"""Hai việc sau ván xả (10/09/2026):
+"""Chế độ GIỮ BÀN sau ván xả — và vì sao KHÔNG có cổng "bàn có người thì chờ".
 
-1. KHÔNG NHẢY VÀO BÀN ĐANG CÓ KHÁCH. Bàn $100 Solo chỉ có rid #2. Log
-   16:04:27: chính dò bàn #2 đúng lúc khách `chiiritroi6879` ngồi sẵn, server
-   chia bài ngay trong giây đó, lệnh rời không kịp -> chính bị kéo vào một ván
-   tiền thật với khách. Server đẩy `uC` từng bàn qua cmd 305 -> hỏi trước,
-   bàn có người thì đứng ở sảnh chờ.
+GIỮ BÀN. Sau khi phụ out, chính ở lại bàn với cổng kích hoạt MỞ và auto-xả
+BẬT: khách lạ vào và Sẵn sàng thì tự Bắt đầu, bộ xả hiện có tự đánh. Không
+đổi một dòng nào ở luật chọn nước; chỉ tắt các lớp gác "thấy khách lạ ->
+rời bàn" vốn dành cho lúc đang gom đồng đội.
 
-2. GIỮ BÀN. Sau khi phụ out, chính ở lại bàn với cổng kích hoạt MỞ và auto-xả
-   BẬT: khách lạ vào và Sẵn sàng thì tự Bắt đầu, bộ xả hiện có tự đánh. Không
-   đổi một dòng nào ở luật chọn nước; chỉ tắt các lớp gác "thấy khách lạ ->
-   rời bàn" vốn dành cho lúc đang gom đồng đội.
+KHÔNG CHỜ THEO uC. Từng thử (10/09/2026) hỏi `uC` của rid #2 qua cmd 300 rồi
+đứng ở sảnh khi uC >= 1, để khỏi nhảy vào bàn có khách ngồi sẵn. Bản bắt WS
+cho thấy `uC` của "DemLa#1" là 10-11: đó là số người CẢ PHÒNG, server tự xếp
+ghế vào bàn con ("Chống Vây"). Cổng ấy luôn đóng -> Account chính đứng ở
+sảnh mãi, không vào được bàn nào. Test dưới chốt: không được đưa lại.
 """
 import ast
-import asyncio
 import sys
 from pathlib import Path
 
@@ -20,7 +19,6 @@ BE = Path(__file__).parents[1]
 if str(BE) not in sys.path:
     sys.path.insert(0, str(BE))
 
-from controllers.auto_flow_controller import ban_trong as BT  # noqa: E402
 from controllers.auto_flow_controller import kich_hoat as KH  # noqa: E402
 
 AF = BE / "controllers" / "auto_flow_controller"
@@ -54,71 +52,23 @@ def _code_js(p: Path) -> str:
     return "\n".join(dong)
 
 
-# ===================== 1. Hỏi số người trước khi vào =====================
+# ===================== 1. Không có cổng uC =====================
 
-def test_doc_so_nguoi_khong_doan():
-    assert BT.doc_so_nguoi({"uC": 1}) == 1
-    assert BT.doc_so_nguoi({"uC": "0"}) == 0
-    assert BT.doc_so_nguoi({"uC": None}) is None
-    assert BT.doc_so_nguoi(None) is None
-    assert BT.doc_so_nguoi({}) is None
-
-
-def test_js_hoi_ban_dung_cache_moi_va_hoi_server_khi_cu():
-    js = BT.JS_SO_NGUOI_BAN
-    assert "window.__ban_theo_rid" in js
-    assert "simms.send(reqFrame)" in js, "cache cũ thì phải hỏi server"
-    assert "(b.ts || 0) >= t0" in js, "chỉ nhận khung MỚI sau lúc hỏi, không nhận số cũ"
-    assert str(BT.TUOI_MOI_MS) in js
-    assert BT.TUOI_MOI_MS <= 1500, "khách vừa ngồi là uC đổi; tin số cũ 2-3s là lại đua"
-
-
-def test_so_nguoi_trong_ban_qua_trang():
-    async def _eval(page, js, arg=None):
-        # eval_page chỉ nhận MỘT tham số -> phải gói thành object
-        assert arg == {"rid": 2, "req": "[6,x]", "cho": 700}
-        assert "a.rid, a.req, a.cho" in js
-        return {"uC": 1, "nguon": "hoi"}
-    assert asyncio.run(BT.so_nguoi_trong_ban("p", 2, "[6,x]", eval_page=_eval)) == 1
-
-
-def test_khong_doc_duoc_thi_None_khong_no():
-    async def _eval(page, js, arg=None):
-        raise RuntimeError("closed")
-    assert asyncio.run(BT.so_nguoi_trong_ban("p", 2, "[6,x]", eval_page=_eval)) is None
-    assert asyncio.run(BT.so_nguoi_trong_ban("p", None, "[6,x]")) is None
-
-
-def test_extension_ghi_uC_theo_rid_tu_cmd_305_va_300():
+def test_khong_dung_uC_lam_cong_vao_ban():
+    code = _code_py(MATCHING)
+    assert "so_nguoi_trong_ban" not in code
+    assert "__autotool_so_nguoi_ban" not in code
+    assert not (AF / "ban_trong.py").exists(), "ban_trong.py đã gỡ — uC là số người cả phòng"
     src = _code_js(EXT)
-    assert "function ghiBanTheoRid(" in src
-    assert "p.cmd === 305 && p.ri" in src
-    assert "p.cmd === 300 && Array.isArray(p.rs)" in src
-    assert "G.__autotool_ban_theo_rid = function" in src
+    assert "__ban_theo_rid" not in src
 
 
-def test_controller_hoi_truoc_roi_moi_join_va_cho_khi_co_nguoi():
+def test_chinh_van_join_ngay_moi_luot_do():
+    """Đường dò của chính: không có bước nào đứng chờ trước lệnh join."""
     code = _code_py(MATCHING)
-    i = code.index("await so_nguoi_trong_ban(first_page")
+    i = code.index('log.info("find-and-match: [%s] Account 1 (%s) tìm bàn trống')
     j = code.index("window.__autotool_leave_then_join(", i)
-    assert i < j, "phải hỏi số người TRƯỚC lệnh join của chính"
-    khoi = code[i:j]
-    assert "so_nguoi >= 1" in khoi
-    assert "continue" in khoi, "bàn có người thì bỏ lượt, không vào"
-    assert "KHÔNG vào" in khoi
-
-
-def test_controller_cai_ham_hoi_len_trang():
-    code = _code_py(MATCHING)
-    assert "window.__autotool_so_nguoi_ban = {JS_SO_NGUOI_BAN}" in code
-
-
-def test_phu_khong_bi_chan_boi_kiem_so_nguoi():
-    """Phụ vào bàn mà chính ĐANG GIỮ (uC=1). Kiểm số người chỉ dành cho lượt dò
-    của chính, tuyệt đối không nằm trong đường join của phụ."""
-    code = _code_py(MATCHING)
-    i = code.index("Gửi lệnh JOIN trực tiếp bàn")
-    assert "so_nguoi_trong_ban" not in code[i - 3000:i]
+    assert "await asyncio.sleep(2.0)" not in code[i:j]
 
 
 # ===================== 2. Chế độ GIỮ BÀN =====================
@@ -166,7 +116,9 @@ def test_extension_khong_roi_ban_khi_dang_giu():
     assert "G.__AUTOTOOL_GIU_BAN && !isSubProfile" in sau
     assert "G.__autotool_exec_start()" in sau
     k = sau.index("G.__AUTOTOOL_GIU_BAN && !isSubProfile")
-    assert "return;" in sau[k:k + 700], "giữ bàn thì phải thoát trước nhánh rời bàn"
+    # Nhánh này có thêm đường "mình là khách -> Sẵn sàng" (test_tu_danh.py),
+    # nên dài hơn bản đầu; vẫn phải kết bằng return trước nhánh rời bàn.
+    assert "return;" in sau[k:k + 1000], "giữ bàn thì phải thoát trước nhánh rời bàn"
 
 
 def test_extension_cac_lop_gac_dong_doi_nhuong_cho_giu_ban():
