@@ -50,12 +50,21 @@ class PagePool:
         sid = self._find_session(account)
         if sid:
             return self.manager.sessions[sid].page
-        ids = await self.manager.open_sessions(accounts=[account])
-        if ids:
-            s = self.manager.sessions.get(ids[0])
-            if s:
-                log.info("page_pool opened session %s for %s", ids[0], account.get("name"))
-                return s.page
+        await self.manager.open_sessions(accounts=[account])
+        # Tra lai theo CHINH account vua mo, KHONG lay ids[0].
+        #
+        # `open_sessions` tra ve MOI session dang co trong manager, khong chi
+        # cai vua mo. Lay `ids[0]` la lay session MO SOM NHAT — tuc khi mo
+        # Account 02 thi nhan ve trang cua Account 01. Hai ten profile tro vao
+        # cung mot trang, nen lenh gan vai tro `sub` cho Account 02 ghi de
+        # `anchor` tren Account 01. Buoc doc-lai vai tro trong matching.py bat
+        # duoc dung loi nay: "Account 01: can anchor, thuc te sub".
+        sid = self._find_session(account)
+        if sid:
+            log.info("page_pool opened session %s for %s", sid, account.get("name"))
+            return self.manager.sessions[sid].page
+        log.warning("page_pool: mo xong nhung khong tim thay session cua %s",
+                    account.get("name"))
         return None
 
     async def close(self, session_id: str):
