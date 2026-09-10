@@ -433,7 +433,8 @@ def test_dump_policy_avoids_blank_loss_and_sub_leaves_after_verified_round():
     assert "game_completed = False" in controller
     assert "if game_completed:" in controller
     assert "Account phụ đã rời bàn về sảnh chọn bàn" in controller
-    assert "không tự out Account phụ" in controller
+    # Hết hạn theo dõi vẫn phải ra lệnh phụ rời (có chốt giữa ván), không ngồi lì.
+    assert "vẫn ra lệnh Account phụ rời bàn" in controller
     assert "Account phụ đã xả xong -> tự rời bàn về sảnh chọn bàn" in ext_source
     assert "kill engine/timer, giữ Account chính trong phòng" in controller
     assert "window.__AUTOTOOL_AUTO_DISCARD = false;" in controller

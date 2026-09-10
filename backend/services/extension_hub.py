@@ -616,6 +616,15 @@ class ExtensionHubManager:
                         "source": profile_name,
                     }))
 
+        # 3b'. TỚI LƯỢT NHƯNG KHÔNG TỰ ĐÁNH: extension bỏ lượt vì cổng kích hoạt
+        # đóng. Ghi thẳng vào log backend — đây là dấu vết duy nhất phân biệt
+        # "còn cờ Dừng" / "mất ENGAGED" / "tắt auto-xả" khi phụ ngồi im trong bàn.
+        elif msg_type in ("TURN_SKIPPED", "AUTOTOOL_TURN_SKIPPED"):
+            reason = msg.get("reason") or "không rõ"
+            state["log"] = f"⚠️ Tới lượt nhưng KHÔNG tự đánh: {reason}"
+            log.warning("ExtensionHub V3: Profile '%s' tới lượt nhưng KHÔNG tự đánh: %s",
+                        profile_name, reason)
+
         # 3c. PROFILE TỰ RỜI BÀN (khách lạ / hết giờ / sai bàn...) -> báo realtime cho đồng đội
         elif msg_type in ("AUTO_LEAVING", "AUTOTOOL_AUTO_LEAVING"):
             reason = msg.get("reason") or "Tự rời bàn"

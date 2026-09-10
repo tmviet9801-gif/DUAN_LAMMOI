@@ -125,7 +125,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.type === "AUTOTOOL_ANCHOR_ROOM_VERIFIED_EMPTY" ||
       message.type === "AUTOTOOL_USERNAME_SYNC" ||
       message.type === "AUTO_LEAVING" ||
-      message.type === "AUTOTOOL_AUTO_LEAVING") {
+      message.type === "AUTOTOOL_AUTO_LEAVING" ||
+      message.type === "TURN_SKIPPED") {
     if (hubSocket && hubSocket.readyState === WebSocket.OPEN) {
       hubSocket.send(JSON.stringify({
         type: message.type,

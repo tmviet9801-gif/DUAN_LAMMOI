@@ -1978,6 +1978,31 @@
     handleAutoTurn();
   }
 
+  /** Tới lượt mà cổng đóng -> nói rõ VÌ SAO, lên cả console lẫn backend.
+   *
+   * Lỗi thật: phụ ngồi trong bàn để server bỏ lượt hộ (~21s/nước), log backend
+   * không có một dòng nào — không phân biệt được là do còn cờ Dừng, mất
+   * `__AUTOTOOL_ENGAGED`, hay auto-xả đang tắt. Im lặng ở đây là giấu lỗi.
+   */
+  function baoBoLuotViCongDong() {
+    if (!G.__my_cards || !G.__my_cards.length) return;
+    let coDung = false;
+    try { coDung = localStorage.getItem("AUTOTOOL_STOPPED") === "1"; } catch (_) {}
+    const lyDo = coDung ? "còn cờ Dừng (AUTOTOOL_STOPPED=1)"
+      : !(G.__AUTOTOOL_ENGAGED || G.__AUTOTOOL_ARMED || G.__AUTOTOOL_AUTO_HUNT)
+        ? "cổng kích hoạt đóng (__AUTOTOOL_ENGAGED/ARMED tắt)"
+      : !G.__AUTOTOOL_AUTO_DISCARD ? "auto-xả đang TẮT (__AUTOTOOL_AUTO_DISCARD=false)"
+      : "không rõ";
+    console.warn(`[AutoTool V3] Tới lượt nhưng KHÔNG tự đánh: ${lyDo} (role=${G.__AUTOTOOL_MATCH_ROLE || "?"}, ${G.__my_cards.length} lá).`);
+    window.postMessage({
+      type: "AUTOTOOL_TURN_SKIPPED",
+      profile_name: getProfileName(),
+      reason: lyDo,
+      role: G.__AUTOTOOL_MATCH_ROLE || null,
+      cards_left: G.__my_cards.length,
+    }, "*");
+  }
+
   function handleAutoTurn() {
     if (G.__auto_turn_timer) {
       clearTimeout(G.__auto_turn_timer);
@@ -1985,6 +2010,7 @@
     }
     // Chua kich hoat / da Dung -> khong tu danh bai. Truoc day chi canh
     // AUTO_DISCARD, ma co do khong duoc xoa khi Dung nen bot van danh tiep.
+    if (!isAutoEngaged() || !G.__AUTOTOOL_AUTO_DISCARD) baoBoLuotViCongDong();
     if (!isAutoEngaged()) return;
     if (!G.__AUTOTOOL_AUTO_DISCARD) return;
     if (!G.__my_cards || !G.__my_cards.length) return;

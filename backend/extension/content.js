@@ -1075,6 +1075,20 @@
       }, "POST").catch(() => {});
     }
 
+    // TỚI LƯỢT NHƯNG KHÔNG TỰ ĐÁNH (cổng kích hoạt đóng) -> đẩy lý do lên backend
+    else if (ev.data.type === "AUTOTOOL_TURN_SKIPPED") {
+      const reason = ev.data.reason || "không rõ";
+      safeSendMessage({
+        type: "TURN_SKIPPED",
+        profile_name: activeProfileName,
+        reason,
+      });
+      requestControl("/api/accounts/update-log", {
+        profile_name: activeProfileName,
+        log: `⚠️ Tới lượt nhưng KHÔNG tự đánh: ${reason}`,
+      }, "POST").catch(() => {});
+    }
+
     // TỰ ĐỘNG THỬ LẠI LƯỢT GHÉP MỚI (ANTI-FLOOD JITTER)
     else if (ev.data.type === "AUTOTOOL_HUNT_RETRYING") {
       const pLabel = activeProfileName || "Tool V3";

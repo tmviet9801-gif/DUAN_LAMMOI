@@ -127,10 +127,13 @@ def test_xac_minh_vai_tro_sau_khi_gan():
     """Ba khối gán vai trò đều bọc try/except nuốt lỗi và không đọc lại. Từ khi
     extension bỏ đoán theo tên, gán hụt một trang là trang đó ngồi lì im lặng."""
     code = _code(MATCHING)
-    assert "window.__AUTOTOOL_MATCH_ROLE || null" in code
+    # Việc đọc lại nay nằm trong kich_hoat.py (đọc cả vai trò lẫn cổng kích hoạt).
+    kich_hoat = (MATCHING.parent / "kich_hoat.py").read_text(encoding="utf-8")
+    assert "window.__AUTOTOOL_MATCH_ROLE || null" in kich_hoat
+    assert "await bao_dam_kich_hoat(" in code
     assert code.index("window.__AUTOTOOL_ROLE = 'dump'") < \
-        code.index("window.__AUTOTOOL_MATCH_ROLE || null"), "phải đọc lại SAU khi gán"
-    i = code.index("window.__AUTOTOOL_MATCH_ROLE || null")
+        code.index("await bao_dam_kich_hoat("), "phải đọc lại SAU khi gán"
+    i = code.index("await bao_dam_kich_hoat(")
     assert 'dong_luot_chay(pages, "không đặt được vai trò")' in code[i:i + 900]
 
 

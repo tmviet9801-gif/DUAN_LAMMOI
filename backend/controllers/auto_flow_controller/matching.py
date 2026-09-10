@@ -17,6 +17,7 @@ from .context import (
     resolve_profile_name,
 )
 from .thong_ke_pha import ghi_moc, tom_tat
+from .kich_hoat import bao_dam_kich_hoat
 from .preflight import loc_profile_du_dieu_kien, so_du_toi_thieu
 from game_sim import room_catalog
 from .deps import _build_adapter, _notify_all
@@ -563,21 +564,18 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         except Exception as e:
             log.warning("find-and-match: Không gán được role/xả bài rõ ràng: %s", e)
 
-        # ĐỌC LẠI để xác minh. Ba khối gán ở trên đều bọc try/except nuốt lỗi và
-        # không đọc lại lần nào. Từ khi extension bỏ đường đoán theo tên profile
-        # (vai_tro_ban.js), vai trò là điều kiện CẦN DUY NHẤT để nick phụ tự rời
-        # bàn sau khi xả — gán hụt một trang là trang đó ngồi lì, im lặng.
-        vai_tro_loi = []
-        for p_name, p_page in pages.items():
-            mong_doi = "anchor" if p_name == first_name else "sub"
-            try:
-                thuc_te = await eval_page(p_page, "() => window.__AUTOTOOL_MATCH_ROLE || null")
-            except Exception:
-                thuc_te = None
-            if thuc_te != mong_doi:
-                vai_tro_loi.append(f"{p_name}: cần {mong_doi}, thực tế {thuc_te}")
+        # ĐỌC LẠI để xác minh — cả VAI TRÒ lẫn CỔNG KÍCH HOẠT, trên mọi trang.
+        # Ba khối gán ở trên đều bọc try/except nuốt lỗi. Bản trước chỉ đọc lại
+        # `__AUTOTOOL_MATCH_ROLE`, nên trang phụ có vai trò đúng mà cổng
+        # `isAutoEngaged()` đóng (còn cờ Dừng / mất __AUTOTOOL_ENGAGED) vẫn qua
+        # được bước này — rồi ngồi trong bàn không đánh, không out (kich_hoat.py).
+        vai_tro_loi, bat_lai = await bao_dam_kich_hoat(
+            pages, first_name, auto_xa, bet_val, target_mu)
+        if bat_lai:
+            log.warning("find-and-match: cổng kích hoạt lệch ngay sau khi gán, đã đặt lại trên: %s",
+                        ", ".join(bat_lai))
         if vai_tro_loi:
-            log.error("find-and-match: vai trò không đặt được -> dừng lượt chạy: %s", vai_tro_loi)
+            log.error("find-and-match: vai trò/kích hoạt không đặt được -> dừng lượt chạy: %s", vai_tro_loi)
             await dong_luot_chay(pages, "không đặt được vai trò")
             return {"ok": False,
                     "error": "Không đặt được vai trò anchor/sub trên mọi trang: "
@@ -1411,6 +1409,27 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 "thong_ke_pha": tom_tat(moc_pha, time.time()),
             }
 
+        # KHẲNG ĐỊNH LẠI kích hoạt NGAY TRƯỚC khi Sẵn sàng. Từ lúc gán vai trò
+        # tới đây là cả quãng tìm bàn / join / xác minh; trang phụ hoàn toàn có
+        # thể đã tải lại hoặc bị đặt lại cờ Dừng. Ván bắt đầu với cổng đóng là
+        # phụ để server bỏ lượt hộ (mỗi nước ~21s) và hết ván không out.
+        ext_hub = getattr(request.app.state, "ext_hub", None)
+        loi_kh, bat_lai = await bao_dam_kich_hoat(pages, anchor_name, auto_xa, bet_val, target_mu)
+        if bat_lai:
+            log.warning("find-and-match: cổng kích hoạt đã RỚT sau khi gom bàn trên %s -> đã bật lại trước khi Sẵn sàng.",
+                        ", ".join(bat_lai))
+        if loi_kh:
+            log.error("find-and-match: không bật được kích hoạt trước ván -> hủy bàn: %s", loi_kh)
+            await _notify_all(ext_hub,
+                              "⚠️ Không bật được tự động trên: " + "; ".join(loi_kh) + " → hủy bàn, về sảnh.",
+                              "warn", "⚠️ Kích hoạt lỗi")
+            for p_name, p in pages.items():
+                await _do_leave_room(p, name=p_name, target_mu=target_mu)
+                await _ensure_in_tldl_lobby(p, p_name)
+            await dong_luot_chay(pages, "không bật được kích hoạt")
+            return {"ok": False,
+                    "error": "Không bật được tự động trên mọi trang: " + "; ".join(loi_kh),
+                    "stopped": False}
 
         # Vòng lặp tuần tự kiểm tra & click Sẵn Sàng (Account 2) -> Bắt Đầu (Account 1)
         # Chạy mỗi 400ms, tối đa 16 lần (~7-8s) cho đến khi chia bài
@@ -1466,25 +1485,53 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         for p_name, p in pages.items():
             await _set_hud_status(p, f"Đang trong ván #{selected_rid} - Extension V3 tự động xả bài...")
 
-        # Theo dõi ván bài hoàn tất qua biến bộ nhớ Extension V3 (tối đa 45s)
+        # Theo dõi ván qua biến bộ nhớ Extension V3 — theo DIỄN BIẾN, không theo
+        # đồng hồ cứng. Bản trước cắt ở 45 giây: một ván Solo mà phụ bị treo
+        # lượt (server tự bỏ hộ, ~21s/nước) kéo tới vài phút, controller bỏ đi
+        # trước khi ván xong -> nhánh "phụ out sau ván" không bao giờ chạy.
+        # Nay chỉ coi là treo khi KHÔNG CÓ GÌ ĐỔI (số lá trên tay, số lá đã ra)
+        # trong HAN_IM_LANG giây, và có trần cứng HAN_CUNG cho cả ván.
         game_completed = False
-        t_game_end = time.time() + 45.0
-        while time.time() < t_game_end:
+        HAN_IM_LANG = 75.0
+        HAN_CUNG = 600.0
+        t_bat_dau = time.time()
+        t_het = t_bat_dau + HAN_IM_LANG
+        dau_cu = None
+        t_kiem_kich_hoat = 0.0
+        while time.time() < min(t_het, t_bat_dau + HAN_CUNG):
             if _should_stop():
                 break
-            game_done = False
+            dau = None
             try:
-                in_prog = await eval_page(anchor_page, "() => Boolean(window.__game_in_progress)")
-                cards_cnt = await eval_page(anchor_page, "() => (window.__my_cards || []).length")
-                if not in_prog and cards_cnt == 0:
-                    game_done = True
+                st = await eval_page(anchor_page, """() => ({
+                    dang_choi: Boolean(window.__game_in_progress),
+                    con: (window.__my_cards || []).length,
+                    da_ra: (window.__cards_played || []).length,
+                })""")
+                if isinstance(st, dict):
+                    if not st.get("dang_choi") and st.get("con") == 0:
+                        game_completed = True
+                    dau = (st.get("con"), st.get("da_ra"))
             except Exception:
                 pass
 
-            if game_done:
+            if game_completed:
                 log.info("find-and-match: >>> VÁN BÀI KẾT THÚC THÀNH CÔNG QUA EXTENSION V3! <<<")
-                game_completed = True
                 break
+            if dau is not None and dau != dau_cu:
+                dau_cu = dau
+                t_het = time.time() + HAN_IM_LANG    # còn diễn biến -> gia hạn
+
+            # TỰ CHỮA giữa ván: trang nào rớt cổng kích hoạt (phụ không đánh,
+            # để server bỏ lượt hộ) thì bật lại ngay, và ghi rõ trang nào.
+            if time.time() - t_kiem_kich_hoat >= 5.0:
+                t_kiem_kich_hoat = time.time()
+                loi_kh, bat_lai = await bao_dam_kich_hoat(pages, anchor_name, auto_xa, bet_val, target_mu)
+                if bat_lai:
+                    log.warning("find-and-match: cổng kích hoạt RỚT GIỮA VÁN trên %s -> đã bật lại.",
+                                ", ".join(bat_lai))
+                if loi_kh:
+                    log.error("find-and-match: không bật lại được kích hoạt giữa ván: %s", loi_kh)
             await asyncio.sleep(1.0)
 
 
@@ -1573,14 +1620,28 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             else:
                 await _set_hud_status(first_page, "Đã xả bài xong — Account phụ đã out, Account chính giữ phòng chờ khách ngoài.")
         elif not _should_stop():
-            log.warning("find-and-match: Hết thời gian theo dõi ván; không tự out Account phụ để tránh mất trạng thái chưa xác minh.")
+            # Hết hạn theo dõi mà chưa thấy ván kết thúc. Trước đây giữ nguyên
+            # bàn "để kiểm tra" — thực tế là phụ ngồi lì, khách ngoài không vào
+            # được. Nay vẫn ra lệnh phụ rời: `_do_leave_room` đã có chốt giữa
+            # ván (hoãn tới cmd 252, extension tự rời khi hết ván), nên không
+            # bỏ ván đang chơi, cũng không ngồi lì. Không ép về sảnh ở đây —
+            # `_ensure_in_tldl_lobby` sẽ click điều hướng trong khi có thể còn
+            # đang giữa ván.
+            log.warning("find-and-match: Hết thời gian theo dõi ván (im lặng %.0fs / trần %.0fs) -> "
+                        "vẫn ra lệnh Account phụ rời bàn; nếu ván còn chạy thì lệnh được hoãn tới cuối ván.",
+                        HAN_IM_LANG, HAN_CUNG)
             await _notify_all(ext_hub,
-                              "⚠️ Chưa xác nhận kết thúc ván trong 45 giây; giữ nguyên bàn để kiểm tra, không tự out Account phụ.",
+                              "⚠️ Chưa xác nhận kết thúc ván; ra lệnh Account phụ rời bàn (hoãn tới cuối ván nếu đang chơi).",
                               "warn", "⚠️ Chờ xác nhận ván")
+            for p_name in other_profiles:
+                p = pages.get(p_name)
+                if p:
+                    await _do_leave_room(p, name=p_name, target_mu=target_mu)
 
-        # Đóng lượt chạy CHỈ khi ván đã kết thúc thật. Nhánh hết 45 giây bên
-        # trên cố ý giữ nguyên bàn để kiểm tra — ván CÓ THỂ VẪN ĐANG CHẠY, tắt
-        # AUTO_DISCARD giữa ván là nick phụ ngưng đánh và bị treo lượt/phạt bài.
+        # Đóng lượt chạy CHỈ khi ván đã kết thúc thật. Nhánh hết hạn bên trên
+        # chỉ RA LỆNH rời (được hoãn nếu còn giữa ván) — ván CÓ THỂ VẪN ĐANG
+        # CHẠY, tắt AUTO_DISCARD/ENGAGED lúc này là nick phụ ngưng đánh, và lệnh
+        # rời đã hoãn cũng không được thực hiện ở cmd 252 (cần isAutoEngaged).
         if game_completed:
             await dong_luot_chay(pages, "ván đã kết thúc")
 
