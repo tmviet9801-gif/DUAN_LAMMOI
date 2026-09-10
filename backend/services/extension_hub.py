@@ -642,6 +642,23 @@ class ExtensionHubManager:
             state["log"] = f"🏆 Hết ván — {chi_tiet}"
             log.info("ExtensionHub V3: Profile '%s' hết ván — %s", profile_name, chi_tiet)
 
+        # 3b'''. AI ĐƯỢC ĐI TRƯỚC. Server tự chọn người mở ván (`tP`); luật
+        # nào thì bản bắt WS hiện có chưa đủ ván liên tiếp cùng bàn để kết
+        # luận (chỉ 5 cặp, 60/40). Ghi từng ván để đo dần trên số thật.
+        elif msg_type in ("FIRST_TURN", "AUTOTOOL_FIRST_TURN"):
+            d = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+            di = msg.get("di_truoc") or d.get("di_truoc") or "?"
+            truoc = msg.get("thang_van_truoc") or d.get("thang_van_truoc")
+            la_minh = msg.get("la_minh") if msg.get("la_minh") is not None else d.get("la_minh")
+            so_nguoi = msg.get("so_nguoi") or d.get("so_nguoi")
+            if truoc:
+                quan_he = "TRÙNG người thắng ván trước" if di == truoc else "KHÁC người thắng ván trước"
+            else:
+                quan_he = "ván đầu ở bàn này (chưa có ván trước)"
+            log.info("ExtensionHub V3: [ĐI TRƯỚC] bàn %s người — %s%s | ván trước thắng: %s -> %s",
+                     so_nguoi if so_nguoi is not None else "?", di,
+                     " (chính mình)" if la_minh else "", truoc or "(chưa có)", quan_he)
+
         # 3c. PROFILE TỰ RỜI BÀN (khách lạ / hết giờ / sai bàn...) -> báo realtime cho đồng đội
         elif msg_type in ("AUTO_LEAVING", "AUTOTOOL_AUTO_LEAVING"):
             reason = msg.get("reason") or "Tự rời bàn"
@@ -718,13 +735,6 @@ class ExtensionHubManager:
                         "cards": cards,
                     })
 
-                # Chuyển tiếp bài đồng đội sang các tab khác cùng online (<2ms)
-                for other_profile in list(self.active_sockets.keys()):
-                    if other_profile != profile_name:
-                        asyncio.create_task(self.send_command(other_profile, "PARTNER_CARDS_SHARED", {
-                            "source_profile": profile_name,
-                            "cards": cards,
-                        }))
 
         # 6. Trạng thái rời bàn / Đang ở sảnh -> XÓA SẠCH BÀI TRÊN TAY
         elif msg_type in ("ROOM_LEFT", "LEAVE_ROOM", "AUTOTOOL_ROOM_LEFT"):

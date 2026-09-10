@@ -55,14 +55,13 @@ def test_guard_dem_dong_doi_that_thay_cho_bien_da_chet():
     assert "return true;" in khoi, "không chắc thì phải coi là đang chờ (hỏng an toàn)"
 
 
-def test_controller_tat_co_guest_ss_khi_con_nick_phu_cho():
-    """Có nick phụ mà bắt đầu với người lạ là phụ không vào được bàn nữa.
-
-    Lớp gác Python đã đúng (`auto_start_guest_ss and not other_profiles`) nhưng
-    extension hành động độc lập theo khung WS nên qua mặt được.
-    """
-    src = (CTRL / "matching.py").read_text(encoding="utf-8")
-    assert "bool(auto_start_guest_ss) and not other_profiles" in src
+def test_controller_khong_con_co_bat_dau_voi_khach():
+    """Cờ `auto_start_guest_ss` đã bỏ hẳn (11/09/2026): dự án chỉ gom bàn
+    đồng đội rồi xả, không tự đánh với khách ở bất kỳ đâu."""
+    for ten_file in ("matching.py", "kich_hoat.py", "lobby.py", "context.py",
+                     "tu_danh.py"):
+        src = (CTRL / ten_file).read_text(encoding="utf-8")
+        assert "auto_start_guest_ss" not in src, f"còn sót trong {ten_file}"
 
 
 # ---------- 2. Kết thúc lượt chạy phải tắt chế độ tự động ----------
@@ -80,16 +79,17 @@ def test_dong_luot_chay_tat_du_co_kich_hoat():
     khoi = src.split("async def dong_luot_chay", 1)[1].split("async def ly_do_chua_o_sanh", 1)[0]
     for co in ("__AUTOTOOL_ENGAGED = false", "__AUTOTOOL_ARMED = false",
                "__AUTOTOOL_AUTO_HUNT = false", "__AUTOTOOL_AUTO_DISCARD = false",
-               "__auto_start_guest_ss = false", "__target_hunt_bet = 0",
+               "__AUTOTOOL_GIU_BAN = false", "__target_hunt_bet = 0",
                "__AUTOTOOL_MATCH_ROLE = null", "__AUTOTOOL_SUB_JOIN_TICKET = null"):
         assert co in khoi, f"còn sót cờ: {co}"
 
 
-def test_dong_luot_chay_xoa_bai_cua_dong_doi():
-    """Không xoá thì ván đầu lượt sau đánh theo bài của lượt trước."""
+def test_khong_con_chia_se_bai_dong_doi():
+    """Bỏ phối hợp (11/09/2026): không còn biến bài đồng đội để phải dọn."""
     src = (CTRL / "lobby.py").read_text(encoding="utf-8")
-    khoi = src.split("async def dong_luot_chay", 1)[1].split("async def ly_do_chua_o_sanh", 1)[0]
-    assert "__partner_cards = null" in khoi
+    assert "__partner_cards" not in src
+    hub = (CTRL.parent.parent / "services" / "extension_hub.py").read_text(encoding="utf-8")
+    assert "PARTNER_CARDS_SHARED" not in hub, "Hub vẫn phát bài đồng đội"
 
 
 def test_dong_luot_chay_KHONG_dat_co_da_dung():

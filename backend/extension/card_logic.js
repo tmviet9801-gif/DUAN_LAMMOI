@@ -1,14 +1,38 @@
 /**
- * Logic bài THUẦN TÍNH TOÁN cho Tiến Lên Đếm Lá — không đụng DOM/WebSocket.
+ * Logic chọn nước bài — CHUYỂN NGUYÊN TỪ CÔNG CỤ SUNWIN (control/extension_auto).
  *
- * Tách riêng khỏi content_main.js để:
- *  - kiểm thử được bằng node (content_main.js là IIFE có patch WebSocket/DOM,
- *    không nạp được ngoài trình duyệt);
- *  - dùng chung một nguồn sự thật cho phần phân rã bài.
+ * Người dùng yêu cầu (11/09/2026): "áp dụng lại TOÀN BỘ logic xả bài" của
+ * Sunwin, và "bỏ phối hợp" giữa hai nick. Bản trước của file này là một engine
+ * phối hợp: nick phụ giữ 3-4 lá thấp làm mồi, chọn nước mà nick chính còn đè
+ * lại được, có đếm bài và phân rã tối ưu số lượt. Toàn bộ phần đó đã bỏ.
  *
- * Mã lá bài: id 0..51, rank = floor(id/4), suit = id%4 (0 Bích, 1 Chuồn, 2 Rô,
- * 3 Cơ). Giá trị: rank>=2 -> rank+1 (3..K=13), rank 0 -> 14 (A), rank 1 -> 15
- * (Heo). Sảnh cần >=3 lá liên tiếp và KHÔNG chứa Heo.
+ * LUẬT CỦA SUNWIN, đúng thứ tự:
+ *   - Lượt tự do: SẢNH -> SÁM -> ĐÔI -> LÁ ĐƠN; trong mỗi loại lấy điểm cao
+ *     nhất, tức nước TO NHẤT.
+ *   - Lượt đè: chỉ xét đúng KIỂU đang có trên bàn, duyệt từ to xuống và đánh
+ *     cái ĐẦU TIÊN đè được -> luôn đè bằng nước to nhất. Không đè được thì bỏ.
+ *   - KHÔNG có tứ quý, KHÔNG có ba đôi thông, KHÔNG chặt Heo. Bốn lá cùng bậc
+ *     không phải một kiểu bài hợp lệ (`phanLoai` trả null), nên Heo đơn chỉ
+ *     bị chặn bởi Heo lớn hơn. Đây là mất mát so với bản cũ của HIT và là chủ
+ *     ý — bản Sunwin không có bom.
+ *   - Sảnh KHÔNG được chứa Heo; Át được phép đứng cuối sảnh (…J Q K A).
+ *
+ * ĐIỂM (`diem`) quyết mọi thứ tự: trọng số kiểu × 1.000.000 + bậc lá đỉnh × 100
+ * + chất lá đỉnh + số lá. Số lá chỉ cộng vài đơn vị nên KHÔNG lật ngược được
+ * bậc: sảnh 10-J-Q (đỉnh Q) xếp trên sảnh 3-4-5-6-7 (đỉnh 7). Nghĩa là "sảnh
+ * có lá đỉnh cao nhất", không phải "sảnh dài nhất". Giữ nguyên như Sunwin.
+ *
+ * KHÔNG chuyển sang: khoảng cách cứng 250ms giữa hai lệnh của Sunwin. Ở đây
+ * đã khoá theo SỐ THỨ TỰ LƯỢT (content_main.js) — hai người bỏ lượt liên tiếp
+ * thật sự chỉ cách nhau vài chục mili-giây nên bộ đếm thời gian sẽ nuốt mất
+ * nước hợp lệ. Xem backend/tests/test_khoa_mot_lenh_mot_luot.py.
+ *
+ * Mã lá bài của HIT: id 0..51, bậc = floor(id/4), chất = id%4 (0 Bích, 1
+ * Chuồn, 2 Rô, 3 Cơ — thấp đến cao). Giá trị: bậc>=2 -> bậc+1 (3..K=13),
+ * bậc 0 -> 14 (A), bậc 1 -> 15 (Heo). Thang này trùng thang của Sunwin
+ * (Heo 15, Át 14) nên phần so sánh chuyển thẳng được.
+ *
+ * Thuần tính toán — không đụng DOM/WebSocket, nên kiểm thử được bằng node.
  */
 (function (root) {
   "use strict";
@@ -38,648 +62,195 @@
   function isStraight(cards) {
     if (!cards || cards.length < 3) return false;
     const sc = sortCards(cards);
-    if (sc.some((c) => getCardVal(c) === 15)) return false;
+    if (sc.some((c) => getCardVal(c) === 15)) return false;   // sảnh không chứa Heo
     for (let i = 1; i < sc.length; i++) {
       if (getCardVal(sc[i]) !== getCardVal(sc[i - 1]) + 1) return false;
     }
     return true;
   }
 
-  const MAX_CARDS_FOR_DP = 20;
+  // ===================== NHÓM & ĐIỂM =====================
 
-  /**
-   * Liệt kê tổ hợp hợp lệ trong tay bài, trả về bitmask theo chỉ số của mảng
-   * `cards` đã truyền vào (không phải theo id lá).
-   *
-   * Tập tổ hợp phải ĐÓNG với phần dư, nếu không DP sẽ bỏ sót nghiệm:
-   *  - Trong một bậc: sinh đủ mọi tổ hợp chập 2/3/4. Mỗi bậc tối đa 4 lá nên
-   *    nhiều nhất 6+4+1 = 11 tổ hợp — rẻ.
-   *  - Sảnh: sinh THEO TẦNG. Với một khoảng bậc liên tiếp, gọi m là số lá ít
-   *    nhất của một bậc trong khoảng; sinh m sảnh rời nhau, sảnh tầng j lấy lá
-   *    thứ j của từng bậc. Nhờ vậy hai sảnh chồng nhau (vd 8-9-10 đôi) đều có
-   *    mặt trong tập tổ hợp.
-   *
-   * (Bản đầu chỉ lấy lá THẤP NHẤT mỗi bậc cho sảnh -> phần dư là các lá thứ
-   * hai, không còn tổ hợp nào phủ, khiến DP trả kết quả TỆ HƠN tham lam.)
-   */
-  function enumerateMelds(cards) {
-    const n = cards.length;
-    const melds = [];
-    const push = (idxs, kind) => {
-      let mask = 0;
-      for (const i of idxs) mask |= (1 << i);
-      let high = idxs[0];
-      for (const i of idxs) if (compareCards(cards[i], cards[high]) > 0) high = i;
-      melds.push({ mask: mask, kind: kind, size: idxs.length, high: cards[high] });
-    };
+  const TRONG_SO = { loc: 4, trips: 3, pair: 2, single: 1 };
 
-    // Gom chỉ số theo giá trị (mảng đã sắp nên mỗi nhóm cũng tăng dần)
-    const byVal = new Map();
-    for (let i = 0; i < n; i++) {
-      const v = getCardVal(cards[i]);
-      if (!byVal.has(v)) byVal.set(v, []);
-      byVal.get(v).push(i);
+  /** Lá đỉnh của một nhóm — lá lớn nhất theo bậc rồi chất. */
+  function laDinh(cards) {
+    let top = cards[0];
+    for (let i = 1; i < cards.length; i++) {
+      if (compareCards(cards[i], top) > 0) top = cards[i];
     }
-
-    // Lá lẻ: luôn hợp lệ -> bảo đảm mọi tập con đều phủ được
-    for (let i = 0; i < n; i++) push([i], "single");
-
-    // Đôi / ba / tứ quý: đủ mọi tổ hợp trong một bậc (tối đa 4 lá -> rất rẻ)
-    for (const idxs of byVal.values()) {
-      const k = idxs.length;
-      for (let a = 0; a < k; a++) {
-        for (let b = a + 1; b < k; b++) {
-          push([idxs[a], idxs[b]], "pair");
-          for (let c = b + 1; c < k; c++) {
-            push([idxs[a], idxs[b], idxs[c]], "triple");
-            for (let d = c + 1; d < k; d++) push([idxs[a], idxs[b], idxs[c], idxs[d]], "quad");
-          }
-        }
-      }
-    }
-
-    // Sảnh theo TẦNG: mọi khoảng bậc liên tiếp độ dài >=3, không chứa Heo.
-    const vals = Array.from(byVal.keys()).filter((v) => v < 15).sort((x, y) => x - y);
-    for (let s = 0; s < vals.length; s++) {
-      // e chạy từ s+1 để kiểm tra tính liên tiếp của TỪNG bước một; bắt đầu từ
-      // s+2 sẽ bỏ qua bước s->s+1 và biến {3,7,8} thành "sảnh".
-      for (let e = s + 1; e < vals.length; e++) {
-        if (vals[e] !== vals[e - 1] + 1) break;  // hết đoạn liên tiếp
-        if (e - s + 1 < 3) continue;             // sảnh cần >= 3 lá
-        let layers = Infinity;
-        for (let t = s; t <= e; t++) layers = Math.min(layers, byVal.get(vals[t]).length);
-        for (let j = 0; j < layers; j++) {
-          const idxs = [];
-          for (let t = s; t <= e; t++) idxs.push(byVal.get(vals[t])[j]);
-          push(idxs, "straight");
-        }
-        // Biến thể LÁ ĐỈNH CAO NHẤT. Với mục đích ĐÈ, chỉ lá trên cùng của sảnh
-        // quyết định (canBeat so lá cuối, tính cả chất). Sinh theo tầng bỏ sót
-        // trường hợp bậc đỉnh có nhiều lá hơn các bậc khác: vd Q♠Q♦ K♠K♦ A♠A♣A♥
-        // -> layers = 2, A♥ không bao giờ được xếp vào sảnh, dù Q♠K♠A♥ đè được
-        // một sảnh đỉnh A♦. Vét cạn trong test đã bắt được đúng ca này.
-        const topGroup = byVal.get(vals[e]);
-        if (topGroup.length > layers) {
-          const idxs = [];
-          for (let t = s; t < e; t++) idxs.push(byVal.get(vals[t])[0]);
-          idxs.push(topGroup[topGroup.length - 1]);
-          push(idxs, "straight");
-        }
-      }
-    }
-
-    // Xét tổ hợp LỚN trước, cùng cỡ thì lá cao nhỏ hơn trước. Chỉ ảnh hưởng
-    // cách phá hoà, không ảnh hưởng số lượt tối thiểu.
-    melds.sort((p, q) => (q.size - p.size) || compareCards(p.high, q.high));
-    return melds;
+    return top;
   }
 
-  /**
-   * PHÂN RÃ TỐI ƯU: chia tay bài thành SỐ TỔ HỢP ÍT NHẤT.
-   *
-   * Đây là bài toán phủ chính xác (exact cover), giải bằng quy hoạch động trên
-   * bitmask:
-   *     f(S) = 1 + min{ f(S \ M) : M là tổ hợp hợp lệ, M ⊆ S, M chứa lá thấp
-   *                     nhất của S }
-   * Ràng buộc "M phải chứa lá thấp nhất của S" khử trùng lặp hoán vị mà vẫn
-   * giữ tính tối ưu: trong mọi phân hoạch, lá thấp nhất phải nằm ở đúng một
-   * nhóm nào đó.
-   *
-   * Vì lá lẻ luôn là tổ hợp hợp lệ nên f(S) luôn có nghiệm.
-   * Độ phức tạp: O(2^n * |melds|); n=13 -> 8192 trạng thái, chạy vài ms.
-   *
-   * @returns {{turns:number, melds:number[][]}} số lượt tối thiểu và danh sách
-   *          tổ hợp (mỗi tổ hợp là mảng id lá).
-   */
-  // Giá trị 3..15 -> chỉ số bậc 0..12 (bậc 12 là Heo, không vào sảnh)
-  const RANK_COUNT = 13;
-  const HEO_RANK = 12;
-
-  function planMinTurns(cards) {
-    const hand = sortCards(cards || []);
-    const n = hand.length;
-    if (n === 0) return { turns: 0, melds: [] };
-    if (n > MAX_CARDS_FOR_DP) {
-      return { turns: n, melds: hand.map((c) => [c]) };
-    }
-
-    // Đếm theo BẬC, và giữ danh sách lá của từng bậc (đã tăng dần)
-    const cnt = new Array(RANK_COUNT).fill(0);
-    const byRank = new Array(RANK_COUNT).fill(null).map(() => []);
-    for (const c of hand) {
-      const r = getCardVal(c) - 3;
-      cnt[r]++;
-      byRank[r].push(c);
-    }
-
-    // Mẫu tiêu thụ: {kind:'set', r, k} lấy k lá cùng bậc r;
-    //               {kind:'run', s, e} lấy 1 lá mỗi bậc từ s đến e.
-    const patterns = [];
-    for (let r = 0; r < RANK_COUNT; r++) {
-      for (let k = 1; k <= Math.min(4, cnt[r]); k++) patterns.push({ kind: "set", r: r, k: k });
-    }
-    for (let s = 0; s < HEO_RANK; s++) {
-      for (let e = s + 2; e < HEO_RANK; e++) patterns.push({ kind: "run", s: s, e: e });
-    }
-
-    const encode = (v) => {
-      let key = 0;
-      for (let r = 0; r < RANK_COUNT; r++) key = key * 5 + v[r];
-      return key;
-    };
-
-    const memo = new Map();   // key -> {turns, pattern}
-
-    function solve(v) {
-      let lowest = -1;
-      for (let r = 0; r < RANK_COUNT; r++) if (v[r] > 0) { lowest = r; break; }
-      if (lowest < 0) return { turns: 0, pattern: null };
-
-      const key = encode(v);
-      const hit = memo.get(key);
-      if (hit) return hit;
-      memo.set(key, { turns: Infinity, pattern: null });   // chặn đệ quy vòng
-
-      let best = { turns: Infinity, pattern: null };
-      for (const p of patterns) {
-        // BẮT BUỘC phủ bậc thấp nhất -> khử trùng lặp hoán vị, vẫn đầy đủ vì
-        // trong mọi phân hoạch, bậc thấp nhất phải nằm ở đúng một nhóm.
-        if (p.kind === "set") {
-          if (p.r !== lowest || v[p.r] < p.k) continue;
-          v[p.r] -= p.k;
-          const sub = solve(v);
-          v[p.r] += p.k;
-          if (sub.turns + 1 < best.turns) best = { turns: sub.turns + 1, pattern: p };
-        } else {
-          if (p.s !== lowest) continue;           // sảnh phải bắt đầu từ bậc thấp nhất
-          let ok = true;
-          for (let r = p.s; r <= p.e; r++) if (v[r] < 1) { ok = false; break; }
-          if (!ok) continue;
-          for (let r = p.s; r <= p.e; r++) v[r]--;
-          const sub = solve(v);
-          for (let r = p.s; r <= p.e; r++) v[r]++;
-          if (sub.turns + 1 < best.turns) best = { turns: sub.turns + 1, pattern: p };
-        }
-      }
-      memo.set(key, best);
-      return best;
-    }
-
-    // Truy vết: gán lá THẤP NHẤT còn lại của mỗi bậc cho từng nhóm.
-    const state = cnt.slice();
-    const res = solve(state);
-    const pool = byRank.map((a) => a.slice());
-    const out = [];
-    let cur = state;
-    while (true) {
-      const step = solve(cur);
-      if (!step.pattern) break;
-      const p = step.pattern;
-      const group = [];
-      if (p.kind === "set") {
-        for (let i = 0; i < p.k; i++) group.push(pool[p.r].shift());
-        cur[p.r] -= p.k;
-      } else {
-        for (let r = p.s; r <= p.e; r++) group.push(pool[r].shift());
-        for (let r = p.s; r <= p.e; r++) cur[r]--;
-      }
-      out.push(group);
-    }
-
-    // Lượt nhỏ trước: giữ lá cao lại để còn giành quyền dẫn.
-    out.sort((a, b) => compareCards(sortCards(a)[a.length - 1], sortCards(b)[b.length - 1]));
-    return { turns: res.turns, melds: out };
+  /** Điểm xếp hạng của một nhóm. Xem chú thích đầu file. */
+  function diem(type, cards) {
+    const top = laDinh(cards);
+    return (TRONG_SO[type] || 0) * 1000000
+      + getCardVal(top) * 100 + getCardSuit(top) + cards.length;
   }
 
-  // Số lá thấp nhất mà Account phụ GIỮ LẠI để mồi cho Account chính đè.
-  const DEFAULT_RESERVE = 4;
-
-  /** Bản sao luật đè của content_main.js — giữ đồng bộ tuyệt đối với luật game. */
-  function canBeat(cand, table) {
-    if (!cand || !table || !cand.length || !table.length) return false;
-    const sc = sortCards(cand);
-    const st = sortCards(table);
-    const sameVal = (a) => a.every((c) => getCardVal(c) === getCardVal(a[0]));
-
-    if (cand.length === 1 && table.length === 1) return compareCards(sc[0], st[0]) > 0;
-    // Tứ quý chặt Heo đơn
-    if (cand.length === 4 && table.length === 1) {
-      if (sameVal(cand) && getCardVal(table[0]) === 15) return true;
+  /** Gom bài theo bậc; mỗi bậc xếp chất GIẢM DẦN.
+   *
+   * Xếp giảm dần để `slice(0, n)` lấy được đôi/sám mạnh nhất của bậc đó, và
+   * để sảnh lấy lá chất cao nhất ở mỗi bậc — lá đỉnh càng cao càng dễ đè.
+   * (Bản cũ của HIT lấy chất THẤP nhất nên bỏ sót nước đè hợp lệ.)
+   */
+  function gomTheoBac(cards) {
+    const theo = {};
+    for (const c of cards || []) {
+      const v = getCardVal(c);
+      (theo[v] = theo[v] || []).push(c);
     }
-    if (cand.length === 2 && table.length === 2 && sameVal(cand) && sameVal(table)) {
-      return compareCards(sc[1], st[1]) > 0;
+    for (const v of Object.keys(theo)) {
+      theo[v].sort((a, b) => getCardSuit(b) - getCardSuit(a));
     }
-    if (cand.length === 3 && table.length === 3 && sameVal(cand) && sameVal(table)) {
-      return compareCards(sc[2], st[2]) > 0;
-    }
-    // Tứ quý đè tứ quý (bậc cao hơn). Cần có để canAnyoneBeat và vét cạn
-    // thống nhất khi nhóm là tứ quý.
-    if (cand.length === 4 && table.length === 4 && sameVal(cand) && sameVal(table)) {
-      return compareCards(sc[3], st[3]) > 0;
-    }
-    if (cand.length === table.length && cand.length >= 3
-        && isStraight(cand) && isStraight(table)) {
-      return compareCards(sc[sc.length - 1], st[st.length - 1]) > 0;
-    }
-    return false;
+    return theo;
   }
 
-  // ===================== SINH ỨNG VIÊN ĐÈ =====================
+  // Thứ tự bậc dùng cho sảnh: 3..K rồi A. Heo (15) không nằm trong danh sách
+  // nên không bao giờ vào sảnh.
+  const BAC_SANH = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 
-  /** MỌI nhóm trong `hand` có thể đè được `table`, xếp TĂNG DẦN theo lá cao nhất.
-   *
-   * Vì sao cần: `findCombinations` trong content_main.js dựng sảnh bằng
-   * `valMap[v][0]` — lá chất THẤP NHẤT của mỗi bậc. Lá chốt sảnh vì thế luôn là
-   * chất thấp nhất, nên có nước đè hợp lệ mà nó báo không đè được.
-   *
-   * Ví dụ tái hiện được: bàn ra 3♠ 4♠ 5♦, tay có 3♣ 4♣ 5♣ 5♥.
-   *   - dựng theo chất thấp nhất -> [3♣ 4♣ 5♣], chốt 5♣ < 5♦ -> báo PASS
-   *   - nhưng [3♣ 4♣ 5♥] đè được thật.
-   * Đo bằng vét cạn: khoảng 0,6% số tình huống có sảnh trên bàn.
-   *
-   * `canBeat` chỉ so LÁ ĐỈNH của sảnh, nên chỉ cần thử mọi chất ở bậc đỉnh;
-   * các bậc giữa giữ chất thấp nhất là đủ và rẻ hơn.
-   *
-   * Xếp TĂNG DẦN — ngược với công cụ Sunwin (nó xếp giảm dần và luôn đè bằng
-   * nước to nhất). Đè bằng nước nhỏ nhất giữ lại quân mạnh để còn giành quyền
-   * dẫn; người gọi có thể chọn khác dựa trên đếm bài.
-   */
-  function beatCandidates(hand, table) {
+  /** Mọi sảnh (>=3 lá) rút được từ bài, xếp điểm GIẢM DẦN. */
+  function cacSanh(hand) {
+    const theo = gomTheoBac(hand);
+    const co = BAC_SANH.filter((v) => theo[v] && theo[v].length);
     const ra = [];
-    if (!hand || !hand.length || !table || !table.length) return ra;
-
-    const theoBac = {};
-    for (const c of hand) {
-      const v = getCardVal(c);
-      (theoBac[v] = theoBac[v] || []).push(c);
-    }
-    for (const v of Object.keys(theoBac)) theoBac[v] = sortCards(theoBac[v]);
-
-    const n = table.length;
-
-    // 1 lá trên bàn: mọi lá đơn, và mọi tứ quý (luật chặt Heo đơn nằm trong canBeat)
-    if (n === 1) {
-      for (const c of hand) ra.push([c]);
-      for (const v of Object.keys(theoBac)) {
-        if (theoBac[v].length >= 4) ra.push(theoBac[v].slice(0, 4));
+    for (let i = 0; i < co.length; i++) {
+      // Gom một dải bậc liên tiếp
+      const dai = [co[i]];
+      while (i + 1 < co.length
+             && BAC_SANH.indexOf(co[i + 1]) === BAC_SANH.indexOf(co[i]) + 1) {
+        i++;
+        dai.push(co[i]);
       }
-    }
-
-    // 2/3/4 lá cùng bậc: mọi tổ hợp chập n trong từng bậc
-    if (n >= 2 && n <= 4) {
-      for (const v of Object.keys(theoBac)) {
-        const nhom = theoBac[v];
-        if (nhom.length < n) continue;
-        const chon = [];
-        (function toHop(bd, cur) {
-          if (cur.length === n) { chon.push(cur.slice()); return; }
-          for (let i = bd; i < nhom.length; i++) {
-            cur.push(nhom[i]);
-            toHop(i + 1, cur);
-            cur.pop();
-          }
-        })(0, []);
-        for (const g of chon) ra.push(g);
-      }
-    }
-
-    // Sảnh: mọi đoạn bậc liên tiếp cùng độ dài, thử MỌI chất ở bậc ĐỈNH
-    if (n >= 3 && isStraight(table)) {
-      const bac = Object.keys(theoBac).map(Number)
-        .filter((v) => v < 15)              // Heo không vào sảnh
-        .sort((a, b) => a - b);
-      for (let i = 0; i + n <= bac.length; i++) {
-        const doan = bac.slice(i, i + n);
-        let lienTiep = true;
-        for (let k = 1; k < doan.length; k++) {
-          if (doan[k] !== doan[k - 1] + 1) { lienTiep = false; break; }
-        }
-        if (!lienTiep) continue;
-        const than = doan.slice(0, -1).map((v) => theoBac[v][0]);
-        for (const dinh of theoBac[doan[doan.length - 1]]) {
-          ra.push(than.concat([dinh]));
+      if (dai.length < 3) continue;
+      for (let len = dai.length; len >= 3; len--) {
+        for (let s = 0; s + len <= dai.length; s++) {
+          const cards = dai.slice(s, s + len).map((v) => theo[v][0]);
+          ra.push({ type: "loc", cards: cards, score: diem("loc", cards) });
         }
       }
     }
-
-    return ra.filter((g) => canBeat(g, table))
-             .sort((a, b) => {
-               const sa = sortCards(a), sb = sortCards(b);
-               return compareCards(sa[sa.length - 1], sb[sb.length - 1]);
-             });
+    return ra.sort((a, b) => b.score - a.score);
   }
 
-  /** Nước ĐÈ cho account giữ tiền: ưu tiên nước KHÔNG AI CHẶN LẠI ĐƯỢC.
-   *
-   * Đè xong mà bị đè tiếp là mất đúng thứ đang cần giành — quyền dẫn. Trong số
-   * nước đè được, nếu có nước mà tập lá còn ẩn không chặn nổi thì chọn nó;
-   * không thì lấy nước NHỎ NHẤT, giữ quân mạnh lại.
-   */
-  function chooseWinnerBeat(hand, table, playedCards) {
-    const cands = beatCandidates(hand, table);
-    if (!cands.length) return null;
-    try {
-      const unseen = unseenCards(hand, playedCards || []);
-      const chac = cands.find((c) => !canAnyoneBeat(c, unseen));
-      if (chac) return chac;
-    } catch (e) {}
-    return cands[0];
-  }
-
-  /**
-   * Nước xả cho ACCOUNT PHỤ: tống lá NGUY HIỂM đi sớm, giữ lại vài lá thấp.
-   *
-   * Bài toán: cuối ván ai còn Heo / 3 bích trên tay thì bị phạt ("thối"). Cách
-   * chắc chắn nhất để không bị phạt là đánh hết lá cao TỪ SỚM, phần còn lại tất
-   * yếu là lá thấp. Nhưng phụ vẫn phải chừa vài lá thấp để mồi cho chính đè và
-   * giành lại quyền dẫn — nên không xả sạch, mà giữ `reserveSize` lá thấp nhất.
-   *
-   * Khác hoàn toàn chiều ưu tiên của Account chính: chính chọn tổ hợp NHỎ NHẤT
-   * (giữ lá cao để còn đè được), phụ chọn tổ hợp CHỨA LÁ CAO NHẤT (tống nguy
-   * hiểm đi). Phụ không cần quyền kiểm soát nên không có gì để mất.
-   *
-   * Ưu tiên theo LÁ CAO NHẤT chứ không theo loại tổ hợp: mục tiêu là giảm phạt,
-   * không phải giảm số lượt. Cùng lá cao thì chọn nhóm nhiều lá hơn (tống được
-   * nhiều hơn trong một lượt).
-   *
-   * @returns {number[]|null} nhóm lá nên đánh, hoặc null khi chỉ còn phần giữ
-   *          lại (lúc đó gọi bên ngoài tự chuyển sang chế độ mồi lá thấp).
-   */
-  /** Mọi nhóm xả được (ngoài phần giữ), xếp theo lá cao GIẢM DẦN. */
-  /** Phần bài ĐƯỢC PHÉP xả = bỏ đi `reserveSize` lá thấp nhất.
-   *
-   * Tách riêng để `chooseDumpBeat` dùng chung đúng một định nghĩa; trước đây nó
-   * suy ra phần này bằng cách `.flat()` danh sách tổ hợp, đúng nhưng vòng vo.
-   */
-  function phanDuocXa(cards, reserveSize) {
-    const keep = (reserveSize === undefined || reserveSize === null)
-      ? DEFAULT_RESERVE : Math.max(0, reserveSize | 0);
-    const hand = sortCards(cards || []);
-    return hand.length <= keep ? [] : hand.slice(keep);
-  }
-
-  /** Xếp theo mục tiêu của nick phụ: NHÓM TO TRƯỚC, cùng cỡ thì LÁ CAO trước. */
-  function xepTheoKieuXa(a, b) {
-    if (b.length !== a.length) return b.length - a.length;
-    return compareCards(b[b.length - 1], a[a.length - 1]);
-  }
-
-  function dischargeCandidates(cards, reserveSize) {
-    // Tổ hợp chỉ tìm TRONG phần được xả nên phần giữ lại không bao giờ bị xé.
-    const pool = phanDuocXa(cards, reserveSize);
-    if (!pool.length) return [];               // chỉ còn phần giữ để mồi
-    const out = [];
-    for (const m of enumerateMelds(pool)) {
-      const group = [];
-      for (let i = 0; i < pool.length; i++) if (m.mask & (1 << i)) group.push(pool[i]);
-      out.push(group);
-    }
-    // NHÓM TO TRƯỚC, cùng cỡ thì LÁ CAO trước.
-    //
-    // Mục tiêu của phụ là còn LẠI ÍT LÁ NHẤT khi ván kết thúc. Số lượt phụ có
-    // là hữu hạn, nên mỗi lượt phải xả được nhiều lá nhất — đôi/ba/sảnh hơn hẳn
-    // một lá lẻ. Trong cùng cỡ mới xét tới việc tống lá nguy hiểm.
-    //
-    // (Bản trước xếp lá cao lên đầu, nên một lá Heo được chọn trước cả đôi K —
-    // xả được 1 lá thay vì 2. Đúng triệu chứng "không chọn tổ hợp đôi/ba/sảnh".)
-    out.sort(xepTheoKieuXa);
-    return out;
-  }
-
-  function chooseDumpDischarge(cards, reserveSize, partnerCards) {
-    return preferPartnerBeatable(dischargeCandidates(cards, reserveSize), partnerCards);
-  }
-
-  /**
-   * Nước ĐÈ cho Account phụ: khi Account chính vừa đánh mà phụ CÒN NHIỀU HƠN
-   * phần giữ lại thì đè bằng tổ hợp CAO NHẤT — mượn chính lượt của đồng đội
-   * làm cơ hội xả lá nguy hiểm.
-   *
-   * Chỉ khi đã tụt về đúng phần giữ (3-4 lá thấp) mới thôi đè và chuyển sang
-   * mồi, để Account chính giành lại quyền dẫn rồi đi hết bài.
-   *
-   * Vẫn không đụng vào phần giữ: tổ hợp chỉ tìm ngoài `reserveSize` lá thấp nhất.
-   *
-   * @returns {number[]|null} nhóm lá nên đè, hoặc null -> bên ngoài PASS.
-   */
-  function chooseDumpBeat(cards, tableCards, reserveSize, partnerCards) {
-    if (!tableCards || !tableCards.length) return null;
-    // Nguồn ứng viên: `beatCandidates` (sinh ĐỦ, kể cả sảnh đổi chất ở lá đỉnh),
-    // rồi mới lọc theo phần được xả. Bản trước lọc từ `dischargeCandidates` nên
-    // thừa hưởng luôn lỗ hổng sảnh chất thấp.
-    const duocXa = new Set(phanDuocXa(cards, reserveSize));
-    const cands = beatCandidates(cards, tableCards)
-      .filter((g) => g.every((c) => duocXa.has(c)))
-      // `beatCandidates` xếp TĂNG DẦN cho nick chính (giữ quân mạnh). Nick phụ
-      // cần chiều ngược lại: mượn lượt đồng đội để tống lá nguy hiểm đi.
-      .sort(xepTheoKieuXa);
-    if (!cands.length) return null;             // đã về phần giữ / không đè được
-    return preferPartnerBeatable(cands, partnerCards);
-  }
-
-  // ===================== ĐẾM BÀI =====================
-  // Mọi lá đã đánh ra bàn đều công khai (luồng WS gửi `fP.dCs` kèm ai đánh).
-  // Biết bài mình + mọi lá đã ra => suy ra tập lá CÒN ẨN. Từ đó biết nước nào
-  // không ai chặn được nữa.
-
-  /** 52 lá trừ đi (bài mình ∪ lá đã ra bàn). */
-  function unseenCards(myCards, playedCards) {
-    const seen = new Set();
-    for (const c of myCards || []) seen.add(Number(c));
-    for (const c of playedCards || []) seen.add(Number(c));
-    const out = [];
-    for (let c = 0; c < 52; c++) if (!seen.has(c)) out.push(c);
-    return out;
-  }
-
-  /**
-   * Có ai còn chặn được nhóm này không?
-   *
-   * Kiểm tra theo CẤU TRÚC trên tập lá còn ẩn, không liệt kê tổ hợp: tập ẩn có
-   * thể tới ~39 lá, mà enumerateMelds dùng bitmask 32-bit nên sẽ tràn.
-   */
-  function canAnyoneBeat(meld, unseen) {
-    if (!meld || !meld.length) return false;
-    const sc = sortCards(meld);
-    const high = sc[sc.length - 1];
-    const n = sc.length;
-    const sameVal = sc.every((c) => getCardVal(c) === getCardVal(sc[0]));
-
-    // Gom lá ẩn theo bậc (mỗi bậc sắp tăng dần)
-    const byVal = new Map();
-    for (const c of sortCards(unseen || [])) {
-      const v = getCardVal(c);
-      if (!byVal.has(v)) byVal.set(v, []);
-      byVal.get(v).push(c);
-    }
-
-    if (n === 1) {
-      for (const c of unseen || []) if (compareCards(c, high) > 0) return true;
-      // Tứ quý chặt Heo đơn
-      if (getCardVal(high) === 15) {
-        for (const g of byVal.values()) if (g.length >= 4) return true;
+  /** Mọi nhóm `n` lá cùng bậc (đôi/sám), xếp điểm GIẢM DẦN. */
+  function cacBoCungBac(hand, n, type) {
+    const theo = gomTheoBac(hand);
+    const ra = [];
+    for (const v of Object.keys(theo)) {
+      if (theo[v].length >= n) {
+        const cards = theo[v].slice(0, n);
+        ra.push({ type: type, cards: cards, score: diem(type, cards) });
       }
-      return false;
     }
-    if ((n === 2 || n === 3) && sameVal) {
-      for (const g of byVal.values()) {
-        if (g.length < n) continue;
-        // canBeat so lá CAO NHẤT của mỗi bên -> lấy n lá cao nhất của bậc đó
-        const top = g[g.length - 1];
-        if (compareCards(top, high) > 0) return true;
-      }
-      return false;
-    }
-    if (n === 4 && sameVal) {
-      for (const g of byVal.values()) {
-        if (g.length >= 4 && compareCards(g[g.length - 1], high) > 0) return true;
-      }
-      return false;
-    }
-    if (n >= 3 && isStraight(meld)) {
-      // Sảnh cùng độ dài, lá cao hơn: cần n bậc liên tiếp đều còn lá ẩn
-      const vals = Array.from(byVal.keys()).filter((v) => v < 15).sort((a, b) => a - b);
-      for (let s = 0; s + n - 1 < vals.length; s++) {
-        let ok = true;
-        for (let k = 1; k < n; k++) {
-          if (vals[s + k] !== vals[s + k - 1] + 1) { ok = false; break; }
-        }
-        if (!ok) continue;
-        const topVal = vals[s + n - 1];
-        const topCard = byVal.get(topVal)[byVal.get(topVal).length - 1];
-        if (compareCards(topCard, high) > 0) return true;
-      }
-      return false;
-    }
-    return false;
+    return ra.sort((a, b) => b.score - a.score);
   }
 
-  /**
-   * Phân rã tối ưu + đánh dấu nhóm nào KHÔNG AI CHẶN ĐƯỢC nữa.
+  /** Mọi lá đơn, xếp GIẢM DẦN. */
+  function cacLaDon(hand) {
+    return sortCards(hand).reverse().map((c) => ({
+      type: "single", cards: [c], score: diem("single", [c]),
+    }));
+  }
+
+  // ===================== PHÂN LOẠI & SO SÁNH =====================
+
+  function cungBac(cards) {
+    if (!cards.length) return false;
+    const v = getCardVal(cards[0]);
+    for (let i = 1; i < cards.length; i++) if (getCardVal(cards[i]) !== v) return false;
+    return true;
+  }
+
+  /** Kiểu bài của một nhóm lá, hoặc null nếu không hợp lệ.
    *
-   * `allUnbeatable = true` nghĩa là mọi nhóm còn lại đều bất khả chặn: cứ đánh
-   * lần lượt là đi hết bài, KHÔNG phụ thuộc may rủi. Đây là trạng thái đáng
-   * phát hiện nhất — nó biến ván thành chắc thắng.
+   * Không nhận tứ quý và ba đôi thông — Sunwin không có bom, xem đầu file.
    */
-  function analyzeControl(myCards, playedCards) {
-    const plan = planMinTurns(myCards);
-    const unseen = unseenCards(myCards, playedCards);
-    const melds = plan.melds.map(function (m) {
-      return { cards: m, unbeatable: !canAnyoneBeat(m, unseen) };
-    });
-    const sure = melds.filter((m) => m.unbeatable).length;
-    return {
-      turns: plan.turns,
-      melds: melds,
-      unseen: unseen.length,
-      sureCount: sure,
-      allUnbeatable: melds.length > 0 && sure === melds.length,
-    };
+  function phanLoai(cards) {
+    if (!cards || !cards.length) return null;
+    const n = cards.length;
+    if (n === 1) return { type: "single", cards: cards, hi: cards[0], len: 1 };
+    if (n === 2 && cungBac(cards)) {
+      return { type: "pair", cards: cards, hi: laDinh(cards), len: 2 };
+    }
+    if (n === 3 && cungBac(cards)) {
+      return { type: "trips", cards: cards, hi: laDinh(cards), len: 3 };
+    }
+    if (isStraight(cards)) {
+      return { type: "loc", cards: cards, hi: laDinh(cards), len: n };
+    }
+    return null;
   }
 
-  // ============ GIỮ NHỊP TIẾP SỨC (phụ mồi — chính đè) ============
-
-  /** Đồng đội có đè được nhóm này không? Dùng bài thật của đồng đội (Hub chia sẻ). */
-  function canPartnerBeat(meld, partnerCards) {
-    if (!partnerCards || !partnerCards.length) return false;
-    const pool = sortCards(partnerCards);
-    if (pool.length > 20) {
-      // Ngoài tầm bitmask -> chỉ xét lá lẻ, đủ cho phần mồi (toàn lá đơn).
-      if (meld.length !== 1) return false;
-      return pool.some((c) => canBeat([c], meld));
-    }
-    const melds = enumerateMelds(pool);
-    for (const m of melds) {
-      const g = [];
-      for (let i = 0; i < pool.length; i++) if (m.mask & (1 << i)) g.push(pool[i]);
-      if (canBeat(g, meld)) return true;
-    }
-    return false;
+  /** `a` có đè được `b` không: cùng kiểu, sảnh phải cùng độ dài, lá đỉnh lớn hơn. */
+  function beats(a, b) {
+    if (!a || !b || a.type !== b.type) return false;
+    if (a.type === "loc" && a.cards.length !== b.cards.length) return false;
+    return compareCards(a.hi, b.hi) > 0;
   }
 
-  /**
-   * ĐIỀU KIỆN HALL cho chuỗi mồi–đè.
-   *
-   * Phần giữ lại của phụ toàn lá đơn dùng để mồi. Muốn chính LUÔN giành lại
-   * được quyền dẫn thì mỗi lá mồi phải ghép được với một lá RIÊNG của chính đè
-   * nó — tức tồn tại hệ đại diện phân biệt (SDR). Định lý Hall cho biết điều đó
-   * khả thi hay không NGAY TỪ ĐẦU, thay vì phát hiện muộn giữa ván.
-   *
-   * Ghép cặp hai phía bằng đường tăng luồng; n <= 13 nên chi phí không đáng kể.
-   */
-  function hallCheck(reserveCards, partnerCards) {
-    const reserve = sortCards(reserveCards || []);
-    const pool = sortCards(partnerCards || []);
-    const adj = reserve.map((r) => {
-      const out = [];
-      for (let j = 0; j < pool.length; j++) if (canBeat([pool[j]], [r])) out.push(j);
-      return out;
-    });
+  // ===================== HAI NƯỚC ĐI =====================
 
-    const matchOf = new Array(pool.length).fill(-1);
-    let matched = 0;
-    for (let i = 0; i < reserve.length; i++) {
-      const seen = new Array(pool.length).fill(false);
-      const tryAssign = (u) => {
-        for (const v of adj[u]) {
-          if (seen[v]) continue;
-          seen[v] = true;
-          if (matchOf[v] === -1 || tryAssign(matchOf[v])) {
-            matchOf[v] = u;
-            return true;
-          }
-        }
-        return false;
-      };
-      if (tryAssign(i)) matched++;
-    }
-    return {
-      ok: matched === reserve.length,
-      matched: matched,
-      need: reserve.length,
-      // Lá mồi mà đồng đội KHÔNG có gì đè -> phải bỏ khỏi phần giữ
-      unmatched: reserve.filter((_, i) => !matchOf.includes(i)),
-    };
+  /** Lượt tự do: sảnh -> sám -> đôi -> lá đơn, mỗi loại lấy TO NHẤT. */
+  function chooseLead(hand) {
+    if (!hand || !hand.length) return null;
+    const sanh = cacSanh(hand);
+    if (sanh.length) return sanh[0].cards;
+    const sam = cacBoCungBac(hand, 3, "trips");
+    if (sam.length) return sam[0].cards;
+    const doi = cacBoCungBac(hand, 2, "pair");
+    if (doi.length) return doi[0].cards;
+    const don = cacLaDon(hand);
+    return don.length ? don[0].cards : null;
   }
 
-  /**
-   * Chọn nước xả/đè cho phụ sao cho GIỮ ĐƯỢC NHỊP: ưu tiên nhóm CAO NHẤT mà
-   * đồng đội vẫn đè lại được.
-   *
-   * Không có ràng buộc này thì phụ hay tống ngay Heo — mà Heo đơn chỉ tứ quý
-   * mới chặt được, nên chính mất quyền dẫn và chuỗi tiếp sức đứt.
-   *
-   * `candidates` là danh sách nhóm hợp lệ đã sắp theo lá cao giảm dần.
-   */
-  function preferPartnerBeatable(candidates, partnerCards) {
-    if (!candidates || !candidates.length) return null;
-    if (partnerCards && partnerCards.length) {
-      for (const g of candidates) if (canPartnerBeat(g, partnerCards)) return g;
+  /** Lượt đè: cùng kiểu với bàn, đánh nước TO NHẤT đè được; không có thì null. */
+  function chooseFollow(hand, tableCards) {
+    if (!hand || !hand.length) return null;
+    const ban = phanLoai(tableCards);
+    if (!ban) return null;
+
+    let ung = [];
+    if (ban.type === "loc") {
+      ung = cacSanh(hand).filter((x) => x.cards.length === ban.cards.length);
+    } else if (ban.type === "trips") {
+      ung = cacBoCungBac(hand, 3, "trips");
+    } else if (ban.type === "pair") {
+      ung = cacBoCungBac(hand, 2, "pair");
+    } else {
+      ung = cacLaDon(hand);
     }
-    return candidates[0];   // không có thì cứ xả cao nhất
+
+    for (const x of ung) {
+      const t = phanLoai(x.cards);
+      if (t && beats(t, ban)) return x.cards;
+    }
+    return null;
+  }
+
+  /** Cửa duy nhất cho content_main.js: có bài trên bàn thì đè, không thì dẫn. */
+  function chooseBestPlay(hand, tableCards) {
+    if (tableCards && tableCards.length) return chooseFollow(hand, tableCards);
+    return chooseLead(hand);
   }
 
   const api = {
-    DEFAULT_RESERVE: DEFAULT_RESERVE,
-    canPartnerBeat: canPartnerBeat,
-    hallCheck: hallCheck,
-    preferPartnerBeatable: preferPartnerBeatable,
-    dischargeCandidates: dischargeCandidates,
-    unseenCards: unseenCards,
-    canAnyoneBeat: canAnyoneBeat,
-    analyzeControl: analyzeControl,
-    canBeat: canBeat,
-    beatCandidates: beatCandidates,
-    chooseWinnerBeat: chooseWinnerBeat,
-    chooseDumpDischarge: chooseDumpDischarge,
-    chooseDumpBeat: chooseDumpBeat,
     getCardVal: getCardVal,
     getCardSuit: getCardSuit,
     compareCards: compareCards,
     sortCards: sortCards,
     isStraight: isStraight,
-    enumerateMelds: enumerateMelds,
-    planMinTurns: planMinTurns,
+    phanLoai: phanLoai,
+    beats: beats,
+    diem: diem,
+    cacSanh: cacSanh,
+    cacBoCungBac: cacBoCungBac,
+    cacLaDon: cacLaDon,
+    chooseLead: chooseLead,
+    chooseFollow: chooseFollow,
+    chooseBestPlay: chooseBestPlay,
   };
 
   root.AutoToolCards = api;

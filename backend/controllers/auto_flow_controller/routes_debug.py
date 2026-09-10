@@ -126,7 +126,6 @@ _TABLE_VIEW_JS = """() => {
         rid: info && info.rid, bet: info && info.b, mu: info && info.Mu,
         in_game: !!window.__game_in_progress,
         last_table_cards: (window.__last_table_cards || []).slice(),
-        partner_cards_count: window.__partner_cards_count,
     };
 
     // 3. MỌI BỘ BÀI ĐÃ ĐÁNH RA BÀN — đọc từ component CardSet của Cocos.

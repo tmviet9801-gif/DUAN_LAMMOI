@@ -132,7 +132,6 @@ class MatchContext:
         self.requested_rid = FIXED_TABLE_RIDS.get(f"{self.bet_val}_{self.target_mu}")
 
         self.auto_xa = bool(body.get("auto_xa", True))
-        self.auto_start_guest_ss = bool(body.get("auto_start_guest_ss", True))
         # Mac dinh FALSE: sau khi xa, nick phu out con Account chinh O LAI giu
         # ban cho khach ngoai. Truoc day mac dinh True (va o tren giao dien tich
         # san) -> ca hai cung ve sanh, ban bo trong — trai nguyen tac "phai co

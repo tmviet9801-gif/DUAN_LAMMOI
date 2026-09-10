@@ -221,77 +221,6 @@
         background: #ef4444 !important;
       }
 
-      /* 4. IN-GAME VISUAL CARDS BAR */
-      #autotool-cards-panel {
-        position: fixed !important;
-        top: 56px !important;
-        left: 50% !important;
-        transform: translateX(-50%) !important;
-        z-index: 2147483646 !important;
-        display: none;
-        align-items: center !important;
-        gap: 4px !important;
-        padding: 5px 12px !important;
-        border-radius: 8px !important;
-        background: rgba(15, 23, 42, 0.95) !important;
-        border: 1px solid rgba(56, 189, 248, 0.4) !important;
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7) !important;
-        backdrop-filter: blur(6px) !important;
-        pointer-events: none !important;
-        user-select: none !important;
-        transition: all 0.2s ease !important;
-      }
-      #autotool-cards-panel.visible {
-        display: inline-flex !important;
-      }
-      .autotool-card-chip {
-        display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        min-width: 26px !important;
-        height: 30px !important;
-        padding: 0 5px !important;
-        border-radius: 4px !important;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace !important;
-        font-size: 13px !important;
-        font-weight: 800 !important;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4) !important;
-        border: 1px solid rgba(255, 255, 255, 0.15) !important;
-      }
-      .autotool-card-chip.black {
-        background: #1e293b !important;
-        color: #f8fafc !important;
-        border-color: #475569 !important;
-      }
-      .autotool-card-chip.red {
-        background: #450a0a !important;
-        color: #f87171 !important;
-        border-color: #ef4444 !important;
-      }
-
-      /* 5. IN-GAME PARTNER CARDS BAR (HIỂN THỊ BÀI ĐỒNG ĐỘI) */
-      #autotool-partner-cards-panel {
-        position: fixed !important;
-        top: 96px !important;
-        left: 50% !important;
-        transform: translateX(-50%) !important;
-        z-index: 2147483645 !important;
-        display: none;
-        align-items: center !important;
-        gap: 4px !important;
-        padding: 4px 10px !important;
-        border-radius: 8px !important;
-        background: rgba(30, 27, 75, 0.95) !important;
-        border: 1px solid rgba(168, 85, 247, 0.5) !important;
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7) !important;
-        backdrop-filter: blur(6px) !important;
-        pointer-events: none !important;
-        user-select: none !important;
-        transition: all 0.2s ease !important;
-      }
-      #autotool-partner-cards-panel.visible {
-        display: inline-flex !important;
-      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -309,82 +238,6 @@
     const rank = rankNames[rawRank] || "?";
     const icon = suitIcons[suitIndex] || "";
     return { id: c, rank, icon, isRed, text: rank + icon };
-  }
-
-  function updateCardsPanel(cards) {
-    if (window !== window.top) return;
-    ensureStyles();
-    let panel = document.getElementById("autotool-cards-panel");
-    if (!panel) {
-      panel = document.createElement("div");
-      panel.id = "autotool-cards-panel";
-      (document.body || document.documentElement).appendChild(panel);
-    }
-    if (!cards || !cards.length) {
-      panel.className = "";
-      panel.innerHTML = "";
-      return;
-    }
-    panel.className = "visible";
-    const sorted = cards.slice().sort((a, b) => {
-      function getVal(x) {
-        const r = Math.floor(x / 4);
-        if (r >= 2) return r + 1;
-        if (r === 0) return 14;
-        if (r === 1) return 15;
-        return 0;
-      }
-      const va = getVal(a), vb = getVal(b);
-      if (va !== vb) return va - vb;
-      return (a % 4) - (b % 4);
-    });
-
-    const chips = sorted.map((c) => {
-      const info = parseCardInfo(c);
-      if (!info) return "";
-      const cls = info.isRed ? "autotool-card-chip red" : "autotool-card-chip black";
-      return `<span class="${cls}">${info.text}</span>`;
-    }).join("");
-
-    panel.innerHTML = `<span style="font-size:11px;font-weight:700;color:#38bdf8;margin-right:4px;">🃏 Bạn (${cards.length}):</span>` + chips;
-  }
-
-  function updatePartnerCardsPanel(cards, partnerName = "Đồng đội") {
-    if (window !== window.top) return;
-    ensureStyles();
-    let panel = document.getElementById("autotool-partner-cards-panel");
-    if (!panel) {
-      panel = document.createElement("div");
-      panel.id = "autotool-partner-cards-panel";
-      (document.body || document.documentElement).appendChild(panel);
-    }
-    if (!cards || !cards.length) {
-      panel.className = "";
-      panel.innerHTML = "";
-      return;
-    }
-    panel.className = "visible";
-    const sorted = cards.slice().sort((a, b) => {
-      function getVal(x) {
-        const r = Math.floor(x / 4);
-        if (r >= 2) return r + 1;
-        if (r === 0) return 14;
-        if (r === 1) return 15;
-        return 0;
-      }
-      const va = getVal(a), vb = getVal(b);
-      if (va !== vb) return va - vb;
-      return (a % 4) - (b % 4);
-    });
-
-    const chips = sorted.map((c) => {
-      const info = parseCardInfo(c);
-      if (!info) return "";
-      const cls = info.isRed ? "autotool-card-chip red" : "autotool-card-chip black";
-      return `<span class="${cls}">${info.text}</span>`;
-    }).join("");
-
-    panel.innerHTML = `<span style="font-size:11px;font-weight:700;color:#c084fc;margin-right:4px;">👥 ${partnerName} (${cards.length}):</span>` + chips;
   }
 
   // Helper biến bất kỳ phần tử nào thành có thể kéo thả (Draggable) và lưu vị trí vào localStorage
@@ -737,7 +590,6 @@
         window.postMessage({
           type: "AUTOTOOL_SET_HUNT",
           auto_hunt: true,
-          auto_start_guest_ss: data && data.auto_start_guest_ss,
           auto_xa: data && data.auto_xa,
         }, "*");
         updateViewBanner(`🎯 <b>${activeProfileName || 'Tool V3'}</b>: Đang SĂN BÀN mức $${((data && data.bet) || 100).toLocaleString()}`, "active");
@@ -815,6 +667,18 @@
     if (!ev.data) return;
 
     // Khởi tạo Profile
+    // Lệnh nối/ngắt cổng kết nối do app bắn xuống qua Playwright. Khi đã
+    // ngắt thì không còn WS để app gọi, nên đây là đường DUY NHẤT nối lại.
+    if (ev.data.type === "AUTOTOOL_HUB_DISCONNECT") {
+      safeSendMessage({ type: "HUB_DISCONNECT" });
+      updateViewBanner(`🔌 <b>${activeProfileName || "Tool V3"}</b>: ĐÃ NGẮT kết nối với app — bạn tự thao tác`, "lobby");
+      return;
+    }
+    if (ev.data.type === "AUTOTOOL_HUB_CONNECT") {
+      safeSendMessage({ type: "HUB_CONNECT", profile_name: activeProfileName || ev.data.profile_name || "" });
+      return;
+    }
+
     if (ev.data.type === "AUTOTOOL_HUNT_STATE") {
       // Main world báo trạng thái Săn bàn thực tế (vd: sau reload vẫn còn "Đã Dừng")
       isHuntOn = !!ev.data.auto_hunt;
@@ -846,11 +710,6 @@
           real_uid: String(ev.data.uid || ""),
         });
       }
-      // Xóa sạch bài rác lưu cũ nếu đang ở sảnh
-      requestControl("/api/accounts/update-cards", {
-        profile_name: activeProfileName,
-        cards: [],
-      }, "POST").catch(() => {});
       requestControl("/api/accounts/update-log", {
         profile_name: activeProfileName,
         log: "Đang ở sảnh (Chờ tìm bàn)",
@@ -942,13 +801,6 @@
           log: logMsg,
         }, "POST").catch(() => {});
 
-        // Đảm bảo không hiển thị bài cũ khi mới vào bàn chưa chia bài
-        if (!ev.data.cards || !ev.data.cards.length) {
-          requestControl("/api/accounts/update-cards", {
-            profile_name: activeProfileName,
-            cards: [],
-          }, "POST").catch(() => {});
-        }
 
         requestControl("/api/autoplay/report-room", {
           profile_name: activeProfileName || localStorage.getItem("KEY_USER_NAME") || document.title || "",
@@ -1003,9 +855,6 @@
       lastRoomInfo = null;
       pendingJoinRid = null;
       matchedPartner = "";
-      updateCardsPanel([]);
-      updatePartnerCardsPanel([]);
-
       const pLabel = activeProfileName || "Tool V3";
       updateViewBanner(`🏠 <b>${pLabel}</b>: Đang ở sảnh (Chờ tìm bàn)`, "lobby");
 
@@ -1013,11 +862,6 @@
       requestControl("/api/accounts/update-log", {
         profile_name: activeProfileName,
         log: "Đang ở sảnh (Chưa vào bàn)",
-      }, "POST").catch(() => {});
-
-      requestControl("/api/accounts/update-cards", {
-        profile_name: activeProfileName,
-        cards: [],
       }, "POST").catch(() => {});
 
       safeSendMessage({
@@ -1114,28 +958,16 @@
     // NHẬN BÀI CHIA ĐẦU VÁN HOẶC CẬP NHẬT
     else if (ev.data.type === "AUTOTOOL_CARDS_DEALT") {
       const cards = ev.data.cards || [];
-      updateCardsPanel(cards);
       const pLabel = activeProfileName || "Tool V3";
       updateViewBanner(`🃏 <b>${pLabel}</b>: Đã nhận bài (${cards.length} lá) - Đang xả bài tự động...`, "active");
       showToast(`🃏 <b>ĐÃ CHIA BÀI (${cards.length} LÁ)!</b><br>Tự động xả bài theo thuật toán`, "info");
 
-      safeSendMessage({
-        type: "CARDS_DEALT",
-        profile_name: activeProfileName,
-        cards: cards,
-      });
-
-      requestControl("/api/accounts/update-cards", {
-        profile_name: activeProfileName,
-        cards: cards,
-      }, "POST").catch(() => {});
     }
 
     // CẬP NHẬT BÀI SAU KHI ĐÁNH
     else if (ev.data.type === "AUTOTOOL_CARDS_UPDATED") {
       const cards = ev.data.cards || [];
       const played = ev.data.played_cards || [];
-      updateCardsPanel(cards);
       const pLabel = activeProfileName || "Tool V3";
       const playedText = played.map((c) => {
         const inf = parseCardInfo(c);
@@ -1144,16 +976,6 @@
 
       updateViewBanner(`🃏 <b>${pLabel}</b>: Đã đánh [${playedText}] (Còn ${cards.length} lá)`, "active");
 
-      safeSendMessage({
-        type: "CARDS_UPDATED",
-        profile_name: activeProfileName,
-        cards: cards,
-      });
-
-      requestControl("/api/accounts/update-cards", {
-        profile_name: activeProfileName,
-        cards: cards,
-      }, "POST").catch(() => {});
     }
 
     // HIỂN THỊ HÀNH ĐỘNG ĐỒNG ĐỘI VỪA ĐÁNH BÀI
@@ -1173,17 +995,21 @@
       updateViewBanner(`🟡 <b>${pName}</b>: Đã BỎ LƯỢT! Đến lượt bạn xả tiếp!`, "active");
     }
 
-    // HIỂN THỊ BÀI ĐỒNG ĐỘI (CHIA SẺ TỪ EXTENSION HUB)
-    else if (ev.data.type === "AUTOTOOL_PARTNER_CARDS_UPDATE") {
-      const pName = ev.data.partner_name || "Đồng đội";
-      const pCards = ev.data.cards || [];
-      updatePartnerCardsPanel(pCards, pName);
+    // ĐO LƯỢT ĐI TRƯỚC: ai được đi đầu ván này, và ai thắng ván trước.
+    else if (ev.data.type === "AUTOTOOL_FIRST_TURN") {
+      safeSendMessage({
+        type: "FIRST_TURN",
+        profile_name: activeProfileName,
+        di_truoc: ev.data.di_truoc,
+        la_minh: ev.data.la_minh,
+        thang_van_truoc: ev.data.thang_van_truoc,
+        minh_thang_van_truoc: ev.data.minh_thang_van_truoc,
+        so_nguoi: ev.data.so_nguoi,
+      });
     }
 
     // KẾT THÚC VÁN BÀI
     else if (ev.data.type === "AUTOTOOL_GAME_ENDED") {
-      updateCardsPanel([]);
-      updatePartnerCardsPanel([]);
       const winner = ev.data.winner || "Kết thúc ván";
       const pLabel = activeProfileName || "Tool V3";
       updateViewBanner(`🏆 <b>VÁN BÀI KẾT THÚC!</b> (${winner} Thắng) | Chuẩn bị ván mới...`, "active");
@@ -1198,16 +1024,6 @@
         cards_left: (typeof ev.data.cards_left === "number") ? ev.data.cards_left : null,
       });
 
-      safeSendMessage({
-        type: "CARDS_UPDATED",
-        profile_name: activeProfileName,
-        cards: [],
-      });
-
-      requestControl("/api/accounts/update-cards", {
-        profile_name: activeProfileName,
-        cards: [],
-      }, "POST").catch(() => {});
     }
 
     // TÀI KHOẢN BỊ ĐĂNG XUẤT / HẾT PHIÊN

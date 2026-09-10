@@ -92,46 +92,6 @@
   }
   App.getFilteredProfiles = getFilteredProfiles;
 
-  function parseCardBadge(c) {
-    if (typeof c !== "number" || c < 0 || c > 51) return null;
-    const rawRank = Math.floor(c / 4);
-    const suitIndex = c % 4;
-    const rankNames = {
-      2: "3", 3: "4", 4: "5", 5: "6", 6: "7", 7: "8", 8: "9", 9: "10",
-      10: "J", 11: "Q", 12: "K", 0: "A", 1: "2"
-    };
-    const suitIcons = ["♠", "♣", "♦", "♥"];
-    const isRed = (suitIndex === 2 || suitIndex === 3);
-    const rank = rankNames[rawRank] || "?";
-    const icon = suitIcons[suitIndex] || "";
-    return { text: rank + icon, isRed };
-  }
-
-  function renderCardsHtml(cards) {
-    if (!cards || !Array.isArray(cards) || !cards.length) {
-      return '<span class="cards-empty">-</span>';
-    }
-    const sorted = cards.slice().sort((a, b) => {
-      function getVal(x) {
-        const r = Math.floor(x / 4);
-        if (r >= 2) return r + 1;
-        if (r === 0) return 14;
-        if (r === 1) return 15;
-        return 0;
-      }
-      const va = getVal(a), vb = getVal(b);
-      if (va !== vb) return va - vb;
-      return (a % 4) - (b % 4);
-    });
-
-    return '<div class="cards-deck-flex">' + sorted.map(c => {
-      const p = parseCardBadge(c);
-      if (!p) return "";
-      const cls = p.isRed ? "card-badge red" : "card-badge black";
-      return `<span class="${cls}" title="${p.text}">${p.text}</span>`;
-    }).join("") + ` <span class="cards-cnt-hint">(${sorted.length})</span></div>`;
-  }
-
   function renderProfilesTable() {
     const all = getFilteredProfiles();
     const total = all.length;
@@ -147,7 +107,7 @@
     tbody.innerHTML = "";
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="14" class="hint" style="text-align:center; padding: 20px;">Không có profile nào.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="13" class="hint" style="text-align:center; padding: 20px;">Không có profile nào.</td></tr>';
     }
 
     const allChecked = rows.length > 0 && rows.every((a) => App.selectedProfileIds.has(a.id));
@@ -169,7 +129,6 @@
         ? Number(a.balance).toLocaleString() 
         : (a.balance || "--");
       const roomStr = a.room ? App.esc(String(a.room)) : "-";
-      const cardsHtml = renderCardsHtml(a.cards);
       const logStr = a.log ? App.esc(String(a.log)) : (isOpen ? "Đang chạy Chrome" : "Sẵn sàng");
       const statusText = isOpen ? "Live" : (a.status || "Idle");
       const statusBadge = `<span class="${statusText === 'Live' ? 'badge-live' : 'badge-idle'}">${statusText}</span>`;
@@ -188,17 +147,11 @@
         <td class="td-proxy" title="${App.esc(proxy || "IP máy")}">${proxy ? App.esc(proxy) : '<span class="ip-local">IP máy</span>'}</td>
         <td class="td-balance">${balanceStr}</td>
         <td class="td-room">${roomStr}</td>
-        <td class="td-cards">${cardsHtml}</td>
         <td class="td-log" title="${logStr}">${logStr}</td>
         <td>${statusBadge}</td>
-        <td><button class="btn-tbl btn-tb cyan btn-row-find" title="Tìm phòng cho ${App.esc(a.name)}">Tìm.P</button></td>
+        <td><button class="btn-tbl btn-tb cyan btn-row-find" title="${App.esc(a.name)} dò tới khi ngồi được bàn TRỐNG rồi giữ bàn">Tìm bàn</button></td>
+        <td><button class="btn-tbl btn-tb lime btn-row-join" title="${App.esc(a.name)} vào thẳng bàn mà nick khác đang giữ">Vào bàn</button></td>
         <td><button class="btn-tbl btn-tb red btn-row-leave" title="Thoát phòng cho ${App.esc(a.name)}">Thoát.P</button></td>
-        <td>
-          <select class="sel-tbl sel-row-site">
-            <option value="HIT" ${(!a.site || a.site === 'HIT') ? 'selected' : ''}>HIT</option>
-            <option value="SUN" ${a.site === 'SUN' ? 'selected' : ''}>SUN</option>
-          </select>
-        </td>
         <td><button class="btn-tbl btn-tb red-dark btn-row-stop" title="Dừng thao tác ${App.esc(a.name)}">Dừng</button></td>
         <td style="text-align:center;">
           <span class="dot-connect ${isConnected ? 'connected' : 'offline'}" title="${isConnected ? 'Connected' : 'Offline'}"></span>
@@ -228,24 +181,17 @@
         App.openEditProfile(a);
       };
 
-      // Tìm.P: đưa nick này lên ĐẦU danh sách chạy (account giữ tiền) rồi
-      // kích hoạt Gom Bàn. Trước đây nút này ghi vào dropdown Chính — dropdown
-      // đã bỏ, nay nó thao tác thẳng trên danh sách đã tích.
+      // XÉ LẺ QUY TRÌNH (11/09/2026). Trước đây nút này chỉ đưa nick lên đầu
+      // danh sách rồi bấm hộ GOM BÀN — vẫn phải tích sẵn cả cặp. Nay hai bước
+      // rời nhau: nick này dò bàn trống và GIỮ bàn; nick khác bấm "Vào bàn".
       tr.querySelector(".btn-row-find").onclick = async (e) => {
         e.stopPropagation();
-        const conLai = Array.from(App.selectedProfileIds).filter((x) => x !== a.id);
-        App.selectedProfileIds.clear();
-        App.selectedProfileIds.add(a.id);
-        conLai.forEach((x) => App.selectedProfileIds.add(x));
-        renderProfilesTable();
-        if (App.selectedProfileIds.size < 2) {
-          App.toast(
-            `${a.name} sẽ giữ tiền. Hãy tích thêm ít nhất 1 profile nữa rồi bấm GOM BÀN & XẢ.`,
-            "warn",
-          );
-          return;
-        }
-        if ($("btnGcSyncMatch")) $("btnGcSyncMatch").click();
+        if (App.timBan) App.timBan(a.name);
+      };
+
+      tr.querySelector(".btn-row-join").onclick = async (e) => {
+        e.stopPropagation();
+        if (App.vaoBan) App.vaoBan(a.name);
       };
 
       // Thoát.P button
@@ -261,12 +207,6 @@
         } catch (err) {
           App.toast(`Thoát phòng ${a.name} lỗi: ${err.message}`, "error");
         }
-      };
-
-      // Site change
-      tr.querySelector(".sel-row-site").onchange = (e) => {
-        e.stopPropagation();
-        a.site = e.target.value;
       };
 
       // Dừng button

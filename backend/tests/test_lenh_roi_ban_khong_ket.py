@@ -131,7 +131,7 @@ def test_xac_minh_vai_tro_sau_khi_gan():
     kich_hoat = (MATCHING.parent / "kich_hoat.py").read_text(encoding="utf-8")
     assert "window.__AUTOTOOL_MATCH_ROLE || null" in kich_hoat
     assert "await bao_dam_kich_hoat(" in code
-    assert code.index("window.__AUTOTOOL_ROLE = 'dump'") < \
+    assert code.index("window.__AUTOTOOL_MATCH_ROLE = 'sub'") < \
         code.index("await bao_dam_kich_hoat("), "phải đọc lại SAU khi gán"
     i = code.index("await bao_dam_kich_hoat(")
     assert 'dong_luot_chay(pages, "không đặt được vai trò")' in code[i:i + 900]

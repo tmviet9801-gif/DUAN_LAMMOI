@@ -1,9 +1,20 @@
-"""Kiểm thử phân rã bài tối ưu (backend/extension/card_logic.js).
+"""Kiểm thử engine chọn nước (backend/extension/card_logic.js).
 
-Logic đánh bài chạy trong trình duyệt nên viết bằng JS. `card_logic.js` được
-tách riêng, thuần tính toán (không đụng DOM/WebSocket), nên nạp được bằng node
-và kiểm thử trực tiếp — khác với content_main.js vốn là IIFE có patch
-WebSocket, không chạy ngoài trình duyệt.
+Engine hiện tại là bản CHUYỂN TỪ CÔNG CỤ SUNWIN, theo yêu cầu của người dùng
+ngày 11/09/2026: "áp dụng lại toàn bộ logic xả bài" và "bỏ phối hợp" giữa hai
+nick. Bản trước là engine phối hợp (nick phụ giữ 3-4 lá thấp làm mồi, đếm bài,
+phân rã tối ưu số lượt); toàn bộ đã gỡ cùng hai file test riêng của nó
+(`test_beat_candidates.py`, `test_phu_xa_bai_tay_that.py`).
+
+Luật phải giữ đúng như Sunwin — mỗi điều dưới đây là một hàm test:
+  - lượt tự do: SẢNH -> SÁM -> ĐÔI -> LÁ ĐƠN, trong mỗi loại lấy TO NHẤT;
+  - "sảnh to nhất" là sảnh có LÁ ĐỈNH cao nhất, KHÔNG phải sảnh dài nhất;
+  - lượt đè: cùng kiểu, đè bằng nước TO NHẤT; không có thì bỏ lượt;
+  - KHÔNG có tứ quý / ba đôi thông / chặt Heo;
+  - sảnh không chứa Heo, nhưng Át được đứng cuối (J-Q-K-A).
+
+`card_logic.js` thuần tính toán nên nạp và chạy được bằng node — khác
+content_main.js vốn là IIFE có patch WebSocket, không chạy ngoài trình duyệt.
 """
 import json
 import shutil
@@ -12,7 +23,8 @@ from pathlib import Path
 
 import pytest
 
-CARD_LOGIC = Path(__file__).parents[1] / "extension" / "card_logic.js"
+EXT = Path(__file__).parents[1] / "extension"
+CARD_LOGIC = EXT / "card_logic.js"
 NODE = shutil.which("node")
 
 pytestmark = pytest.mark.skipif(NODE is None, reason="cần node để chạy card_logic.js")
@@ -29,10 +41,17 @@ def run_js(body: str):
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
-# id lá = rank*4 + suit; rank 2..12 -> '3'..'K', rank 0 -> 'A', rank 1 -> '2'(Heo)
+# id lá = rank_idx*4 + suit; rank_idx 2..12 -> '3'..'K', 0 -> 'A', 1 -> '2'(Heo).
+# Chất: 0 Bích < 1 Chuồn < 2 Rô < 3 Cơ.
 def card(rank_idx: int, suit: int = 0) -> int:
     return rank_idx * 4 + suit
 
+
+BA, BON, NAM, SAU, BAY, TAM, CHIN = 2, 3, 4, 5, 6, 7, 8
+MUOI, J, Q, K, A, HEO = 9, 10, 11, 12, 0, 1
+
+
+# ===================== 1. Nền: bậc, chất, sảnh =====================
 
 def test_card_values_match_game_encoding():
     """Bậc phải khớp mã hoá của game: A=14, Heo=15, còn lại rank+1."""
@@ -56,159 +75,212 @@ def test_straight_never_contains_heo():
     assert res["tooShort"] is False
 
 
-@pytest.mark.parametrize("hand,expected,mota", [
-    ([8, 12, 16, 20, 24, 48, 49], 2, "sảnh 3-4-5-6-7 + đôi K"),
-    ([8, 21, 37], 3, "ba lá rời rạc không ghép được"),
-    ([24, 25, 26, 27], 1, "tứ quý 7"),
-    ([36, 37, 4], 2, "đôi 10 + Heo (Heo không vào sảnh)"),
-    ([8], 1, "một lá"),
-])
-def test_min_turns_known_hands(hand, expected, mota):
-    res = run_js(f"console.log(JSON.stringify(C.planMinTurns({hand}).turns))")
-    assert res == expected, f"{mota}: kỳ vọng {expected} lượt, nhận {res}"
+def test_at_duoc_dung_cuoi_sanh():
+    """J-Q-K-A là sảnh hợp lệ; K-A-2 thì không vì có Heo."""
+    jqka = [card(J), card(Q), card(K), card(A)]
+    res = run_js(
+        "console.log(JSON.stringify({"
+        f" jqka: (C.phanLoai({jqka}) || {{}}).type,"
+        f" ka2: C.phanLoai({[card(K), card(A), card(HEO)]})"
+        "}))")
+    assert res["jqka"] == "loc"
+    assert res["ka2"] is None
 
 
-def test_partition_is_complete_and_valid():
-    """Phân hoạch phải phủ đúng toàn bộ bài, không trùng, mọi nhóm hợp lệ."""
-    res = run_js("""
-      function isValidMeld(cards){
-        if(cards.length===1) return true;
-        const vals=cards.map(C.getCardVal);
-        if(vals.every(v=>v===vals[0])) return cards.length<=4;
-        return C.isStraight(cards);
-      }
-      let bad=[];
-      for(let it=0; it<300; it++){
-        const deck=[...Array(52).keys()];
-        for(let i=51;i>0;i--){const j=(Math.random()*(i+1))|0;[deck[i],deck[j]]=[deck[j],deck[i]];}
-        const hand=deck.slice(0,13);
-        const p=C.planMinTurns(hand);
-        const flat=p.melds.flat();
-        if(flat.length!==13) bad.push(['thieu la',hand]);
-        else if(new Set(flat).size!==13) bad.push(['trung la',hand]);
-        else if(p.melds.length!==p.turns) bad.push(['turns lech',hand]);
-        else for(const m of p.melds) if(!isValidMeld(m)) bad.push(['to hop sai',m]);
-      }
-      console.log(JSON.stringify(bad.slice(0,3)));
-    """)
-    assert res == [], f"phân hoạch sai: {res}"
+# ===================== 2. Không có bom =====================
+
+def test_khong_co_tu_quy_va_ba_doi_thong():
+    """Sunwin không có bom: bốn lá cùng bậc KHÔNG phải kiểu bài hợp lệ."""
+    tu_quy = [card(BAY, s) for s in range(4)]
+    ba_doi = [card(BA, 0), card(BA, 1), card(BON, 0), card(BON, 1),
+              card(NAM, 0), card(NAM, 1)]
+    res = run_js("console.log(JSON.stringify({"
+                 f" tuQuy: C.phanLoai({tu_quy}),"
+                 f" baDoiThong: C.phanLoai({ba_doi})"
+                 "}))")
+    assert res["tuQuy"] is None
+    assert res["baDoiThong"] is None
 
 
-def test_dp_matches_brute_force():
-    """DP phải TỐI ƯU — đối chiếu vét cạn thật trên bài nhỏ.
+def test_tu_quy_khong_chat_duoc_heo_don():
+    """Hệ quả của việc bỏ bom: Heo đơn chỉ bị chặn bởi Heo lớn hơn.
 
-    Vét cạn liệt kê MỌI tập con hợp lệ (không dùng heuristic nào của DP), nên
-    đây là kiểm chứng độc lập. Chính phép này từng bắt được hai lỗi thật:
-    sinh sảnh bỏ sót bước kiểm tra liên tiếp đầu tiên ({3,7,8} thành "sảnh"),
-    và sơ đồ sảnh-cùng-tầng làm mất nghiệm [7 8 9 10]+[9 10 J].
+    Đây là mất mát so với engine cũ của HIT và là CHỦ Ý — bản Sunwin không có
+    chặt. Ghi lại thành test để lần sau ai đó thấy 'thiếu' thì biết là cố tình.
     """
-    res = run_js("""
-      function isValidMeld(cards){
-        if(cards.length===1) return true;
-        const vals=cards.map(C.getCardVal);
-        if(vals.every(v=>v===vals[0])) return cards.length<=4;
-        return C.isStraight(cards);
-      }
-      function brute(cards){
-        const n=cards.length, full=(1<<n)-1, memo=new Map(), valid=[];
-        for(let m=1;m<=full;m++){
-          const g=[]; for(let i=0;i<n;i++) if(m&(1<<i)) g.push(cards[i]);
-          if(isValidMeld(g)) valid.push(m);
-        }
-        function f(S){
-          if(S===0) return 0;
-          if(memo.has(S)) return memo.get(S);
-          const low=S&-S; let best=Infinity;
-          for(const m of valid){ if((m&low)===0||(m&S)!==m) continue;
-            const r=f(S^m); if(r+1<best) best=r+1; }
-          memo.set(S,best); return best;
-        }
-        return f(full);
-      }
-      let bad=[];
-      for(let it=0; it<250; it++){
-        const size=3+((Math.random()*8)|0);
-        const deck=[...Array(52).keys()];
-        for(let i=51;i>0;i--){const j=(Math.random()*(i+1))|0;[deck[i],deck[j]]=[deck[j],deck[i]];}
-        const hand=deck.slice(0,size);
-        const dp=C.planMinTurns(hand).turns, bf=brute(hand);
-        if(dp!==bf) bad.push({dp:dp, brute:bf, hand:hand});
-      }
-      console.log(JSON.stringify(bad.slice(0,3)));
-    """)
-    assert res == [], f"DP không tối ưu: {res}"
+    tay = [card(BAY, s) for s in range(4)]          # tứ quý 7
+    res = run_js(f"console.log(JSON.stringify(C.chooseFollow({tay}, [{card(HEO, 0)}])))")
+    assert res is None
+
+    tay_co_heo = [card(HEO, 3)]                      # Heo Cơ
+    res2 = run_js(f"console.log(JSON.stringify(C.chooseFollow({tay_co_heo}, [{card(HEO, 0)}])))")
+    assert res2 == [card(HEO, 3)]
 
 
-def test_regression_layered_straights():
-    """Hai sảnh chồng nhau dùng tầng khác nhau ở từng bậc.
+# ===================== 3. Lượt tự do: thứ tự ưu tiên =====================
 
-    Bài: 4 5 7 8 9 9 10 10 J -> tối ưu 4 lượt = [7 8 9 10] + [9 10 J] + 4 + 5.
-    Bản DP đầu chỉ sinh sảnh "cùng tầng" nên bỏ sót và trả 5 lượt.
+def test_dan_uu_tien_sanh_roi_sam_roi_doi_roi_don():
+    """SẢNH -> SÁM -> ĐÔI -> LÁ ĐƠN.
+
+    So sánh theo TẬP LÁ, không theo thứ tự: trong một bậc, engine xếp chất giảm
+    dần (lấy đôi/sám mạnh nhất) nên sám trả về là [9♦, 9♣, 9♠].
     """
-    hand = [43, 37, 36, 28, 32, 12, 34, 26, 17]
-    res = run_js(f"console.log(JSON.stringify(C.planMinTurns({hand}).turns))")
-    assert res == 4
+    sanh = [card(BA), card(BON), card(NAM)]
+    sam = [card(CHIN, s) for s in range(3)]
+    doi = [card(J, 0), card(J, 1)]
+    don = [card(K, 0)]
+
+    def dan(tay):
+        return sorted(run_js(f"console.log(JSON.stringify(C.chooseLead({tay})))"))
+
+    assert dan(sanh + sam + doi + don) == sorted(sanh)
+    assert dan(sam + doi + don) == sorted(sam)
+    assert dan(doi + don) == sorted(doi)
+    assert dan(don) == sorted(don)
+    assert run_js("console.log(JSON.stringify(C.chooseLead([])))") is None
 
 
-def test_regression_non_consecutive_not_a_straight():
-    """{4, 8, 9} không phải sảnh — không được ghép thành một lượt.
+def test_dan_la_don_thi_danh_la_TO_nhat():
+    """Sunwin dẫn bằng nước to nhất, không phải nhỏ nhất."""
+    tay = [card(BA, 0), card(MUOI, 2), card(SAU, 1)]
+    assert run_js(f"console.log(JSON.stringify(C.chooseLead({tay})))") == [card(MUOI, 2)]
 
-    Vòng sinh sảnh từng bắt đầu ở e=s+2 nên bỏ qua bước kiểm tra s -> s+1,
-    biến các bậc rời rạc thành "sảnh" và cho ra số lượt THẤP HƠN cả tối ưu.
+
+def test_sanh_to_nhat_la_sanh_co_la_dinh_cao_nhat():
+    """KHÔNG phải sảnh dài nhất.
+
+    Điểm = trọng số kiểu × 1.000.000 + bậc đỉnh × 100 + chất + số lá; số lá chỉ
+    cộng vài đơn vị nên không lật ngược được bậc. Tay có 3-4-5-6-7-8 (đỉnh 8) và
+    10-J-Q (đỉnh Q) thì chọn 10-J-Q. Giữ nguyên như Sunwin.
     """
-    hand = [card(3), card(7), card(8)]   # 4, 8, 9
-    res = run_js(f"console.log(JSON.stringify(C.planMinTurns({hand}).turns))")
-    assert res == 3, "ba lá rời rạc phải là 3 lượt"
+    dai = [card(BA), card(BON), card(NAM), card(SAU), card(BAY), card(TAM)]
+    ngan_nhung_cao = [card(MUOI, 2), card(J, 1), card(Q, 0)]
+    res = run_js(f"console.log(JSON.stringify(C.chooseLead({dai + ngan_nhung_cao})))")
+    assert res == ngan_nhung_cao
 
 
-def test_never_worse_than_greedy_strategy():
-    """Không bao giờ tệ hơn chiến lược tham lam cũ (sảnh dài nhất trước)."""
+def test_doi_lay_hai_chat_cao_nhat_cua_bac():
+    """Bậc có 3 lá mà cần đánh đôi thì lấy 2 chất CAO nhất — đôi mạnh nhất."""
+    tay = [card(CHIN, 0), card(CHIN, 1), card(CHIN, 3)]
+    ban = [card(TAM, 0), card(TAM, 1)]
+    res = run_js(f"console.log(JSON.stringify(C.chooseFollow({tay}, {ban})))")
+    assert sorted(res) == sorted([card(CHIN, 3), card(CHIN, 1)])
+
+
+# ===================== 4. Lượt đè =====================
+
+def test_de_bang_nuoc_TO_nhat_cung_kieu():
+    tay = [card(NAM, 0), card(MUOI, 1), card(A, 3)]
+    res = run_js(f"console.log(JSON.stringify(C.chooseFollow({tay}, [{card(BON, 0)}])))")
+    assert res == [card(A, 3)]
+
+
+def test_khong_de_duoc_thi_bo_luot():
+    tay = [card(BA, 0), card(BON, 0)]
+    assert run_js(f"console.log(JSON.stringify(C.chooseFollow({tay}, [{card(K, 0)}])))") is None
+
+
+def test_sanh_chi_de_duoc_sanh_cung_do_dai():
+    tay = [card(SAU), card(BAY), card(TAM), card(CHIN)]     # sảnh 4 lá
+    ban = [card(BA), card(BON), card(NAM)]                  # sảnh 3 lá
+    res = run_js(f"console.log(JSON.stringify(C.chooseFollow({tay}, {ban})))")
+    assert res is not None and len(res) == 3, "phải đè bằng sảnh 3 lá, không phải 4"
+
+
+def test_khac_kieu_thi_khong_de():
+    """`beats` chỉ đúng khi CÙNG kiểu — đôi không đè lá đơn và ngược lại."""
+    doi = [card(A, 0), card(A, 1)]
+    res = run_js(
+        "console.log(JSON.stringify({"
+        f" doiDeDon: C.beats(C.phanLoai({doi}), C.phanLoai([{card(BA, 0)}])),"
+        f" donDeDoi: C.beats(C.phanLoai([{card(HEO, 3)}]), C.phanLoai({doi}))"
+        "}))")
+    assert res["doiDeDon"] is False
+    assert res["donDeDoi"] is False
+
+
+def test_duoc_xe_doi_de_danh_la_don():
+    """Bàn ra lá đơn thì tách đôi ra đánh một lá — đúng như Sunwin.
+
+    Engine không giữ tổ hợp: mọi lá trên tay đều là ứng viên lá đơn.
+    """
+    doi = [card(A, 0), card(A, 1)]
+    res = run_js(f"console.log(JSON.stringify(C.chooseFollow({doi}, [{card(BA, 0)}])))")
+    assert res is not None and len(res) == 1 and res[0] in doi
+
+
+def test_ban_khong_hop_le_thi_bo_luot():
+    """Bàn ra thứ engine không phân loại được (ví dụ tứ quý) -> bỏ lượt."""
+    tay = [card(A, s) for s in range(4)]
+    tu_quy_tren_ban = [card(BAY, s) for s in range(4)]
+    res = run_js(f"console.log(JSON.stringify(C.chooseFollow({tay}, {tu_quy_tren_ban})))")
+    assert res is None
+
+
+def test_chooseBestPlay_la_cua_duy_nhat():
+    """Có bài trên bàn thì đè, không thì dẫn."""
+    tay = [card(BA, 0), card(A, 3)]
+    dan = run_js(f"console.log(JSON.stringify(C.chooseBestPlay({tay}, null)))")
+    de = run_js(f"console.log(JSON.stringify(C.chooseBestPlay({tay}, [{card(NAM, 0)}])))")
+    assert dan == [card(A, 3)]
+    assert de == [card(A, 3)]
+
+
+# ===================== 5. Nước trả về luôn hợp lệ =====================
+
+def test_nuoc_tra_ve_luon_nam_trong_bai_va_dung_kieu():
+    """Vét 400 tay ngẫu nhiên: nước chọn phải là tập con của bài và hợp kiểu."""
     res = run_js("""
-      function findCombinations(cards){
-        const sortedC=C.sortCards(cards); const valMap={};
-        for(const c of sortedC){const v=C.getCardVal(c); (valMap[v]=valMap[v]||[]).push(c);}
-        const straights=[]; const nonTwo=Object.keys(valMap).map(Number).filter(v=>v<15).sort((a,b)=>a-b);
-        for(let len=nonTwo.length;len>=3;len--)
-          for(let s=0;s<=nonTwo.length-len;s++){
-            const sub=nonTwo.slice(s,s+len); let ok=true;
-            for(let i=1;i<sub.length;i++) if(sub[i]!==sub[i-1]+1){ok=false;break;}
-            if(ok) straights.push(sub.map(v=>valMap[v][0]));
-          }
-        return {straights,
-          quads:Object.values(valMap).filter(cs=>cs.length>=4).map(cs=>cs.slice(0,4)),
-          triples:Object.values(valMap).filter(cs=>cs.length>=3).map(cs=>cs.slice(0,3)),
-          pairs:Object.values(valMap).filter(cs=>cs.length>=2).map(cs=>cs.slice(0,2))};
-      }
-      function greedyTurns(cards){
-        let rest=cards.slice(),t=0;
-        while(rest.length){
-          const cb=findCombinations(rest); let play;
-          if(cb.straights.length)play=cb.straights[0];
-          else if(cb.quads.length)play=cb.quads[0];
-          else if(cb.triples.length)play=cb.triples[0];
-          else if(cb.pairs.length)play=cb.pairs[0];
-          else play=[C.sortCards(rest)[0]];
-          const s=new Set(play); rest=rest.filter(c=>!s.has(c)); t++;
+      function rnd(seed) { let x = seed; return () => (x = (x * 1103515245 + 12345) % 2147483648) / 2147483648; }
+      const r = rnd(20260911);
+      const loi = [];
+      for (let lan = 0; lan < 400; lan++) {
+        const bo = [];
+        for (let i = 0; i < 52; i++) bo.push(i);
+        for (let i = bo.length - 1; i > 0; i--) {
+          const j = Math.floor(r() * (i + 1));
+          [bo[i], bo[j]] = [bo[j], bo[i]];
         }
-        return t;
+        const tay = bo.slice(0, 13);
+        const ban = lan % 2 === 0 ? null : bo.slice(13, 13 + (1 + (lan % 3)));
+        const nuoc = C.chooseBestPlay(tay, ban);
+        if (!nuoc) continue;
+        if (!nuoc.every((c) => tay.includes(c))) { loi.push(['ngoai bai', tay, ban, nuoc]); continue; }
+        if (new Set(nuoc).size !== nuoc.length) { loi.push(['trung la', tay, ban, nuoc]); continue; }
+        const t = C.phanLoai(nuoc);
+        if (!t) { loi.push(['khong hop kieu', tay, ban, nuoc]); continue; }
+        if (ban) {
+          const b = C.phanLoai(ban);
+          if (b && !C.beats(t, b)) loi.push(['khong de duoc', tay, ban, nuoc]);
+        }
       }
-      let worse=[];
-      for(let it=0; it<400; it++){
-        const deck=[...Array(52).keys()];
-        for(let i=51;i>0;i--){const j=(Math.random()*(i+1))|0;[deck[i],deck[j]]=[deck[j],deck[i]];}
-        const hand=deck.slice(0,13);
-        const d=C.planMinTurns(hand).turns, g=greedyTurns(hand);
-        if(d>g) worse.push({dp:d, greedy:g, hand:hand});
-      }
-      console.log(JSON.stringify(worse.slice(0,3)));
+      console.log(JSON.stringify(loi.slice(0, 5)));
     """)
-    assert res == [], f"DP tệ hơn tham lam ở: {res}"
+    assert res == [], f"nước sai: {res}"
+
+
+# ===================== 6. Nối vào extension =====================
+
+def _code_js(p: Path) -> str:
+    """Chỉ lấy dòng CODE — chú thích có nhắc tên bị cấm là chuyện bình thường."""
+    dong = []
+    for d in p.read_text(encoding="utf-8").splitlines():
+        s = d.strip()
+        if s.startswith("//") or s.startswith("*") or s.startswith("/*"):
+            continue
+        dong.append(d)
+    return "\n".join(dong)
+
+
+def test_module_thuan_khong_dung_dom():
+    code = _code_js(CARD_LOGIC)
+    for cam in ("document", "localStorage", "WebSocket", "cc.", "fetch(", "window."):
+        assert cam not in code, f"module không được đụng `{cam}`"
 
 
 def test_wired_into_extension_and_manifest():
     """card_logic.js phải được nạp TRƯỚC content_main.js và được dùng thật."""
-    ext = Path(__file__).parents[1] / "extension"
-    manifest = json.loads((ext / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((EXT / "manifest.json").read_text(encoding="utf-8"))
     js_files = manifest["content_scripts"][0]["js"]
     # Khoá THỨ TỰ, không khoá cả danh sách: thêm một module thuần khác
     # (partner_id.js) là chuyện bình thường và không được làm test này đỏ.
@@ -216,361 +288,30 @@ def test_wired_into_extension_and_manifest():
     assert js_files.index("card_logic.js") < js_files.index("content_main.js"), js_files
     assert manifest["content_scripts"][0]["world"] == "MAIN"
 
-    content = (ext / "content_main.js").read_text(encoding="utf-8")
-    assert "planMinTurns" in content, "nhánh xả bài chưa gọi tới phân rã tối ưu"
+    content = (EXT / "content_main.js").read_text(encoding="utf-8")
+    assert "api.chooseBestPlay(myCards, tableCards)" in content, \
+        "content_main.js chưa uỷ quyền chọn nước cho card_logic.js"
 
     # Controller cũng tự inject script vào trang -> phải nạp cả hai, ĐÚNG THỨ TỰ.
-    # Đọc cả package: hàm nạp script đã chuyển sang context.py khi tách module,
-    # nên bám theo một file cụ thể là sai chỗ.
     pkg = Path(__file__).parents[1] / "controllers" / "auto_flow_controller"
     controller = "\n".join(f.read_text(encoding="utf-8") for f in sorted(pkg.glob("*.py")))
     thu_tu = controller.split("for fname in (", 1)[1].split(")", 1)[0]
     assert thu_tu.index("card_logic.js") < thu_tu.index("content_main.js"), thu_tu
 
 
-# ---------- Đảo chiều ưu tiên cho Account phụ ----------
-
-def test_dump_discharges_dangerous_cards_first():
-    """Phụ phải tống Heo / lá cao đi TRƯỚC, không giữ tới cuối ván.
-
-    Cuối ván ai còn Heo / 3 bích thì bị phạt. Đánh hết lá cao từ sớm là cách
-    chắc chắn nhất để phần còn lại tất yếu là lá thấp, không bị phạt.
-    """
-    # 3♠ 4♣ 5♠ 6♦ | 2♠ 2♣ (Heo) | K♠ K♣
-    hand = [8, 13, 16, 22, 4, 5, 48, 49]
-    res = run_js(f"""
-      let cur = {hand};
-      const out = [];
-      for (let i = 0; i < 8; i++) {{
-        const play = C.chooseDumpDischarge(cur, 4);
-        if (!play) break;
-        out.push(play.map(C.getCardVal));
-        const s = new Set(play);
-        cur = cur.filter(c => !s.has(c));
-      }}
-      console.log(JSON.stringify({{plays: out, con_lai: C.sortCards(cur).map(C.getCardVal)}}));
-    """)
-    # Heo (15) phải ra lượt đầu, K (13) lượt sau
-    assert res["plays"][0] == [15, 15], f"phải xả Heo trước, nhận {res['plays'][0]}"
-    assert res["plays"][1] == [13, 13], f"kế tiếp phải là đôi K, nhận {res['plays'][1]}"
-    # Còn lại đúng 4 lá thấp nhất làm mồi
-    assert res["con_lai"] == [3, 4, 5, 6]
+def test_khong_con_dau_vet_engine_phoi_hop():
+    """Bỏ phối hợp là bỏ hẳn, không để hàm chết lại trong extension."""
+    code = _code_js(CARD_LOGIC) + "\n" + _code_js(EXT / "content_main.js")
+    for ten in ("chooseDumpBeat", "chooseDumpDischarge", "canPartnerBeat",
+                "chooseWinnerBeat", "planMinTurns", "analyzeControl",
+                "__partner_cards", "__AUTOTOOL_DUMP_RESERVE", "__cards_played"):
+        assert ten not in code, f"còn sót `{ten}`"
 
 
-def test_dump_keeps_reserve_untouched():
-    """Phần giữ lại không bao giờ bị xé — tổ hợp chỉ tìm ngoài phần đó."""
-    res = run_js("""
-      let bad = [];
-      for (let it = 0; it < 300; it++) {
-        const deck=[...Array(52).keys()];
-        for(let i=51;i>0;i--){const j=(Math.random()*(i+1))|0;[deck[i],deck[j]]=[deck[j],deck[i]];}
-        const hand = deck.slice(0, 13);
-        const keep = 4;
-        const reserve = new Set(C.sortCards(hand).slice(0, keep));
-        const play = C.chooseDumpDischarge(hand, keep);
-        if (play) for (const c of play) if (reserve.has(c)) bad.push({hand:hand, play:play});
-      }
-      console.log(JSON.stringify(bad.slice(0, 3)));
-    """)
-    assert res == [], f"đã xé vào phần giữ lại: {res}"
-
-
-def test_dump_returns_null_when_only_reserve_left():
-    """Còn <= số lá giữ lại -> trả null để bên ngoài chuyển sang chế độ mồi."""
-    res = run_js("console.log(JSON.stringify(["
-                 " C.chooseDumpDischarge([8, 12, 16, 20], 4) === null,"
-                 " C.chooseDumpDischarge([8, 12], 4) === null,"
-                 " C.chooseDumpDischarge([], 4) === null]))")
-    assert res == [True, True, True]
-
-
-def test_dump_priority_is_opposite_of_anchor():
-    """Phụ chọn nhóm chứa lá CAO nhất; chính chọn nhóm THẤP nhất."""
-    res = run_js("""
-      const hand = [8, 12, 16, 20, 24, 48, 49, 4];   // 3 4 5 6 7 K K 2(Heo)
-      const dump = C.chooseDumpDischarge(hand, 4);
-      const anchor = C.planMinTurns(hand).melds[0];
-      console.log(JSON.stringify({
-        dump: dump.map(C.getCardVal),
-        anchorLow: Math.max.apply(null, anchor.map(C.getCardVal))
-      }));
-    """)
-    assert max(res["dump"]) >= 13, "phụ phải nhắm lá cao"
-    assert res["anchorLow"] <= 7, "chính phải bắt đầu từ nhóm thấp"
-
-
-def test_dump_discharge_wired_into_extension():
-    ext = Path(__file__).parents[1] / "extension"
-    content = (ext / "content_main.js").read_text(encoding="utf-8")
-    assert "chooseDumpDischarge" in content, "nhánh DUMP chưa gọi tới hàm xả nguy hiểm"
-    assert "__AUTOTOOL_DUMP_RESERVE" in content, "chưa cho cấu hình số lá giữ lại"
-
-
-def test_dump_de_la_cao_khi_con_nhieu_hon_phan_giu():
-    """Account chính đánh, phụ CÒN NHIỀU HƠN phần giữ -> phải đè bằng lá CAO.
-
-    Trước đây phụ chỉ đè đúng một lần mỗi ván ("giảm thua trắng") và bằng tổ
-    hợp NHỎ NHẤT, nên khi còn nhiều lá nó vẫn PASS — lá nguy hiểm bị giữ tới
-    cuối ván rồi bị phạt.
-    """
-    # B: 3♠ 4♣ 5♠ 6♦ | 9♠ | K♣ | 2♠(Heo)
-    B = [8, 13, 16, 22, 32, 49, 4]
-    res = run_js(f"""
-      const B = {B};
-      console.log(JSON.stringify({{
-        deKhi7:  (C.chooseDumpBeat(B, [24], 4) || []).map(C.getCardVal),
-        deKhi10: (C.chooseDumpBeat(B, [36], 4) || []).map(C.getCardVal),
-        gapHeo:  C.chooseDumpBeat(B, [5], 4),
-        vePhanGiu: C.chooseDumpBeat([8, 13, 16, 22], [24], 4)
-      }}));
-    """)
-    assert res["deKhi7"] == [15], "phải đè bằng Heo — lá nguy hiểm nhất"
-    assert res["deKhi10"] == [15]
-    assert res["gapHeo"] is None, "không đè được Heo đơn bằng lá lẻ -> PASS"
-    assert res["vePhanGiu"] is None, "về đúng phần giữ thì nhường lượt cho chính"
-
-
-def test_dump_beat_khong_dung_bai_da_giu():
-    """Nước đè cũng không được xé vào phần giữ lại."""
-    res = run_js("""
-      let bad = [];
-      for (let it = 0; it < 300; it++) {
-        const deck=[...Array(52).keys()];
-        for(let i=51;i>0;i--){const j=(Math.random()*(i+1))|0;[deck[i],deck[j]]=[deck[j],deck[i]];}
-        const hand = deck.slice(0, 11);
-        const table = [deck[20]];
-        const keep = 4;
-        const reserve = new Set(C.sortCards(hand).slice(0, keep));
-        const beat = C.chooseDumpBeat(hand, table, keep);
-        if (beat) {
-          for (const c of beat) if (reserve.has(c)) bad.push({hand:hand, beat:beat});
-          if (!C.canBeat(beat, table)) bad.push({loi:'khong de duoc', beat:beat, table:table});
-        }
-      }
-      console.log(JSON.stringify(bad.slice(0, 3)));
-    """)
-    assert res == [], f"sai: {res}"
-
-
-def test_dump_beat_wired_into_extension():
-    ext = Path(__file__).parents[1] / "extension"
-    src = (ext / "content_main.js").read_text(encoding="utf-8")
-    assert "chooseDumpBeat" in src, "nhánh đè của phụ chưa gọi chooseDumpBeat"
-    # Phải nằm TRƯỚC quy tắc "giảm thua trắng" cũ
-    assert src.index("chooseDumpBeat") < src.index("Giảm thua trắng")
-
-
-# ---------- Đếm bài ----------
-
-def test_unseen_cards_arithmetic():
-    """52 lá trừ (bài mình ∪ lá đã ra) = tập còn ẩn; không đếm trùng."""
-    res = run_js("""
-      const u = C.unseenCards([0, 1, 2], [2, 3, 4, 4]);   // 2 và 4 lặp -> đếm 1
-      console.log(JSON.stringify({n: u.length, coTrung: u.some(c => [0,1,2,3,4].includes(c))}));
-    """)
-    assert res["n"] == 52 - 5
-    assert res["coTrung"] is False
-
-
-def test_can_anyone_beat_single_pair_quad_straight():
-    """Kiểm tra theo cấu trúc trên tập ẩn — từng loại tổ hợp."""
-    res = run_js("""
-      const all = [...Array(52).keys()];
-      const lowOnly = all.filter(c => C.getCardVal(c) <= 10);
-      console.log(JSON.stringify({
-        // K♠(48): còn A/Heo ẩn -> bị chặn; ẩn toàn lá thấp -> an toàn
-        kBiChan:     C.canAnyoneBeat([48], all.filter(c => c !== 48)),
-        kAnToan:     C.canAnyoneBeat([48], lowOnly),
-        // Heo đơn 2♠(4): còn tứ quý 7 ẩn -> bị chặt; chỉ ba lá 7 -> an toàn
-        heoBiTuQuy:  C.canAnyoneBeat([4], [24, 25, 26, 27]),
-        heoAnToan:   C.canAnyoneBeat([4], [24, 25, 26]),
-        // Đôi K: còn đôi A ẩn -> bị chặn; chỉ 1 lá A -> an toàn
-        doiKBiChan:  C.canAnyoneBeat([48, 49], [0, 1]),
-        doiKAnToan:  C.canAnyoneBeat([48, 49], [0]),
-        // Sảnh 3-4-5: còn sảnh 4-5-6 ẩn -> bị chặn; thiếu lá 6 -> an toàn
-        sanhBiChan:  C.canAnyoneBeat([8, 12, 16], [13, 17, 21]),
-        sanhAnToan:  C.canAnyoneBeat([8, 12, 16], [13, 17]),
-      }));
-    """)
-    assert res == {
-        "kBiChan": True, "kAnToan": False,
-        "heoBiTuQuy": True, "heoAnToan": False,
-        "doiKBiChan": True, "doiKAnToan": False,
-        "sanhBiChan": True, "sanhAnToan": False,
-    }, res
-
-
-def test_can_anyone_beat_matches_brute_force():
-    """Đối chiếu vét cạn: liệt kê MỌI tổ hợp trong tập ẩn rồi thử canBeat.
-
-    Tập ẩn giới hạn <= 18 lá để enumerateMelds (bitmask 32-bit) còn dùng được.
-    """
-    res = run_js("""
-      let bad = [];
-      for (let it = 0; it < 250; it++) {
-        const deck=[...Array(52).keys()];
-        for(let i=51;i>0;i--){const j=(Math.random()*(i+1))|0;[deck[i],deck[j]]=[deck[j],deck[i]];}
-        const mine = deck.slice(0, 8);
-        const unseen = deck.slice(8, 8 + 18);
-        const plan = C.planMinTurns(mine);
-        const su = C.sortCards(unseen);
-        const melds = C.enumerateMelds(su);
-        for (const m of plan.melds) {
-          const fast = C.canAnyoneBeat(m, unseen);
-          let brute = false;
-          for (const e of melds) {
-            const g = []; for (let i = 0; i < su.length; i++) if (e.mask & (1 << i)) g.push(su[i]);
-            if (C.canBeat(g, m)) { brute = true; break; }
-          }
-          if (fast !== brute) bad.push({meld: m, fast: fast, brute: brute, unseen: unseen});
-        }
-      }
-      console.log(JSON.stringify(bad.slice(0, 2)));
-    """)
-    assert res == [], f"canAnyoneBeat lệch vét cạn: {res}"
-
-
-def test_analyze_control_detects_sure_win():
-    """Mọi nhóm đều bất khả chặn -> allUnbeatable, đi hết bài là chắc chắn."""
-    res = run_js("""
-      // Mình: K♠ K♣ (48,49). Đã ra: hết A, hết Heo, K♦ K♥ -> không gì chặn được đôi K
-      const played = [0,1,2,3, 4,5,6,7, 50,51];
-      const a = C.analyzeControl([48, 49], played);
-      const b = C.analyzeControl([48, 49], []);        // chưa ai đánh
-      console.log(JSON.stringify({
-        a_all: a.allUnbeatable, a_sure: a.sureCount, a_unseen: a.unseen,
-        b_all: b.allUnbeatable, b_sure: b.sureCount
-      }));
-    """)
-    assert res["a_all"] is True and res["a_sure"] == 1
-    assert res["a_unseen"] == 52 - 2 - 10
-    assert res["b_all"] is False and res["b_sure"] == 0
-
-
-def test_card_counting_wired_into_extension():
-    ext = Path(__file__).parents[1] / "extension"
-    src = (ext / "content_main.js").read_text(encoding="utf-8")
-    # Gom lá đã ra từ fP.dCs (công khai, kèm ai đánh) và reset khi chia bài mới
-    assert "G.__cards_played.push(c)" in src
-    assert src.count("G.__cards_played = [];") >= 2, "phải reset khi khởi tạo VÀ khi chia bài mới"
-    # Account chính dùng kết quả đếm bài
-    assert "analyzeControl(myCards, G.__cards_played" in src
-    assert "CHẮC THẮNG" in src
-
-
-# ---------- Giữ nhịp tiếp sức (phụ mồi — chính đè) ----------
-
-def test_dump_uu_tien_la_cao_ma_dong_doi_con_de_duoc():
-    """Không biết bài đồng đội -> phụ tống Heo, chính không đè được, đứt nhịp.
-
-    Biết bài đồng đội -> phụ phải chọn lá cao NHƯNG chính còn đè lại được.
-    """
-    # B: 3♠ 4♣ 5♠ 6♦ | K♣ | 2♠(Heo)      A: A♠ 8♠
-    B = [8, 13, 16, 22, 49, 4]
-    A = [0, 28]
-    res = run_js(f"""
-      const B = {B}, A = {A};
-      console.log(JSON.stringify({{
-        khongBietBaiA: C.chooseDumpDischarge(B, 4).map(C.getCardVal),
-        bietBaiA:      C.chooseDumpDischarge(B, 4, A).map(C.getCardVal),
-        deKhongBiet:   C.chooseDumpBeat(B, [26], 4).map(C.getCardVal),
-        deBiet:        C.chooseDumpBeat(B, [26], 4, A).map(C.getCardVal),
-      }}));
-    """)
-    assert res["khongBietBaiA"] == [15], "không biết bài A thì tống Heo"
-    assert res["bietBaiA"] == [13], "biết bài A thì phải chừa Heo, tống K"
-    assert res["deKhongBiet"] == [15]
-    assert res["deBiet"] == [13]
-
-
-def test_hall_check_phat_hien_chuoi_moi_khong_kha_thi():
-    """Định lý Hall: mỗi lá mồi phải ghép được một lá RIÊNG của chính đè nó."""
-    res = run_js("""
-      const reserve = [8, 13, 16, 22];      // 3♠ 4♣ 5♠ 6♦
-      console.log(JSON.stringify({
-        thieuLa:  C.hallCheck(reserve, [0, 28]),          // A chỉ có 2 lá
-        duLa:     C.hallCheck(reserve, [24, 28, 32, 36]), // 7 8 9 10 -> đủ
-        toanThap: C.hallCheck(reserve, [9, 10, 11, 12]),  // toàn lá 4 -> đè được 3 nhưng không đè 4/5/6
-      }));
-    """)
-    assert res["thieuLa"]["ok"] is False and res["thieuLa"]["matched"] == 2
-    assert res["duLa"]["ok"] is True and res["duLa"]["matched"] == 4
-    assert res["toanThap"]["ok"] is False
-
-
-def test_hall_check_khop_vet_can():
-    """Ghép cặp phải cho cùng kết quả với vét cạn mọi hoán vị (n nhỏ)."""
-    res = run_js("""
-      function bruteSDR(reserve, pool) {
-        const used = new Array(pool.length).fill(false);
-        function rec(i) {
-          if (i === reserve.length) return true;
-          for (let j = 0; j < pool.length; j++) {
-            if (used[j] || !C.canBeat([pool[j]], [reserve[i]])) continue;
-            used[j] = true;
-            if (rec(i + 1)) return true;
-            used[j] = false;
-          }
-          return false;
-        }
-        return rec(0);
-      }
-      let bad = [];
-      for (let it = 0; it < 300; it++) {
-        const deck=[...Array(52).keys()];
-        for(let i=51;i>0;i--){const j=(Math.random()*(i+1))|0;[deck[i],deck[j]]=[deck[j],deck[i]];}
-        const reserve = deck.slice(0, 4);
-        const pool = deck.slice(4, 9);
-        const fast = C.hallCheck(reserve, pool).ok;
-        const brute = bruteSDR(reserve, pool);
-        if (fast !== brute) bad.push({reserve: reserve, pool: pool, fast: fast, brute: brute});
-      }
-      console.log(JSON.stringify(bad.slice(0, 2)));
-    """)
-    assert res == [], f"hallCheck lệch vét cạn: {res}"
-
-
-def test_relay_wired_into_extension():
-    ext = Path(__file__).parents[1] / "extension"
-    src = (ext / "content_main.js").read_text(encoding="utf-8")
-    # Cả hai nhánh của phụ phải truyền bài đồng đội
-    assert "chooseDumpDischarge(myCards, reserve, G.__partner_cards)" in src
-    assert "chooseDumpBeat(myCards, tableCards, reserveBeat, G.__partner_cards)" in src
-    # Nhánh đè của chính phải ưu tiên nước không ai chặn lại được.
-    #
-    # Phép ưu tiên này đã dời vào `chooseWinnerBeat` của card_logic.js — khoá ở
-    # đây là chỗ GỌI, còn tính chất thì kiểm bằng bài thật ở
-    # test_uu_tien_nuoc_khong_ai_chan_lai_duoc.
-    assert "api.chooseWinnerBeat(myCards, tableCards" in src
-    logic = (ext / "card_logic.js").read_text(encoding="utf-8")
-    than = logic[logic.index("function chooseWinnerBeat"):][:600]
-    assert "canAnyoneBeat(c, unseen)" in than
-
-
-def test_dump_uu_tien_nhom_to_de_xa_nhieu_la():
-    """Mục tiêu của phụ là còn LẠI ÍT LÁ NHẤT -> mỗi lượt xả nhiều lá nhất.
-
-    Bản trước xếp lá cao lên đầu nên một lá Heo được chọn trước cả đôi K — xả
-    1 lá thay vì 2. Đúng triệu chứng "không chọn tổ hợp đôi/ba/sảnh để đánh".
-    """
-    # B: 3♠ 4♣ 5♠ 6♦ (giữ) | K♠ K♣ | 2♠(Heo)
-    B = [8, 13, 16, 22, 48, 49, 4]
-    res = run_js(f"""
-      const B = {B};
-      console.log(JSON.stringify({{
-        tuDo:  C.chooseDumpDischarge(B, 4).map(C.getCardVal),
-        deDoi: C.chooseDumpBeat(B, [32, 33], 4).map(C.getCardVal),
-      }}));
-    """)
-    assert res["tuDo"] == [13, 13], "phải chọn đôi K (2 lá) thay vì Heo lẻ (1 lá)"
-    assert res["deDoi"] == [13, 13], "đè đôi 9 bằng đôi K"
-
-
-def test_thu_tu_uu_tien_la_to_truoc_roi_moi_toi_la_cao():
-    """Cùng cỡ mới xét lá cao — kiểm tra bằng hai đôi."""
-    res = run_js("""
-      // B: 3 4 5 6 (giữ) | đôi 9 | đôi K  -> phải chọn đôi K (cùng cỡ, cao hơn)
-      const B = [8, 13, 16, 22, 32, 33, 48, 49];
-      console.log(JSON.stringify(C.chooseDumpDischarge(B, 4).map(C.getCardVal)));
-    """)
-    assert res == [13, 13]
+def test_thieu_card_logic_thi_khong_doan_bua():
+    """Không nạp được module thì trả null chứ không tự chế nước đi."""
+    content = (EXT / "content_main.js").read_text(encoding="utf-8")
+    i = content.index("function findBestPlay(myCards, tableCards)")
+    than = content[i:i + 900]
+    assert "return null;" in than
+    assert "Thiếu card_logic.js" in than

@@ -391,11 +391,12 @@ def test_join_always_includes_verified_fixed_rid():
     assert "Bỏ lượt thay vì click mù sang bàn khác" in source
 
 
-def test_sub_has_explicit_dump_role_and_auto_discard():
-    from pathlib import Path
-
+def test_sub_has_explicit_match_role_and_auto_discard():
+    """Vai winner/dump đã bỏ 11/09/2026 (bộ chọn nước không còn phân vai).
+    Vai anchor/sub thì PHẢI giữ — nó quyết ai rời bàn sau khi xả."""
     source = _controller_source()
-    assert "window.__AUTOTOOL_ROLE = 'dump';" in source
+    assert "window.__AUTOTOOL_MATCH_ROLE = 'sub';" in source
+    assert "__AUTOTOOL_ROLE" not in source, "vai winner/dump phải bỏ hẳn"
     assert "window.__AUTOTOOL_AUTO_DISCARD" in source
     assert "window.__AUTOTOOL_PARTNER_PROFILES" in source
 
@@ -415,19 +416,16 @@ def test_fixed_table_join_frame_preserves_small_rid():
     assert "expectedBet !== actualBet" in source
 
 
-def test_dump_policy_avoids_blank_loss_and_sub_leaves_after_verified_round():
+def test_sub_leaves_after_verified_round():
+    """Luật xả riêng cho nick phụ đã bỏ cùng engine phối hợp (11/09/2026);
+    phần còn phải giữ là: hết ván nick phụ tự rời bàn."""
     from pathlib import Path
 
     ext_source = (Path(__file__).parents[1] / "extension" / "content_main.js").read_text(encoding="utf-8")
-    assert "Giảm thua trắng" in ext_source
-    assert "__autotool_round_play_count" in ext_source
-    assert "Không dùng tứ quý" in ext_source
-    assert "function chooseDumpOpening" in ext_source
-    assert "đôi 10 phải đánh thành đôi 10" in ext_source
-    assert 'humanDelay(1150, 1900)' in ext_source
-    assert "function chooseVerifiedSingleRelay" in ext_source
-    assert "Anchor thấp < Phụ < Anchor cao hơn" in ext_source
-    assert "getLooseSingles(myCards, combs)" in ext_source
+    assert "Account phụ đã xả xong -> tự rời bàn về sảnh chọn bàn" in ext_source
+    for da_bo in ("chooseDumpOpening", "chooseVerifiedSingleRelay",
+                  "getLooseSingles", "__autotool_round_play_count"):
+        assert da_bo not in ext_source, f"còn sót engine phối hợp: {da_bo}"
 
     controller = _controller_source()
     assert "game_completed = False" in controller
@@ -438,7 +436,7 @@ def test_dump_policy_avoids_blank_loss_and_sub_leaves_after_verified_round():
     assert "Account phụ đã xả xong -> tự rời bàn về sảnh chọn bàn" in ext_source
     assert "kill engine/timer, giữ Account chính trong phòng" in controller
     assert "window.__AUTOTOOL_AUTO_DISCARD = false;" in controller
-    assert "auto_start_guest_ss and not game_completed" in controller
+    assert "BƯỚC 7 (BẪY KHÁCH LẠ SẴN SÀNG) ĐÃ GỠ HẲN" in controller
 
 
 def test_hub_never_auto_forwards_unverified_bet_room():
@@ -495,7 +493,10 @@ def test_ready_start_and_quick_join_never_use_cross_role_or_blind_clicks():
     ext_source = (Path(__file__).parents[1] / "extension" / "content_main.js").read_text(encoding="utf-8")
     assert "executeHandshakeAction" in ext_source
     assert "if (isAnchorMatchProfile())" in ext_source
-    assert "const matchingPair = G.__AUTOTOOL_MATCH_ROLE === \"anchor\"" in ext_source
+    # Lớp gác Ready/Start nay chỉ còn một điều kiện: bàn có người ngoài thì
+    # cấm, mọi chế độ (11/09/2026 — bỏ đánh với khách). Không còn ngoại lệ
+    # theo MATCH_ROLE hay theo ô "Bắt đầu nếu khách SS".
+    assert "return coKhachLaTrongBan();" in ext_source
     assert "từ chối Ready/Start và rời bàn" in ext_source
 
 

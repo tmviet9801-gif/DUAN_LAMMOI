@@ -17,6 +17,8 @@ from .context import (
     resolve_profile_name,
 )
 from .thong_ke_pha import ghi_moc, tom_tat
+from .join_js import JS_LEAVE_THEN_JOIN
+from .ket_noi import noi_extension
 from .kich_hoat import bao_dam_kich_hoat, js_giu_ban
 from .preflight import loc_profile_du_dieu_kien, so_du_toi_thieu
 from game_sim import room_catalog
@@ -246,6 +248,14 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         except Exception as e:
             log.warning("find-and-match: Không mở được trang cho %s: %s", p_name, e)
 
+    # Bấm Dừng đã NGẮT kết nối extension (routes_basic._dung_auto). Không nối
+    # lại ở đây thì lượt chạy mới không có đường gửi JOIN_ROOM/READY nào cả.
+    for _t in list(pages.keys()):
+        try:
+            await noi_extension(request, _t)
+        except Exception:
+            pass
+
     if not pages:
         raise HTTPException(status_code=400, detail=f"Không có tài khoản nào trong {profiles_input} đang mở trình duyệt!")
     if profile_a not in pages:
@@ -301,7 +311,6 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     bet_val = ctx.bet_val
     requested_rid = ctx.requested_rid
     auto_xa = ctx.auto_xa
-    auto_start_guest_ss = ctx.auto_start_guest_ss
     auto_leave_after = ctx.auto_leave_after
     stop_epoch = ctx.stop_epoch
     run_id = ctx.run_id
@@ -497,11 +506,6 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 # JOIN_ROOM chuẩn (bet_val chính xác) cho từng nick phụ.
                 ext_hub.set_room_share(False)
                 await ext_hub.broadcast_command("RESET_STATE", {})
-                # "Bắt đầu nếu khách SS" chỉ hợp lệ khi KHÔNG có nick phụ đang
-                # chờ: có phụ mà bắt đầu với người lạ là phụ không vào được bàn
-                # nữa. Lớp gác Python ở dưới (`auto_start_guest_ss and not
-                # other_profiles`) đã đúng, nhưng extension hành động độc lập
-                # theo khung WS nên qua mặt được — phải TẮT CỜ ngay từ đây.
                 # Cấu hình Anchor (Chủ bàn) chạy CHẾ ĐỘ BACKEND-DRIVEN:
                 # - TẮT tự săn/self-join (__AUTOTOOL_AUTO_HUNT=false) -> không còn 2 engine
                 #   join song song (nguồn gốc lỗi nhầm bàn 100->500 & join zombie sau Dừng).
@@ -514,14 +518,13 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         window.__AUTOTOOL_MATCH_ROLE = 'anchor';
                         window.__is_hunt_initiator = true;
                         window.__AUTOTOOL_AUTO_DISCARD = {_json.dumps(auto_xa)};
-                        window.__auto_start_guest_ss = {_json.dumps(bool(auto_start_guest_ss) and not other_profiles)};
                         window.__target_hunt_bet = {bet_val};
                         window.__target_hunt_mu = {target_mu};
                     }}""")
                 except Exception:
                     pass
-                log.info("find-and-match: Đã cấu hình Anchor (%s) chạy backend-driven (Cược $%s, Slot %s, KháchSS=%s, Xả=%s)!",
-                         first_name, bet_val, target_mu, auto_start_guest_ss, auto_xa)
+                log.info("find-and-match: Đã cấu hình Anchor (%s) chạy backend-driven (Cược $%s, Slot %s, Xả=%s)!",
+                         first_name, bet_val, target_mu, auto_xa)
                 # Gửi lệnh chờ ở sảnh cho các nick phụ + TẮT engine tự săn của phụ
                 # (phụ chỉ nhận lệnh JOIN_ROOM/LEAVE_ROOM từ controller, không tự join).
                 for sub_name in other_profiles:
@@ -551,7 +554,6 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         try:
             await eval_page(first_page, f"""() => {{
                 window.__AUTOTOOL_MATCH_ROLE = 'anchor';
-                window.__AUTOTOOL_ROLE = 'winner';
                 window.__AUTOTOOL_PARTNER_PROFILES = {_json.dumps(other_profiles)};
                 window.__AUTOTOOL_AUTO_DISCARD = {_json.dumps(auto_xa)};
                 window.__AUTOTOOL_AUTO_HUNT = false;
@@ -560,7 +562,6 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 sub_page = pages[sub_name]
                 await eval_page(sub_page, f"""() => {{
                     window.__AUTOTOOL_MATCH_ROLE = 'sub';
-                    window.__AUTOTOOL_ROLE = 'dump';
                     window.__AUTOTOOL_PARTNER_PROFILES = {_json.dumps([first_name])};
                     window.__AUTOTOOL_AUTO_DISCARD = {_json.dumps(auto_xa)};
                     window.__AUTOTOOL_AUTO_HUNT = false;
@@ -636,61 +637,7 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         #   [4,"Simms",-1] + cmd 203 -> [4,true,...] -> [3,"Simms",2,""] -> b=100
         # Nên phải chờ ack rời bàn NGAY TRONG TRANG rồi bắn join, không quay vòng
         # qua Python (mỗi evaluate là một round-trip CDP).
-        leave_then_join_fn = """(function (rid, bet, mu) {
-            return new Promise(function (resolve) {
-                const simms = (window.__ws_get_simms && window.__ws_get_simms()) || null;
-                if (!simms || simms.readyState !== 1) {
-                    resolve({ ok: false, reason: 'no_socket' });
-                    return;
-                }
-                const specificRid = (rid && !isNaN(Number(rid)) && Number(rid) > 0) ? Number(rid) : null;
-                if (!specificRid) {
-                    console.warn('[AutoTool V3][SRV] Thiếu RID cố định, từ chối join để tránh nhầm mức cược.');
-                    resolve({ ok: false, reason: 'no_rid' });
-                    return;
-                }
-                // Chống flood: có RID cụ thể thì 1200ms là đủ (khớp extension).
-                // 2500ms của bản cũ còn rộng hơn cả chu kỳ auto-rejoin của game.
-                const now = Date.now();
-                if (window.__last_join_ts && (now - window.__last_join_ts) < 1200) {
-                    resolve({ ok: false, reason: 'anti_flood' });
-                    return;
-                }
-
-                let done = false;
-                function fireJoin(via) {
-                    if (done) return;
-                    done = true;
-                    try { simms.removeEventListener('message', onMsg); } catch (e) {}
-                    try {
-                        simms.send(JSON.stringify([3, 'Simms', specificRid, '']));
-                        window.__last_join_ts = Date.now();
-                        console.log('[AutoTool V3][SRV] JOIN rid=' + specificRid + ' ($' + bet + ') qua ' + via);
-                        resolve({ ok: true, via: via, rid: specificRid });
-                    } catch (e) {
-                        resolve({ ok: false, reason: 'send_fail' });
-                    }
-                }
-                function onMsg(ev) {
-                    const d = (typeof ev.data === 'string') ? ev.data : '';
-                    // Server xác nhận đã rời bàn: [4,true,1,-1,0,""]
-                    if (d.indexOf('[4,true') === 0) fireJoin('leave_ack');
-                }
-
-                const inside = (typeof window.__autotool_is_inside_table === 'function')
-                    ? !!window.__autotool_is_inside_table()
-                    : !!(window.__room_players && window.__room_players.length > 0);
-                if (!inside) { fireJoin('already_lobby'); return; }
-
-                try { simms.addEventListener('message', onMsg); } catch (e) {}
-                try {
-                    simms.send('[4,"Simms",-1]');
-                    simms.send('[6,"Simms","channelPlugin",{"cmd":203}]');
-                } catch (e) {}
-                // Không thấy ack (có thể đã ở sảnh sẵn) -> vẫn join sau 700ms.
-                setTimeout(function () { fireJoin('timeout'); }, 700);
-            });
-        })"""
+        leave_then_join_fn = JS_LEAVE_THEN_JOIN
         for p_n, p in pages.items():
             try:
                 await eval_page(p,
@@ -845,7 +792,6 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
 
             # Kiểm tra xem bàn Account 1 vừa vào có phải bàn trống không (đọc trực tiếp biến bộ nhớ JS 0ms)
             is_empty = False
-            guest_ss_triggered = False
             r_info_cuoi = None
             for _ in range(10):
                 if _should_stop():
@@ -869,39 +815,9 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                         is_empty = (r_info.get("player_count") <= 1 and not r_info.get("has_stranger"))
                         if is_empty:
                             break
-                        # NẾU BẬT auto_start_guest_ss VÀ KHÁCH ĐÃ SẴN SÀNG (SS):
-                        # CHỈ áp dụng khi KHÔNG đang gom bàn cho đồng đội (không có nick phụ tham gia).
-                        # Khi có Account 2 đang chờ -> Account 1 phải OUT bàn có khách lạ, KHÔNG được
-                        # tự ý bắt đầu ván với khách (đồng đội sẽ không vào được bàn 2 người).
-                        if auto_start_guest_ss and not other_profiles and (r_info.get("guest_ready") or r_info.get("in_game")):
-                            log.info("find-and-match: ⚡ PHÁT HIỆN KHÁCH LẠ ĐÃ SẴN SÀNG! Kích hoạt BẮT ĐẦU VÁN NGAY!")
-                            guest_ss_triggered = True
-                            await eval_page(first_page, "() => { if (typeof window.__autotool_exec_start === 'function') window.__autotool_exec_start(); }")
-                            w_p, h_p = await _get_screen_size(first_page)
-                            await first_page.mouse.click(int(w_p * 0.500), int(h_p * 0.525))
-                            break
                 except Exception:
                     pass
                 await asyncio.sleep(0.2)
-
-            if guest_ss_triggered:
-                log.info("find-and-match: >>> ĐÃ BẮT ĐẦU VÁN ĐẤU VỚI KHÁCH LẠ! Hủy lệnh join cho các nick phụ... <<<")
-                ext_hub = getattr(request.app.state, "ext_hub", None)
-                for sub_name in other_profiles:
-                    if ext_hub and ext_hub.is_connected(sub_name):
-                        asyncio.create_task(ext_hub.send_command(sub_name, "LEAVE_ROOM", {"reason": "Chủ bàn đang đấu với khách lạ"}))
-                # Chờ ván kết thúc (tối đa 60s)
-                for _ in range(60):
-                    if _should_stop():
-                        break
-                    in_g = await eval_page(first_page, "() => !!window.__game_in_progress")
-                    if not in_g:
-                        break
-                    await asyncio.sleep(1.0)
-                if auto_leave_after:
-                    await _do_leave_room(first_page, name=first_name, target_mu=target_mu)
-                    await _ensure_in_tldl_lobby(first_page, first_name)
-                continue
 
             if not is_empty:
                 # CHỈ THU THẬP SỐ LIỆU, không tính vào cảnh báo. Đo trên bản ghi
@@ -1520,12 +1436,12 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 st = await eval_page(anchor_page, """() => ({
                     dang_choi: Boolean(window.__game_in_progress),
                     con: (window.__my_cards || []).length,
-                    da_ra: (window.__cards_played || []).length,
+                    luot: Number(window.__turn_seq || 0),
                 })""")
                 if isinstance(st, dict):
                     if not st.get("dang_choi") and st.get("con") == 0:
                         game_completed = True
-                    dau = (st.get("con"), st.get("da_ra"))
+                    dau = (st.get("con"), st.get("luot"))
             except Exception:
                 pass
 
@@ -1549,34 +1465,8 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             await asyncio.sleep(1.0)
 
 
-        # BƯỚC 7: BẪY KHÁCH LẠ SẴN SÀNG (NẾU BẬT auto_start_guest_ss)
-        guest_found = False
-        start_x = 0
-        start_y = 0
-        try:
-            start_sw, start_sh = await _get_screen_size(anchor_page)
-            start_x = int(start_sw * 0.500)
-            start_y = int(start_sh * 0.525)
-        except Exception:
-            pass
-        if auto_start_guest_ss and not game_completed:
-            log.info("find-and-match: Chế độ 'Bắt đầu nếu khách SS' đang bật, chủ bàn canh 5 giây xem có khách...")
-            for _ in range(10):
-                if _should_stop():
-                    break
-                try:
-                    pls = await eval_page(anchor_page, "() => window.__room_players || []")
-                    guest_ss = any(pl.get("aRd") is True or pl.get("ss") is True for pl in pls if pl.get("dn") not in pages and pl.get("u") not in pages)
-                    if guest_ss:
-                        log.info("find-and-match: ⚡ PHÁT HIỆN KHÁCH LẠ SẴN SÀNG! Kích hoạt BẮT ĐẦU NGAY!")
-                        if start_x and start_y:
-                            await anchor_page.mouse.click(start_x, start_y)
-                        guest_found = True
-                        await asyncio.sleep(1.0)
-                        break
-                except Exception:
-                    pass
-                await asyncio.sleep(0.5)
+        # BƯỚC 7 (BẪY KHÁCH LẠ SẴN SÀNG) ĐÃ GỠ HẲN 11/09/2026: dự án chỉ gom
+        # bàn đồng đội rồi xả, không tự đánh với khách.
 
         # BƯỚC 8: Sau ván đã xác nhận, nick phụ luôn out về sảnh. Account chính
         # chỉ out khi người dùng bật auto_leave_after; như vậy UI/log thể hiện
@@ -1639,9 +1529,12 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 # lại ở đây; nếu không chính ngồi im, khách Sẵn sàng cũng không
                 # ai bấm Bắt đầu.
                 try:
-                    await eval_page(anchor_page, js_giu_ban(auto_xa, auto_start_guest_ss, bet_val, target_mu))
+                    await eval_page(anchor_page, js_giu_ban(
+                        auto_xa, bet_val, target_mu,
+                        dong_doi=[d.get("character_name") for d in dong_doi
+                                  if isinstance(d, dict) and d.get("character_name")]))
                     log.info("find-and-match: GIỮ BÀN: %s ở lại bàn #%s; khách lạ Sẵn sàng là tự Bắt đầu và xả (auto_xa=%s, bắt đầu nếu khách SS=%s).",
-                             anchor_name, selected_rid, auto_xa, auto_start_guest_ss)
+                             anchor_name, selected_rid, auto_xa)
                 except Exception as e:
                     log.warning("find-and-match: không bật được chế độ GIỮ BÀN cho %s: %s", anchor_name, e)
                 await _set_hud_status(first_page, "GIỮ BÀN — Account phụ đã out; chờ khách lạ, khách Sẵn sàng là tự Bắt đầu và xả bài.")

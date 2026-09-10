@@ -97,7 +97,6 @@ def test_js_phu_xoa_co_dung_va_mo_cong():
     assert "localStorage.removeItem('AUTOTOOL_STOPPED')" in js
     assert "window.__AUTOTOOL_ENGAGED = true;" in js
     assert "window.__AUTOTOOL_MATCH_ROLE = \"sub\";" in js
-    assert "window.__AUTOTOOL_ROLE = \"dump\";" in js
     assert "window.__AUTOTOOL_AUTO_DISCARD = true;" in js
     assert "window.__AUTOTOOL_ARMED = false;" in js
     assert "window.__is_hunt_initiator = false;" in js
@@ -109,7 +108,6 @@ def test_js_anchor_cung_khuon_nhung_armed():
     assert "localStorage.removeItem('AUTOTOOL_STOPPED')" in js
     assert "window.__AUTOTOOL_ENGAGED = true;" in js
     assert "window.__AUTOTOOL_MATCH_ROLE = \"anchor\";" in js
-    assert "window.__AUTOTOOL_ROLE = \"winner\";" in js
     assert "window.__AUTOTOOL_AUTO_DISCARD = false;" in js
     assert "window.__AUTOTOOL_ARMED = true;" in js
     assert "window.__target_hunt_bet = 500;" in js
@@ -229,7 +227,7 @@ def test_theo_doi_van_theo_dien_bien_khong_45s():
     khoi = code[i:i + 3500]
     assert "45.0" not in khoi, "vẫn cắt cứng 45 giây"
     assert "HAN_IM_LANG" in khoi and "HAN_CUNG" in khoi
-    assert "__cards_played" in khoi, "phải nhìn diễn biến (lá đã ra) để gia hạn"
+    assert "__turn_seq" in khoi, "phải nhìn diễn biến (số lượt đã đi) để gia hạn"
     assert "await bao_dam_kich_hoat(" in khoi, "phải tự chữa cổng giữa ván"
 
 

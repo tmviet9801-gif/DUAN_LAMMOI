@@ -114,18 +114,18 @@ def test_hanh_dong_giu_ban_bang_quyet_dinh():
     res = run_js("""
       const H = M.hanhDongGiuBan;
       console.log(JSON.stringify([
-        H({dangVan:true,  coKhach:true,  tuBatTay:true,  laChu:false, khachSS:true,  minhSS:false}),
-        H({dangVan:false, coKhach:false, tuBatTay:true,  laChu:true}),
-        H({dangVan:false, coKhach:true,  tuBatTay:false, laChu:false, minhSS:false}),
-        H({dangVan:false, coKhach:true,  tuBatTay:true,  laChu:false, minhSS:false}),
-        H({dangVan:false, coKhach:true,  tuBatTay:true,  laChu:false, minhSS:true}),
-        H({dangVan:false, coKhach:true,  tuBatTay:true,  laChu:true,  khachSS:true}),
-        H({dangVan:false, coKhach:true,  tuBatTay:true,  laChu:true,  khachSS:false}),
+        H({dangVan:true,  coDongDoi:true,  laChu:false, doiThuSS:true,  minhSS:false}),
+        H({dangVan:false, coDongDoi:false, laChu:true}),
+        H({dangVan:false, coDongDoi:true,  coKhachLa:true, laChu:true, doiThuSS:true}),
+        H({dangVan:false, coDongDoi:true,  laChu:false, minhSS:false}),
+        H({dangVan:false, coDongDoi:true,  laChu:false, minhSS:true}),
+        H({dangVan:false, coDongDoi:true,  laChu:true,  doiThuSS:true}),
+        H({dangVan:false, coDongDoi:true,  laChu:true,  doiThuSS:false}),
         H(undefined),
       ]));
     """)
-    # đang ván | một mình | tắt tự bắt tay | khách chưa SS -> SS | khách đã SS
-    # | chủ + khách SS -> bắt đầu | chủ + khách chưa SS | không có gì
+    # đang ván | chưa có đồng đội | CÓ KHÁCH LẠ -> im | mình là khách chưa SS
+    # | mình đã SS | chủ + đồng đội SS -> bắt đầu | chủ + chưa SS | không có gì
     assert res == ["dang_van", "cho", "cho", "san_sang", "cho", "bat_dau", "cho", "cho"]
 
 
@@ -144,9 +144,9 @@ def test_extension_giu_ban_biet_minh_la_khach():
     i = src.index("if (G.__AUTOTOOL_GIU_BAN && !isSubProfile) {")
     khoi = src[i:i + 1200]
     assert "quyetDinhGiuBan(me, p.ps || [], guestSS)" in khoi
-    assert 'guiSanSangGiuBan("cmd:202")' in khoi, "mình là khách thì phải Sẵn sàng"
-    assert "G.__autotool_exec_start()" in khoi, "mình là chủ, khách SS thì vẫn Bắt đầu như cũ"
-    # Sẵn sàng của khách đọc qua MỘT chỗ, nhận cả `r` của khung 202
+    assert 'guiSanSangGiuBan("cmd:202")' in khoi, "đồng đội giữ bàn thì mình Sẵn sàng"
+    assert "G.__autotool_exec_start()" in khoi, "mình là chủ, đồng đội SS thì Bắt đầu"
+    # Sẵn sàng đọc qua MỘT chỗ, nhận cả `r` của khung 202
     assert "const guestSS = strangers.some((x) => daSanSangNguoiChoi(x));" in src
 
 
@@ -155,7 +155,7 @@ def test_extension_quyet_dinh_uy_quyen_module_thuan_va_du_phong_an_toan():
     i = src.index("function quyetDinhGiuBan(")
     than = src[i:src.index("function guiSanSangGiuBan(", i)]
     for c in ("M.hanhDongGiuBan(t)", "laChuBanHienTai(me, ds)",
-              "G.__auto_start_guest_ss", "G.__game_in_progress", "isPartner(x)"):
+              "coKhachLa", "coDongDoi", "G.__game_in_progress", "isPartner(x)"):
         assert c in than, c
     i = src.index("function laChuBanHienTai(")
     than = src[i:i + 300]
@@ -241,28 +241,25 @@ def test_clear_run_config_tat_tu_danh():
 # ===================== 3. kich_hoat / lobby / matching / stop =====================
 
 def test_js_tu_danh_la_giu_ban_khong_muc_cuoc():
-    js = KH.js_tu_danh(True, True)
+    js = KH.js_tu_danh(True)
     for dong in ("window.__AUTOTOOL_GIU_BAN = true;",
                  "window.__AUTOTOOL_TU_DANH = true;",
                  "window.__AUTOTOOL_ENGAGED = true;",
                  "window.__AUTOTOOL_ARMED = true;",
                  "window.__AUTOTOOL_AUTO_HUNT = false;",
                  "window.__AUTOTOOL_AUTO_DISCARD = true;",
-                 "window.__auto_start_guest_ss = true;",
                  "window.__target_hunt_bet = 0;",
                  "window.__target_hunt_mu = 0;",
                  'window.__AUTOTOOL_MATCH_ROLE = "anchor";',
-                 "window.__autotool_partners = [];",
                  "localStorage.removeItem('AUTOTOOL_STOPPED')",
                  "window.__autotool_giu_ban_kiem_ngay('bat_tu_danh')"):
         assert dong in js, dong
-    js2 = KH.js_tu_danh(False, False)
+    js2 = KH.js_tu_danh(False)
     assert "window.__AUTOTOOL_AUTO_DISCARD = false;" in js2
-    assert "window.__auto_start_guest_ss = false;" in js2
 
 
 def test_giu_ban_sau_gom_ban_va_kich_hoat_khong_phai_tu_danh():
-    js = KH.js_giu_ban(True, True, 100, 2)
+    js = KH.js_giu_ban(True, 100, 2)
     assert "window.__AUTOTOOL_TU_DANH = false;" in js
     assert "__autotool_giu_ban_kiem_ngay" not in js, \
         "GIỮ BÀN sau gom bàn giữ nguyên đường đã chạy thật, không kiểm ngay"
@@ -344,7 +341,7 @@ def phien(client):
 
 
 def _bat(client, **them):
-    body = {"profile_name": "Account 01", "auto_xa": True, "auto_start_guest_ss": True}
+    body = {"profile_name": "Account 01", "auto_xa": True}
     body.update(them)
     return client.post("/api/autoplay/tu-danh/bat", json=body)
 
@@ -358,7 +355,7 @@ def test_bat_dat_che_do_giu_ban_khong_muc_cuoc_va_doc_lai(client, phien):
     js = "\n".join(phien.js)
     for dong in ("window.__AUTOTOOL_GIU_BAN = true;", "window.__AUTOTOOL_TU_DANH = true;",
                  "window.__AUTOTOOL_ENGAGED = true;", "window.__AUTOTOOL_AUTO_DISCARD = true;",
-                 "window.__target_hunt_bet = 0;", "window.__auto_start_guest_ss = true;",
+                 "window.__target_hunt_bet = 0;",
                  "localStorage.removeItem('AUTOTOOL_STOPPED')"):
         assert dong in js, dong
     assert "tu_danh:" in js, "phải ĐỌC LẠI trang sau khi đặt"
@@ -366,12 +363,11 @@ def test_bat_dat_che_do_giu_ban_khong_muc_cuoc_va_doc_lai(client, phien):
     assert st["profiles"] == ["Account 01"] and st["da_roi"] == []
 
 
-def test_ton_trong_tuy_chon_tat_xa_va_tat_tu_bat_tay(client, phien):
-    r = _bat(client, auto_xa=False, auto_start_guest_ss=False)
+def test_ton_trong_tuy_chon_tat_xa(client, phien):
+    r = _bat(client, auto_xa=False)
     assert r.status_code == 200, r.text
     js = "\n".join(phien.js)
     assert "window.__AUTOTOOL_AUTO_DISCARD = false;" in js
-    assert "window.__auto_start_guest_ss = false;" in js
 
 
 def test_chua_mo_chrome_thi_400_khong_mo_ho(client, phien):

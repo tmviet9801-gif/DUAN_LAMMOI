@@ -12,6 +12,7 @@ from .constants import AUTOPLAY_CONFIG_FILE, FIXED_TABLE_RIDS, kiem_so_cho
 from .check_live import check_live, check_one_profile
 from .context import resolve_profile_name
 from .deps import _active_adapter, _build_adapter, _load_game_config
+from .ket_noi import ngat_extension
 from .lobby import (
     _clear_hunt_state,
     _do_leave_room,
@@ -399,12 +400,28 @@ async def _dung_auto(request: Request, body, ep_toan_bo=False):
         for _t in stopped_profiles:
             tap_tu_danh.discard(_t)
 
+    # 6. NGẮT KẾT NỐI EXTENSION. Người dùng chốt (11/09/2026): bấm Dừng là
+    # "thao tác như người dùng" — đóng WS giữa extension và app để từ đó
+    # không lệnh nào của tool chạm tới Chrome nữa. WebSocket của GAME giữ
+    # nguyên; đóng cái đó là văng khỏi bàn.
+    da_ngat = []
+    for _t in stopped_profiles:
+        try:
+            if await ngat_extension(request, _t):
+                da_ngat.append(_t)
+        except Exception:
+            pass
+    if da_ngat:
+        log.info("autoplay_stop: đã NGẮT kết nối extension cho %s", da_ngat)
+
     log.info("autoplay_stop: Đã dừng tức thì %d profile, không chạy thêm điều hướng/click: %s", len(stopped_profiles), stopped_profiles)
     return {
         "ok": True, 
         "count": len(stopped_profiles),
         "profiles": stopped_profiles,
-        "message": f"Đã dừng tức thì {len(stopped_profiles)} tài khoản; không gửi thêm lệnh join/click."
+        "da_ngat_extension": da_ngat,
+        "message": (f"Đã dừng tức thì {len(stopped_profiles)} tài khoản; "
+                    f"đã ngắt kết nối extension cho {len(da_ngat)}.")
     }
 
 

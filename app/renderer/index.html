@@ -170,19 +170,26 @@
                    khi khách Sẵn sàng (là chủ bàn) rồi xả bằng bộ xả hiện có, hết
                    ván ở lại bàn — đúng chế độ GIỮ BÀN sau ván gom bàn. Bấm lại
                    để tắt: chỉ đóng bộ xả, KHÔNG out bàn. -->
+              <!-- Cổng kết nối extension: ngắt là app không gửi được lệnh nào
+                   xuống Chrome nữa, người dùng tự thao tác. WebSocket của GAME
+                   không bị đụng tới. -->
+              <button id="btnExtNoi" class="btn-gc green-bold"
+                      title="Nối lại WebSocket giữa extension và app cho mọi profile đang mở Chrome">🔌 Kết nối</button>
+              <button id="btnExtNgat" class="btn-gc red"
+                      title="Ngắt WebSocket giữa extension và app — Chrome chạy như bình thường, tool không gửi lệnh nào nữa">⛔ Ngắt kết nối</button>
               <button id="btnGcTuDanh" class="btn-gc blue"
                       title="Cho 1 profile (tích ĐẦU TIÊN), không cần gom bàn: bạn tự vào bàn bất kỳ, tool tự Sẵn sàng (nếu là khách) hoặc tự Bắt đầu khi khách Sẵn sàng (nếu là chủ bàn) rồi xả bằng bộ xả hiện có; hết ván vẫn ở lại bàn. Bấm lại để tắt (không out bàn).">🤖 Tự đánh</button>
             </div>
           </div>
 
-          <!-- Tuỳ chọn xả bài, bẫy khách SS, tự out -->
+          <!-- Tuỳ chọn xả bài, tự out -->
           <div class="gc-row gc-match-options">
             <label class="gc-check-lbl opt-xa" title="Tự động xả bài sau khi các tài khoản tìm thấy nhau và vào chung bàn. Nếu bỏ tích: Dừng chờ thao tác tay">
               <input id="gcAutoXaBai" type="checkbox" checked /> ⚡ Tự động xả bài khi thấy nhau
             </label>
-            <label class="gc-check-lbl opt-guest-ss" title="Sau khi xả bài xong, chủ bàn giữ bàn, nếu có khách lạ vào bấm Sẵn Sàng (SS) thì chủ bàn bấm Bắt Đầu ngay để bẫy khách">
-              <input id="gcAutoStartGuestSS" type="checkbox" checked /> 🎯 Bắt đầu nếu khách SS
-            </label>
+            <!-- ĐÃ BỎ ô "Bắt đầu nếu khách SS" (11/09/2026): dự án chỉ gom bàn
+                 đồng đội rồi xả, không tự đánh với khách. Bàn có người ngoài thì
+                 tool im hoàn toàn. -->
             <!-- MẶC ĐỊNH TẮT. Nick phụ LUÔN out sau khi xả; ô này chỉ quyết
                  Account chính có out theo hay không. Nguyên tắc: phải có một
                  profile ở lại giữ bàn cho khách ngoài — tích sẵn ô này là cả
@@ -193,6 +200,11 @@
             <span class="opt-tip">💡 Tích từ 2 profile trở lên trên bảng bên dưới. Profile tích ĐẦU TIÊN là account giữ tiền; các profile còn lại cùng dò bàn và vào ghép.</span>
           </div>
           <!-- Live Status Box for Synchronous Matching -->
+          <!-- Bàn chung của luồng xé lẻ: nick nào đang giữ bàn nào -->
+          <div id="gcBanChung" class="gc-sync-status" style="display:none;">
+            <span>🎯</span> <span id="gcBanChungText"></span>
+            <button id="btnBanChungXoa" class="btn-gc red-dark" style="margin-left:8px;padding:2px 8px;">Xoá</button>
+          </div>
           <div id="gcSyncStatusBox" class="gc-sync-status hidden">
             <span id="gcSyncStatusIcon">⚡</span>
             <span id="gcSyncStatusText">Sẵn sàng gom bàn...</span>
@@ -232,12 +244,11 @@
               <th style="width:130px">Proxy</th>
               <th style="width:90px">Balance</th>
               <th style="width:60px">Room</th>
-              <th style="min-width:170px">Bài trên tay</th>
               <th>Log</th>
               <th style="width:65px">Status</th>
-              <th style="width:60px">Tìm.P</th>
+              <th style="width:70px" title="Nick này dò tới khi ngồi được BÀN TRỐNG rồi giữ bàn">Tìm bàn</th>
+              <th style="width:70px" title="Nick này vào thẳng bàn mà nick khác đang giữ">Vào bàn</th>
               <th style="width:65px">Thoát.P</th>
-              <th style="width:65px">Site</th>
               <th style="width:60px">Dừng</th>
               <th style="width:55px; text-align:center;">Connect</th>
             </tr>

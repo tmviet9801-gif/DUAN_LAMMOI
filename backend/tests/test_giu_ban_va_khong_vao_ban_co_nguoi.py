@@ -73,25 +73,21 @@ def test_chinh_van_join_ngay_moi_luot_do():
 
 # ===================== 2. Chế độ GIỮ BÀN =====================
 
-def test_js_giu_ban_mo_cong_bat_xa_xoa_dong_doi():
-    js = KH.js_giu_ban(True, True, 100, 2)
+def test_js_giu_ban_mo_cong_bat_xa():
+    js = KH.js_giu_ban(True, 100, 2)
     for dong in ("window.__AUTOTOOL_ENGAGED = true;",
                  "window.__AUTOTOOL_GIU_BAN = true;",
                  "window.__AUTOTOOL_ARMED = true;",
                  "window.__AUTOTOOL_AUTO_HUNT = false;",
                  "window.__AUTOTOOL_AUTO_DISCARD = true;",
-                 "window.__auto_start_guest_ss = true;",
-                 "window.__autotool_partners = [];",
-                 'window.__AUTOTOOL_ROLE = "winner";',
                  "localStorage.removeItem('AUTOTOOL_STOPPED')"):
         assert dong in js, dong
     assert "__stranger_leave_timer" in js, "phải huỷ lệnh rời đang hẹn từ lúc gom"
 
 
 def test_js_giu_ban_ton_trong_tuy_chon():
-    js = KH.js_giu_ban(False, False, 500, 2)
+    js = KH.js_giu_ban(False, 500, 2)
     assert "window.__AUTOTOOL_AUTO_DISCARD = false;" in js
-    assert "window.__auto_start_guest_ss = false;" in js
 
 
 def test_kich_hoat_luc_gom_KHONG_giu_ban():
@@ -122,10 +118,13 @@ def test_extension_khong_roi_ban_khi_dang_giu():
 
 
 def test_extension_cac_lop_gac_dong_doi_nhuong_cho_giu_ban():
+    """GIỮ BÀN không còn phải mở cổng `khongDuocBatDauVoiNguoiLa`: từ
+    11/09/2026 cổng đó chặn tuyệt đối khi có người ngoài, mọi chế độ."""
     src = _code_js(EXT)
-    for ham in ("function dangChoDongDoi()", "function khongDuocBatDauVoiNguoiLa()"):
-        i = src.index(ham)
-        assert "if (G.__AUTOTOOL_GIU_BAN) return false;" in src[i:i + 300], ham
+    i = src.index("function dangChoDongDoi()")
+    assert "if (G.__AUTOTOOL_GIU_BAN) return false;" in src[i:i + 300]
+    i = src.index("function khongDuocBatDauVoiNguoiLa()")
+    assert "return coKhachLaTrongBan();" in src[i:i + 300]
     i = src.index("function clearRunConfig()")
     assert "G.__AUTOTOOL_GIU_BAN = false;" in src[i:i + 900]
 
@@ -135,7 +134,7 @@ def test_controller_bat_giu_ban_khi_chinh_khong_out():
     i = code.index("Ván xả bài hoàn tất")
     khoi = code[i:i + 5000]
     j = khoi.index("if auto_leave_after:")
-    k = khoi.index("js_giu_ban(auto_xa, auto_start_guest_ss", j)
+    k = khoi.index("js_giu_ban(", j)
     assert "else:" in khoi[j:k], "giữ bàn phải nằm ở nhánh KHÔNG out"
     assert "await eval_page(anchor_page, js_giu_ban(" in khoi
 

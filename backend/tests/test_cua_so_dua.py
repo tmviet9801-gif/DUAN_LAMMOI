@@ -33,14 +33,18 @@ def test_lop_gac_dung_chung_mot_ham():
     assert code.count("khongDuocBatDauVoiNguoiLa()") >= 3   # 1 khai báo + 2 dùng
 
 
-def test_khong_chan_cung_theo_MATCH_ROLE():
-    """`triggerVerifiedMatchReadyAndStart` cũng gọi exec_start và LUÔN chạy với
-    MATCH_ROLE khác null — chặn cứng là nick chính không bao giờ bắt đầu được
-    ván hợp lệ."""
+def test_chan_theo_CO_KHACH_LA_chu_khong_theo_MATCH_ROLE():
+    """Từ 11/09/2026 luật gọn hẳn: bàn có bất kỳ ai không phải đồng đội thì
+    KHÔNG Sẵn sàng / Bắt đầu, kể cả ở chế độ GIỮ BÀN. Không còn ngoại lệ
+    theo MATCH_ROLE hay theo ô "Bắt đầu nếu khách SS" (ô đó đã bỏ)."""
     src = EXT.read_text(encoding="utf-8")
     khoi = src.split("function khongDuocBatDauVoiNguoiLa()", 1)[1][:600]
-    assert "find(isPartner)" in khoi, "phải xét CÓ đồng đội trong bàn hay không"
-    assert "length > 1" in khoi
+    assert "return coKhachLaTrongBan();" in khoi
+    assert "__AUTOTOOL_MATCH_ROLE" not in khoi, "không được chặn theo vai trò nữa"
+    i = src.index("function coKhachLaTrongBan()")
+    than = src[i:i + 700]
+    assert "isMe(x) || isPartner(x)" in than
+    assert "return true;" in than, "đọc lỗi thì coi như CÓ khách (hỏng an toàn)"
 
 
 # ---------- ván đã đặt cược thì đánh hết ván ----------
@@ -89,11 +93,13 @@ def test_khach_la_tu_roi_thi_huy_lenh_out():
     assert "clearTimeout(G.__stranger_leave_timer)" in khoi
 
 
-def test_dang_cho_dong_doi_thi_khong_dung_cho_khach_bam_SS():
-    """Nhánh chờ 3 giây nằm TRONG khối đã bị `dangChoDongDoi()` chặn, nên khi
-    còn nick phụ chưa vào thì rơi thẳng xuống nhánh out."""
+def test_khong_con_duong_nao_bat_dau_van_voi_khach():
+    """Khối "chờ 3 giây xem khách có Sẵn sàng rồi Bắt đầu" đã gỡ hẳn
+    (11/09/2026). Bàn có khách là RỜI, không có nhánh nào khác."""
     src = EXT.read_text(encoding="utf-8")
-    i_gac = src.index("if (!dangChoDongDoi() && G.__auto_start_guest_ss")
-    i_cho = src.index("chờ tối đa 3s xem khách có SẴN SÀNG")
-    i_out = src.index("HỦY LỆNH & Out bàn ngay!", i_gac)
-    assert i_gac < i_cho < i_out, "nhánh chờ phải nằm trong khối bị chặn"
+    for dau_vet in ("chờ tối đa 3s xem khách có SẴN SÀNG",
+                    "__guest_ss_wait_timer",
+                    "__auto_start_guest_ss",
+                    "AUTOTOOL_GUEST_SS_STARTED"):
+        assert dau_vet not in src, f"còn sót đường đánh với khách: {dau_vet}"
+    assert "HỦY LỆNH & Out bàn ngay!" in src

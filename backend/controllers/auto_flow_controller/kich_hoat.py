@@ -43,8 +43,7 @@ def js_kich_hoat(vai_tro, auto_xa, dong_doi, bet, mu):
     """JS đặt TRỌN cấu hình tự động cho một trang theo vai trò.
 
     Đặt cả cổng lẫn vai trò trong một lần, cho cả anchor lẫn phụ — không còn
-    hai khối lệch nhau. Không đụng `__auto_start_guest_ss` (thuộc anchor và do
-    chỗ khác quyết).
+    hai khối lệch nhau.
     """
     la_anchor = vai_tro == "anchor"
     return f"""() => {{
@@ -56,7 +55,6 @@ def js_kich_hoat(vai_tro, auto_xa, dong_doi, bet, mu):
         window.__AUTOTOOL_ARMED = {json.dumps(la_anchor)};
         window.__is_hunt_initiator = {json.dumps(la_anchor)};
         window.__AUTOTOOL_MATCH_ROLE = {json.dumps(vai_tro)};
-        window.__AUTOTOOL_ROLE = {json.dumps("winner" if la_anchor else "dump")};
         window.__AUTOTOOL_PARTNER_PROFILES = {json.dumps(list(dong_doi))};
         window.__AUTOTOOL_AUTO_DISCARD = {json.dumps(bool(auto_xa))};
         window.__target_hunt_bet = {json.dumps(bet)};
@@ -64,7 +62,7 @@ def js_kich_hoat(vai_tro, auto_xa, dong_doi, bet, mu):
     }}"""
 
 
-def js_giu_ban(auto_xa, auto_start_guest_ss, bet, mu, tu_danh=False):
+def js_giu_ban(auto_xa, bet, mu, tu_danh=False, dong_doi=None):
     """JS đưa trang CHÍNH vào chế độ GIỮ BÀN sau khi phụ đã out.
 
     Chính ở lại bàn, cổng kích hoạt vẫn MỞ, auto-xả vẫn BẬT: khách lạ ngồi vào
@@ -73,12 +71,25 @@ def js_giu_ban(auto_xa, auto_start_guest_ss, bet, mu, tu_danh=False):
     sách đồng đội: các lớp gác "đang chờ đồng đội -> rời bàn khi thấy khách
     lạ" không được phép nổ trong chế độ này (extension kiểm `__AUTOTOOL_GIU_BAN`).
 
+    `dong_doi` là danh sách tên nhân vật in-game được coi là đồng đội. Bản
+    trước XOÁ TRẮNG hai danh sách này, và điều đó đã thành lỗi từ khi luật
+    đổi sang "chỉ xả với đồng đội" (11/09/2026): danh sách rỗng thì
+    `isPartner` trả false cho mọi người, extension coi cả bàn là khách lạ và
+    không bao giờ đánh. Truyền None thì GIỮ NGUYÊN danh sách đang có (Hub tự
+    đồng bộ), truyền list thì đặt đúng list đó.
+
     `tu_danh=True` là cùng chế độ nhưng do người dùng bấm nút TỰ ĐÁNH (xem
     `js_tu_danh`). Khi đó còn KIỂM NGAY bàn đang ngồi: người dùng có thể bấm
     lúc đã ngồi sẵn trong bàn người khác, chủ bàn đang chờ mình Sẵn sàng, và
     không có khung 202 mới nào sắp tới để kích nhánh trong extension. Giá trị
     trả về là hành động đã chọn ("san_sang" / "bat_dau" / "cho" / "dang_van").
     """
+    dat_dong_doi = ""
+    if dong_doi is not None:
+        _ds = json.dumps(list(dong_doi))
+        dat_dong_doi = (f"        window.__AUTOTOOL_PARTNER_PROFILES = {_ds};\n"
+                        f"        window.__autotool_partners = {_ds};\n")
+
     kiem_ngay = ""
     if tu_danh:
         kiem_ngay = """
@@ -96,25 +107,19 @@ def js_giu_ban(auto_xa, auto_start_guest_ss, bet, mu, tu_danh=False):
         window.__AUTOTOOL_GIU_BAN = true;
         window.__AUTOTOOL_TU_DANH = {json.dumps(bool(tu_danh))};
         window.__AUTOTOOL_MATCH_ROLE = "anchor";
-        window.__AUTOTOOL_ROLE = "winner";
         window.__is_hunt_initiator = true;
         window.__is_matched_locked = false;
-        window.__AUTOTOOL_PARTNER_PROFILES = [];
-        window.__autotool_partners = [];
-        window.__partner_cards = null;
-        window.__AUTOTOOL_AUTO_DISCARD = {json.dumps(bool(auto_xa))};
-        window.__auto_start_guest_ss = {json.dumps(bool(auto_start_guest_ss))};
+{dat_dong_doi}        window.__AUTOTOOL_AUTO_DISCARD = {json.dumps(bool(auto_xa))};
         window.__target_hunt_bet = {json.dumps(bet)};
         window.__target_hunt_mu = {json.dumps(mu)};
         if (window.__hunt_retry_timer) {{ clearTimeout(window.__hunt_retry_timer); window.__hunt_retry_timer = null; }}
         if (window.__hunt_wait_timer) {{ clearTimeout(window.__hunt_wait_timer); window.__hunt_wait_timer = null; }}
         if (window.__start_retry_timer) {{ clearInterval(window.__start_retry_timer); window.__start_retry_timer = null; }}
-        if (window.__guest_ss_wait_timer) {{ clearTimeout(window.__guest_ss_wait_timer); window.__guest_ss_wait_timer = null; }}
         if (window.__stranger_leave_timer) {{ clearTimeout(window.__stranger_leave_timer); window.__stranger_leave_timer = null; }}{kiem_ngay}
     }}"""
 
 
-def js_tu_danh(auto_xa, auto_start_guest_ss):
+def js_tu_danh(auto_xa, dong_doi=None):
     """JS bật TỰ ĐÁNH cho một trang: đúng chế độ GIỮ BÀN, nhưng người dùng tự vào bàn.
 
     Khác GIỮ BÀN sau gom bàn ở hai điểm, và cả hai đều KHÔNG đụng luật chọn nước:
@@ -124,7 +129,7 @@ def js_tu_danh(auto_xa, auto_start_guest_ss):
         của khung 202 (vai_tro_ban.laChuBan) để biết phải gửi Sẵn sàng (khách)
         hay Bắt đầu (chủ).
     """
-    return js_giu_ban(auto_xa, auto_start_guest_ss, 0, 0, tu_danh=True)
+    return js_giu_ban(auto_xa, 0, 0, tu_danh=True, dong_doi=dong_doi)
 
 
 # Đọc trạng thái TỰ ĐÁNH thật trên trang. Trang tải lại là extension khởi tạo

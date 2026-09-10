@@ -151,7 +151,6 @@
 
     // Các tuỳ chọn mới từ người dùng
     const autoXa = $("gcAutoXaBai") ? $("gcAutoXaBai").checked : true;
-    const autoStartGuestSS = $("gcAutoStartGuestSS") ? $("gcAutoStartGuestSS").checked : true;
     // Mặc định FALSE: Account chính ở lại giữ bàn sau khi xả (nick phụ luôn
     // out). Thiếu ô trên giao diện thì cũng không được ngầm cho cả hai out.
     const autoLeaveAfter = $("gcAutoLeaveAfter") ? $("gcAutoLeaveAfter").checked : false;
@@ -182,7 +181,6 @@
           gid: 1, // Tiến Lên Đếm Lá
           max_tries: maxTries,
           auto_xa: autoXa,
-          auto_start_guest_ss: autoStartGuestSS,
           auto_leave_after: autoLeaveAfter,
         }),
       });
@@ -293,10 +291,9 @@
         App.toast(`Đã tắt Tự đánh: ${ten}`, "info");
       } else {
         const autoXa = $("gcAutoXaBai") ? $("gcAutoXaBai").checked : true;
-        const tuBatTay = $("gcAutoStartGuestSS") ? $("gcAutoStartGuestSS").checked : true;
         const r = await App.api("/api/autoplay/tu-danh/bat", {
           method: "POST",
-          body: JSON.stringify({ profile_name: ten, auto_xa: autoXa, auto_start_guest_ss: tuBatTay }),
+          body: JSON.stringify({ profile_name: ten, auto_xa: autoXa }),
         });
         const tenThat = r.profile || ten;
         App.state.tuDanhOn.add(tenThat);
@@ -305,13 +302,12 @@
           : "chưa vào bàn — tự vào bàn nào cũng được";
         // Extension đã kiểm ngay bàn đang ngồi lúc bật — nói rõ nó vừa làm gì.
         const vuaLam = {
-          san_sang: " Mình là khách: ĐÃ GỬI Sẵn sàng, chờ chủ bàn Bắt đầu.",
-          bat_dau: " Khách đã Sẵn sàng: ĐÃ Bắt đầu.",
+          san_sang: " Đồng đội đang giữ bàn: ĐÃ GỬI Sẵn sàng.",
+          bat_dau: " Đồng đội đã Sẵn sàng: ĐÃ Bắt đầu.",
           dang_van: " Ván đang chạy: tool đánh từ lượt tới của mình.",
         }[r.hanh_dong_ngay] || "";
         setStatus(
-          `🤖 TỰ ĐÁNH BẬT cho ${tenThat} — ${oDau}.${vuaLam} Là khách: tự Sẵn sàng; là chủ bàn: khách Sẵn sàng là tự Bắt đầu; xả xong ở lại bàn.`
-          + (tuBatTay ? "" : " (Ô 'Bắt đầu nếu khách SS' đang TẮT: bạn tự bấm Sẵn sàng/Bắt đầu, tool chỉ tự đánh.)"),
+          `🤖 TỰ ĐÁNH BẬT cho ${tenThat} — ${oDau}.${vuaLam} CHỈ xả với ĐỒNG ĐỘI: bàn có người ngoài thì tool im, bạn tự chơi. Xả xong ở lại bàn.`,
           "success",
         );
         App.toast(`Tự đánh BẬT: ${tenThat}`, "success");
@@ -324,6 +320,113 @@
       veNutTuDanh();
     }
   }
+
+  // ---- XÉ LẺ QUY TRÌNH: Tìm bàn (giữ bàn trống) / Vào bàn (theo bàn chung) ----
+  //
+  // Lấy cách làm của công cụ Sunwin: một máy giữ bàn, các máy khác bấm vào
+  // thẳng bàn đó. Khác luồng GOM BÀN cũ ở chỗ không phải tích sẵn cả cặp và
+  // chạy đồng thời — bấm nick nào, lúc nào cũng được.
+
+  async function veBanChung() {
+    const hop = $("gcBanChung");
+    const chu = $("gcBanChungText");
+    if (!hop || !chu) return;
+    try {
+      const r = await App.api("/api/autoplay/ban-chung");
+      if (r && r.co) {
+        hop.style.display = "";
+        chu.textContent = `Bàn chung: #${r.rid} ($${Number(r.bet).toLocaleString()}, ${r.mu} chỗ) — ${r.chu} đang giữ`;
+      } else {
+        hop.style.display = "none";
+      }
+    } catch (_) {
+      hop.style.display = "none";
+    }
+  }
+
+  App.timBan = async function timBan(ten) {
+    if (!ten) return;
+    const bet = mucCuocDangChon();
+    const mu = parseInt(($("gcSlotCount") && $("gcSlotCount").value) || "2", 10) || 2;
+    const autoXa = $("gcAutoXaBai") ? $("gcAutoXaBai").checked : true;
+    setStatus(`⏳ ${ten} đang dò bàn trống $${bet.toLocaleString()}...`);
+    App.toast(`${ten}: bắt đầu dò bàn trống`, "info");
+    try {
+      const r = await App.api("/api/autoplay/tim-ban", {
+        method: "POST",
+        body: JSON.stringify({ profile_name: ten, bet, mu, auto_xa: autoXa }),
+      });
+      if (r && r.ok) {
+        setStatus(`🎯 ${r.profile} đang GIỮ bàn #${r.rid} ($${Number(r.bet).toLocaleString()}) sau ${r.so_lan_do} lần dò. Bấm "Vào bàn" ở nick khác.`, "success");
+        App.toast(`Đã giữ bàn #${r.rid}`, "success");
+      } else {
+        setStatus(`⚠️ ${(r && r.error) || "Chưa gặp bàn trống"}`, "error");
+      }
+    } catch (e) {
+      setStatus(`❌ Tìm bàn lỗi: ${e.message}`, "error");
+      App.toast("Tìm bàn lỗi: " + e.message, "error");
+    }
+    veBanChung();
+  };
+
+  App.vaoBan = async function vaoBan(ten) {
+    if (!ten) return;
+    const autoXa = $("gcAutoXaBai") ? $("gcAutoXaBai").checked : true;
+    setStatus(`⏳ ${ten} đang vào bàn chung...`);
+    try {
+      const r = await App.api("/api/autoplay/vao-ban", {
+        method: "POST",
+        body: JSON.stringify({ profile_name: ten, auto_xa: autoXa }),
+      });
+      if (r && r.ok) {
+        const canhBao = r.co_khach_la
+          ? " ⚠️ Bàn có người ngoài — tool sẽ KHÔNG tự đánh."
+          : "";
+        setStatus(`✅ ${r.profile} đã vào bàn #${r.rid} cùng ${r.chu_ban} (${r.so_nguoi} người).${canhBao}`,
+                  r.co_khach_la ? "error" : "success");
+        App.toast(`${r.profile} đã vào bàn #${r.rid}`, "success");
+      } else {
+        setStatus(`⚠️ ${(r && r.error) || "Không vào được bàn chung"}`, "error");
+      }
+    } catch (e) {
+      setStatus(`❌ Vào bàn lỗi: ${e.message}`, "error");
+      App.toast("Vào bàn lỗi: " + e.message, "error");
+    }
+    veBanChung();
+  };
+
+  // ---- Cổng kết nối extension ----
+  async function datKetNoi(bat) {
+    const duong = bat ? "/api/extension/noi" : "/api/extension/ngat";
+    try {
+      const r = await App.api(duong, { method: "POST", body: JSON.stringify({}) });
+      const n = (r && r.profiles || []).length;
+      setStatus(bat
+        ? `🔌 Đã yêu cầu ${n} profile NỐI LẠI với app.`
+        : `⛔ Đã NGẮT kết nối ${n} profile — Chrome chạy như bình thường, tool không gửi lệnh nào nữa.`,
+        bat ? "success" : "info");
+      App.toast(bat ? `Kết nối lại ${n} profile` : `Ngắt kết nối ${n} profile`, bat ? "success" : "warn");
+    } catch (e) {
+      setStatus(`❌ ${bat ? "Kết nối" : "Ngắt kết nối"} lỗi: ${e.message}`, "error");
+      App.toast(e.message, "error");
+    }
+  }
+
+  if ($("btnExtNoi")) $("btnExtNoi").onclick = () => datKetNoi(true);
+  if ($("btnExtNgat")) $("btnExtNgat").onclick = () => datKetNoi(false);
+  if ($("btnBanChungXoa")) {
+    $("btnBanChungXoa").onclick = async () => {
+      try {
+        await App.api("/api/autoplay/ban-chung/xoa", { method: "POST", body: JSON.stringify({}) });
+        App.toast("Đã xoá bàn chung", "info");
+      } catch (e) {
+        App.toast("Xoá bàn chung lỗi: " + e.message, "error");
+      }
+      veBanChung();
+    };
+  }
+  veBanChung();
+  setInterval(veBanChung, 10000);
 
   // Bind Buttons (GOM BÀN & XẢ / Dừng / Tự đánh)
   if ($("btnGcSyncMatch")) $("btnGcSyncMatch").onclick = () => start();

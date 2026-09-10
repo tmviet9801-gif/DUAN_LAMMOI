@@ -28,6 +28,8 @@ from models.config_model import load_accounts
 from core.page_world import eval_page
 
 from .context import resolve_profile_name
+from .ban_chung import _ten_dong_doi
+from .ket_noi import noi_extension
 from .kich_hoat import JS_DOC_TU_DANH, js_tu_danh
 from .lobby import dong_luot_chay
 
@@ -75,9 +77,7 @@ def _da_bat(tt, auto_xa):
 async def tu_danh_bat(body: dict, request: Request):
     """Bật Tự đánh cho MỘT profile đang mở Chrome.
 
-    Body: profile_name (bắt buộc), auto_xa (mặc định True),
-          auto_start_guest_ss (mặc định True — ô "Bắt đầu nếu khách SS": tắt
-          thì tool không tự Sẵn sàng/Bắt đầu, chỉ tự đánh khi ván đã chạy).
+    Body: profile_name (bắt buộc), auto_xa (mặc định True).
     """
     body = body or {}
     ten = resolve_profile_name(body.get("profile_name"), load_accounts())
@@ -92,8 +92,11 @@ async def tu_danh_bat(body: dict, request: Request):
         raise HTTPException(status_code=400,
                             detail=f"{ten} chưa mở Chrome. Mở Chrome, vào bàn rồi bấm Tự đánh.")
 
+    # Dừng trước đó có thể đã ngắt kết nối extension -> nối lại, nếu không
+    # TOAST và mọi lệnh Hub sau này rơi vào hư không.
+    await noi_extension(request, ten)
+
     auto_xa = bool(body.get("auto_xa", True))
-    auto_start = bool(body.get("auto_start_guest_ss", True))
 
     # ĐẶT rồi ĐỌC LẠI, tối đa hai lần — nguyên tắc của kich_hoat.py: không tin
     # lần đặt trước. Đọc lại vẫn sai thì báo lỗi rõ, không ghi danh.
@@ -103,7 +106,7 @@ async def tu_danh_bat(body: dict, request: Request):
         try:
             # js_tu_danh còn KIỂM NGAY bàn đang ngồi (người dùng có thể bấm lúc
             # đã ngồi trong bàn người khác) và trả hành động đã chọn.
-            hanh_dong = await eval_page(trang, js_tu_danh(auto_xa, auto_start))
+            hanh_dong = await eval_page(trang, js_tu_danh(auto_xa, _ten_dong_doi(ten)))
             tt = await eval_page(trang, JS_DOC_TU_DANH)
         except Exception as e:
             raise HTTPException(status_code=500,
@@ -119,22 +122,22 @@ async def tu_danh_bat(body: dict, request: Request):
     _tap_tu_danh(request).add(ten)
     trong_ban = bool(tt.get("trong_ban"))
     so_nguoi = int(tt.get("so_nguoi") or 0)
-    log.info("TỰ ĐÁNH: bật cho %s (auto_xa=%s, tự SS/Bắt đầu=%s, đang trong bàn=%s, %s người, "
-             "kiểm ngay -> %s).", ten, auto_xa, auto_start, trong_ban, so_nguoi, hanh_dong)
+    log.info("TỰ ĐÁNH: bật cho %s (auto_xa=%s, đang trong bàn=%s, %s người, kiểm ngay -> %s).",
+             ten, auto_xa, trong_ban, so_nguoi, hanh_dong)
 
     hub = getattr(request.app.state, "ext_hub", None)
     if hub:
         try:
             await hub.send_command(ten, "TOAST", {
                 "title": "🤖 Tự đánh",
-                "text": ("🤖 TỰ ĐÁNH BẬT: là khách thì tự Sẵn sàng, là chủ bàn thì khách "
-                         "Sẵn sàng là tự Bắt đầu; xả xong ở lại bàn."),
+                "text": ("🤖 TỰ ĐÁNH BẬT: chỉ xả với ĐỒNG ĐỘI — bàn có người ngoài thì "
+                         "tool im, bạn tự chơi. Xả xong ở lại bàn."),
                 "type": "active", "source_profile": "server", "duration": 3000,
             })
         except Exception:
             pass
-    return {"ok": True, "profile": ten, "auto_xa": auto_xa,
-            "auto_start_guest_ss": auto_start, "trong_ban": trong_ban, "so_nguoi": so_nguoi,
+    return {"ok": True, "profile": ten, "trong_ban": trong_ban, "so_nguoi": so_nguoi,
+            "auto_xa": auto_xa,
             "hanh_dong_ngay": hanh_dong if isinstance(hanh_dong, str) else None}
 
 

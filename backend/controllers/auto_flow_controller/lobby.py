@@ -33,11 +33,9 @@ async def _clear_hunt_state(p):
             window.__AUTOTOOL_GIU_BAN = false;
             window.__AUTOTOOL_TU_DANH = false;
             window.__AUTOTOOL_AUTO_DISCARD = false;
-            window.__auto_start_guest_ss = false;
             window.__target_hunt_bet = 0;
             window.__target_hunt_mu = 0;
             window.__AUTOTOOL_MATCH_ROLE = null;
-            window.__AUTOTOOL_ROLE = null;
             window.__AUTOTOOL_SUB_JOIN_TICKET = null;
             window.__autotool_partners = [];
             window.__AUTOTOOL_AUTO_HUNT = false;
@@ -110,13 +108,11 @@ async def dong_luot_chay(pages, ly_do=""):
         window.__AUTOTOOL_ARMED = false;
         window.__AUTOTOOL_AUTO_HUNT = false;
         window.__AUTOTOOL_AUTO_DISCARD = false;
-        window.__auto_start_guest_ss = false;
         window.__is_hunt_initiator = false;
         window.__is_matched_locked = false;
         window.__target_hunt_bet = 0;
         window.__target_hunt_mu = 0;
         window.__AUTOTOOL_MATCH_ROLE = null;
-        window.__AUTOTOOL_ROLE = null;
         window.__AUTOTOOL_SUB_JOIN_TICKET = null;
         window.__expected_anchor_profile = null;
         window.__expected_anchor_dn = null;
@@ -125,13 +121,11 @@ async def dong_luot_chay(pages, ly_do=""):
         window.__active_room_invite = null;
         // Bài của đồng đội từ lượt trước: không xoá thì ván đầu lượt sau đánh
         // theo bài cũ.
-        window.__partner_cards = null;
         window.__autotool_partners = [];
         if (window.__hunt_retry_timer) { clearTimeout(window.__hunt_retry_timer); window.__hunt_retry_timer = null; }
         if (window.__hunt_wait_timer) { clearTimeout(window.__hunt_wait_timer); window.__hunt_wait_timer = null; }
         if (window.__start_retry_timer) { clearInterval(window.__start_retry_timer); window.__start_retry_timer = null; }
         if (window.__auto_turn_timer) { clearTimeout(window.__auto_turn_timer); window.__auto_turn_timer = null; }
-        if (window.__guest_ss_wait_timer) { clearTimeout(window.__guest_ss_wait_timer); window.__guest_ss_wait_timer = null; }
     }"""
     for ten, p in list((pages or {}).items()):
         if not p or (hasattr(p, "is_closed") and p.is_closed()):

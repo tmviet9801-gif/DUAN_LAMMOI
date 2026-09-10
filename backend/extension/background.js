@@ -10,14 +10,24 @@ let currentProfileName = "";
 let reconnectTimer = null;
 let pingInterval = null;
 
+// CỔNG KẾT NỐI. Bấm Dừng (hoặc nút "Ngắt kết nối" trên app) đặt cờ này =
+// false: extension đóng WS với app và KHÔNG tự nối lại, nên không còn lệnh
+// nào từ app chạm tới Chrome — người dùng thao tác tay như bình thường.
+// Nhớ trong chrome.storage để tải lại trang / khởi động lại service worker
+// vẫn giữ đúng ý người dùng.
+let hubAllowed = true;
+
 // Khởi tạo đọc profile_name đã lưu từ trước
-chrome.storage.local.get(["profile_name"], (res) => {
+chrome.storage.local.get(["profile_name", "hub_allowed"], (res) => {
   currentProfileName = (res && res.profile_name) ? res.profile_name : "";
-  connectToHub(currentProfileName || "Account");
+  hubAllowed = !(res && res.hub_allowed === false);
+  if (hubAllowed) connectToHub(currentProfileName || "Account");
+  else console.log("[AutoTool V3] Cổng kết nối đang TẮT -> không nối tới app.");
 });
 
 // Kết nối WebSocket tới Extension Hub
 function connectToHub(profileName) {
+  if (!hubAllowed) return;
   const pName = profileName || currentProfileName || "Account";
   if (hubSocket && (hubSocket.readyState === WebSocket.OPEN || hubSocket.readyState === WebSocket.CONNECTING)) {
     return;
@@ -71,6 +81,7 @@ function connectToHub(profileName) {
 }
 
 function scheduleReconnect() {
+  if (!hubAllowed) return;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = setTimeout(() => {
     connectToHub(currentProfileName || "Account");
@@ -81,7 +92,7 @@ function scheduleReconnect() {
 chrome.alarms.create("keepAliveAlarm", { periodInMinutes: 0.1 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "keepAliveAlarm") {
-    if (!hubSocket || hubSocket.readyState !== WebSocket.OPEN) {
+    if (hubAllowed && (!hubSocket || hubSocket.readyState !== WebSocket.OPEN)) {
       connectToHub(currentProfileName || "Account");
     }
   }
@@ -127,6 +138,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message.type === "AUTO_LEAVING" ||
       message.type === "AUTOTOOL_AUTO_LEAVING" ||
       message.type === "TURN_SKIPPED" ||
+      message.type === "FIRST_TURN" ||
       message.type === "GAME_ENDED") {
     if (hubSocket && hubSocket.readyState === WebSocket.OPEN) {
       hubSocket.send(JSON.stringify({
@@ -154,13 +166,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.storage.local.set({ profile_name: currentProfileName });
     }
     const isConnected = hubSocket && hubSocket.readyState === WebSocket.OPEN;
-    if (!isConnected) {
+    if (!isConnected && hubAllowed) {
       // Chủ động kích hoạt kết nối lại ngay lập tức
       connectToHub(currentProfileName || message.profile_name || "Account");
     }
     sendResponse({
       ok: true,
       hub_connected: isConnected,
+      hub_allowed: hubAllowed,
       profile_name: currentProfileName,
       port: BACKEND_PORT,
     });
@@ -177,6 +190,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     hubSocket = null;
     connectToHub(currentProfileName || "Account");
     sendResponse({ ok: true, profile_name: currentProfileName });
+    return true;
+  }
+
+  // 5b. NGẮT / NỐI LẠI cổng kết nối với app.
+  //
+  // Ngắt là đóng WS giữa extension và app, KHÔNG đụng WebSocket của game —
+  // đóng cái đó là người dùng văng khỏi bàn. Sau khi ngắt, app không gửi
+  // được lệnh nào nữa; muốn nối lại thì app gọi qua Playwright (postMessage)
+  // vì lúc đó không còn đường WS để gọi.
+  if (message.type === "HUB_DISCONNECT") {
+    hubAllowed = false;
+    chrome.storage.local.set({ hub_allowed: false });
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+    try { if (hubSocket) hubSocket.close(); } catch (_) {}
+    hubSocket = null;
+    console.log("[AutoTool V3] ĐÃ NGẮT kết nối với app — Chrome chạy như bình thường.");
+    sendResponse({ ok: true, hub_allowed: false });
+    return true;
+  }
+
+  if (message.type === "HUB_CONNECT") {
+    hubAllowed = true;
+    chrome.storage.local.set({ hub_allowed: true });
+    if (message.profile_name) {
+      currentProfileName = message.profile_name;
+      chrome.storage.local.set({ profile_name: currentProfileName });
+    }
+    connectToHub(currentProfileName || "Account");
+    sendResponse({ ok: true, hub_allowed: true });
     return true;
   }
 

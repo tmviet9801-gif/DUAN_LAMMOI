@@ -60,10 +60,10 @@
   // GIỮ BÀN / TỰ ĐÁNH: mình là CHỦ BÀN hay KHÁCH, và lúc này phải làm gì.
   //
   // Sau ván gom bàn, nick chính ở lại bàn (GIỮ BÀN) và luôn là chủ bàn vì nó
-  // vào bàn trước. Nút TỰ ĐÁNH cho người dùng tự vào một bàn bất kỳ — có thể
-  // là bàn người khác đã ngồi sẵn, khi đó mình là KHÁCH: phải gửi Sẵn sàng,
-  // còn Bắt đầu là việc của chủ bàn. Gửi Bắt đầu từ ghế khách thì server bỏ
-  // qua, và tool ngồi "chờ khách Sẵn sàng" mãi trong khi chính mình là khách.
+  // vào bàn trước. Nút TỰ ĐÁNH cho người dùng tự đưa hai nick của mình vào
+  // một bàn — khi đó nick vào sau là KHÁCH: phải gửi Sẵn sàng, còn Bắt đầu
+  // là việc của chủ bàn. Gửi Bắt đầu từ ghế khách thì server bỏ qua, và tool
+  // ngồi "chờ Sẵn sàng" mãi trong khi chính mình mới là người phải bấm.
   //
   // Dữ liệu thật (bản bắt WS 10/09/2026, khung cmd 202 `ps[]`):
   //   ngồi một mình:            {dn:"nicktestxxabai1", C:true,  r:false, sit:0}
@@ -107,22 +107,23 @@
 
   /** Lúc này phải làm gì với bàn đang ngồi (GIỮ BÀN / TỰ ĐÁNH).
    *
+   * CHỈ BẮT TAY VỚI ĐỒNG ĐỘI. Người dùng chốt (11/09/2026): dự án chỉ gom
+   * bàn đồng đội rồi xả, không tự đánh với khách. Nên hễ trong bàn có một
+   * người ngoài là trả "cho" — giữ chỗ ngồi và không làm gì thêm.
+   *
    * Trả về một trong:
    *   "dang_van"  ván đang chạy, bộ xả đang lo — không đụng gì;
-   *   "cho"       chưa có gì để làm (một mình, khách chưa SS, hoặc tắt tự bắt tay);
-   *   "san_sang"  mình là KHÁCH trong bàn người khác và chưa SS -> gửi Sẵn sàng;
-   *   "bat_dau"   mình là CHỦ và khách đã SS -> Bắt đầu.
-   *
-   * `tuBatTay` là ô "Bắt đầu nếu khách SS": tắt thì tool KHÔNG tự Sẵn sàng /
-   * Bắt đầu, chỉ tự đánh khi ván đã chạy — người dùng giữ quyền mở ván.
+   *   "cho"       có người ngoài, chưa có đồng đội, hoặc chưa tới lượt mình;
+   *   "san_sang"  đồng đội đang giữ bàn, mình chưa SS -> gửi Sẵn sàng;
+   *   "bat_dau"   mình là chủ bàn và đồng đội đã SS -> Bắt đầu.
    */
   function hanhDongGiuBan(t) {
     t = t || {};
     if (t.dangVan) return "dang_van";
-    if (!t.coKhach) return "cho";
-    if (!t.tuBatTay) return "cho";
+    if (t.coKhachLa) return "cho";
+    if (!t.coDongDoi) return "cho";
     if (!t.laChu) return t.minhSS ? "cho" : "san_sang";
-    return t.khachSS ? "bat_dau" : "cho";
+    return t.doiThuSS ? "bat_dau" : "cho";
   }
 
   const api = {
