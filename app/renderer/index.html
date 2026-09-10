@@ -176,8 +176,12 @@
             <label class="gc-check-lbl opt-guest-ss" title="Sau khi xả bài xong, chủ bàn giữ bàn, nếu có khách lạ vào bấm Sẵn Sàng (SS) thì chủ bàn bấm Bắt Đầu ngay để bẫy khách">
               <input id="gcAutoStartGuestSS" type="checkbox" checked /> 🎯 Bắt đầu nếu khách SS
             </label>
-            <label class="gc-check-lbl opt-leave" title="Tự động thoát bàn về sảnh sau khi hoàn thành chu trình">
-              <input id="gcAutoLeaveAfter" type="checkbox" checked /> 🚪 Tự Out sau khi xả
+            <!-- MẶC ĐỊNH TẮT. Nick phụ LUÔN out sau khi xả; ô này chỉ quyết
+                 Account chính có out theo hay không. Nguyên tắc: phải có một
+                 profile ở lại giữ bàn cho khách ngoài — tích sẵn ô này là cả
+                 hai cùng về sảnh, bàn bỏ trống. -->
+            <label class="gc-check-lbl opt-leave" title="Mặc định TẮT: sau khi xả, nick phụ out còn Account chính Ở LẠI giữ bàn chờ khách ngoài. Bật thì Account chính cũng về sảnh (bàn bỏ trống)">
+              <input id="gcAutoLeaveAfter" type="checkbox" /> 🚪 Account chính cũng out sau khi xả
             </label>
             <span class="opt-tip">💡 Tích từ 2 profile trở lên trên bảng bên dưới. Profile tích ĐẦU TIÊN là account giữ tiền; các profile còn lại cùng dò bàn và vào ghép.</span>
           </div>

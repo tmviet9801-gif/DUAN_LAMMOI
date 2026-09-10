@@ -151,7 +151,9 @@
     // Các tuỳ chọn mới từ người dùng
     const autoXa = $("gcAutoXaBai") ? $("gcAutoXaBai").checked : true;
     const autoStartGuestSS = $("gcAutoStartGuestSS") ? $("gcAutoStartGuestSS").checked : true;
-    const autoLeaveAfter = $("gcAutoLeaveAfter") ? $("gcAutoLeaveAfter").checked : true;
+    // Mặc định FALSE: Account chính ở lại giữ bàn sau khi xả (nick phụ luôn
+    // out). Thiếu ô trên giao diện thì cũng không được ngầm cho cả hai out.
+    const autoLeaveAfter = $("gcAutoLeaveAfter") ? $("gcAutoLeaveAfter").checked : false;
 
     const btnSync = $("btnGcSyncMatch");
     // Token chống kẹt nút: chỉ phiên chạy MỚI NHẤT được phép đổi trạng thái nút

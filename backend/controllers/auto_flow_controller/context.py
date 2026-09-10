@@ -133,7 +133,11 @@ class MatchContext:
 
         self.auto_xa = bool(body.get("auto_xa", True))
         self.auto_start_guest_ss = bool(body.get("auto_start_guest_ss", True))
-        self.auto_leave_after = bool(body.get("auto_leave_after", True))
+        # Mac dinh FALSE: sau khi xa, nick phu out con Account chinh O LAI giu
+        # ban cho khach ngoai. Truoc day mac dinh True (va o tren giao dien tich
+        # san) -> ca hai cung ve sanh, ban bo trong — trai nguyen tac "phai co
+        # mot profile o lai phong".
+        self.auto_leave_after = bool(body.get("auto_leave_after", False))
 
         # Moi cap giu token dung rieng theo epoch. Khong reset co toan cuc:
         # reset do tung khien pair thu hai lam pair thu nhat tu dung.
