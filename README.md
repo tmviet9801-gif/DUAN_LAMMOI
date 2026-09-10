@@ -70,7 +70,7 @@
 - **Bind máy** (MachineGuid registry), có hạn sử dụng, giới hạn số tab
 - App chặn nếu chưa kích hoạt/hết hạn (overlay nhập key); hiển thị số tab ở footer
 - **Mỗi bản giới hạn 10 tab** — vượt giới hạn báo `429`
-- Owner sinh key: `make_license.bat` / `python backend/tools/make_license.py --machine-id <guid> --days 30 --max-tabs 10`
+- Owner sinh key: bằng dự án quản trị license riêng. App KHÔNG tự sinh được key — đó chính là thứ làm cho việc unpack exe trở nên vô dụng.
 
 ### 2.5. Game Room Simulator (kiểm thử quyền đi trước)
 - **State Machine 11 trạng thái**: IDLE, JOINING, WAITING_FOR_TABLE, BOOTSTRAP_ROUND, PLAYING, VERIFYING_RESULT, LEAVING, WAITING_NEXT_PLAYER, RESETTING, RETRY, ERROR
@@ -133,7 +133,6 @@ tìm RID/bàn riêng, chỉ nhận diện partner trong chính cặp đó và t�
 | `fetch-browser.bat` | tải lại Chromium để bundle |
 | `build.bat` | build installer |
 | `publish.ps1 -Version x.y.z` | bump version + build + upload GitHub Release |
-| `make_license.bat` | sinh license key (owner) |
 | `license-server\start.bat` | chạy License Server (Supabase) + admin dashboard |
 
 ### 2.9. License Server — quản lý license cho thuê (mới, v1.1.0)
@@ -218,14 +217,15 @@ publish.ps1 -Version 1.0.4
 ```
 
 **Sinh license cho khách thuê**
-```powershell
-# trên máy khách lấy mã máy:
-python backend\tools\make_license.py --print-id
-# owner sinh key:
-python backend\tools\make_license.py --machine-id <guid> --days 30 --max-tabs 10
-```
 
-> ⚠️ **Đổi SECRET** trong `backend/license.py` trước khi cho thuê (hiện là placeholder). Mỗi lần đổi, key cũ hết hiệu lực.
+Làm ở **dự án quản trị license riêng**, không làm trong app này.
+
+- Mã máy: mở app → *Hệ thống → Thông tin giấy phép → 📋 Copy Mã Máy*.
+- Sinh key: nhập mã máy đó vào trang quản trị.
+
+> App **không tự sinh được key**: nó chỉ giữ khoá công khai để kiểm chữ ký
+> Ed25519. Đó chính là thứ làm cho việc unpack exe trở nên vô dụng — có mã nguồn
+> cũng không tự cấp key cho mình được.
 
 ---
 

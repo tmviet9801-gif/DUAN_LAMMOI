@@ -366,7 +366,7 @@ def test_stop_is_immediate_and_lobby_preparation_is_parallel():
 
     source = _controller_source()
     assert "lobby_results = await asyncio.gather(" in source
-    assert "Không cho Anchor gửi cmd=308 cho" in source
+    assert "KIÊN TRÌ tới khi MỌI profile đứng ở sảnh chọn bàn" in source
     # Thân xử lý đã tách sang `_dung_auto` để `/stop` (có phạm vi) và
     # `/leave-all` (toàn bộ) là hai endpoint riêng. Lấy source theo function
     # object: không phụ thuộc thứ tự hàm trong file.

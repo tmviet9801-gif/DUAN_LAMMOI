@@ -106,9 +106,12 @@ def test_moi_duong_thoat_deu_dong_luot_chay():
     """Preflight bật cờ trên mọi trang -> mọi đường ra đều phải tắt lại."""
     src = (CTRL / "matching.py").read_text(encoding="utf-8")
     assert src.count("await dong_luot_chay(pages") >= 4, "còn đường thoát bỏ sót"
-    for ly_do in ("không vào được sảnh", "không gom được bàn",
+    # "không vào được sảnh" đã bỏ: chưa đủ profile ở sảnh chọn bàn thì tool LẶP
+    # LẠI chứ không thoát nữa, nên không còn là một đường ra.
+    for ly_do in ("không đặt được vai trò", "không gom được bàn",
                   "không bắt đầu được ván", "ván đã kết thúc"):
         assert ly_do in src, f"thiếu đường thoát: {ly_do}"
+    assert "không vào được sảnh" not in src,         "đã quay lại kiểu bỏ cuộc khi chưa đủ profile ở sảnh"
 
 
 def test_khong_dong_luot_chay_khi_van_con_dang_chay():

@@ -406,40 +406,63 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                 await asyncio.sleep(1.5)
             return p_name, entered
 
-        # Chuẩn bị toàn bộ account SONG SONG. Không cho Anchor gửi cmd=308 cho
-        # tới khi tất cả nick phụ đã xác nhận đang đứng ở đúng sảnh chọn bàn.
-        lobby_results = await asyncio.gather(
-            *[_prepare_lobby(p_name, p) for p_name, p in pages.items()]
-        )
-        if _should_stop():
-            return {"ok": False, "error": "Đã dừng chu trình gom bàn theo lệnh của bạn.", "stopped": True}
-        # XÁC MINH LẠI trên từng trang, không tin giá trị trả về của bước trước.
-        # Yêu cầu: MỌI account phải dẹp xong popup, vào được màn Game Bài, chọn
-        # Tiến Lên Đếm Lá và ĐỨNG Ở SẢNH CHỌN BÀN — rồi mới bắt đầu join.
-        # Một nick còn kẹt ngoài sảnh chính là cả lượt chạy hỏng: nick giữ tiền
-        # vào bàn rồi ngồi đó một mình với người lạ.
-        not_ready = []
-        for p_name, entered in lobby_results:
-            man = await man_hinh_hien_tai(pages.get(p_name)) if entered else "?"
-            if not entered or man != "chon_ban":
-                not_ready.append(p_name)
-            else:
-                log.info("find-and-match: %s đã đứng ở sảnh chọn bàn.", p_name)
-        if not_ready:
+        # KIÊN TRÌ tới khi MỌI profile đứng ở sảnh chọn bàn, hoặc tới khi người
+        # dùng bấm Dừng. Không bỏ cuộc sau một vòng.
+        #
+        # Bản trước chạy `_prepare_lobby` đúng MỘT vòng (45 giây) rồi trả
+        # `ok: False` và tắt lượt chạy. Trong thực tế, một profile còn popup
+        # quảng cáo hoặc đang tải chậm là cả lượt chết, người dùng phải bấm chạy
+        # lại bằng tay — trong khi chỉ cần thử thêm một vòng nữa là xong.
+        #
+        # Vẫn KHÔNG hạ tiêu chuẩn: mọi profile phải thật sự đứng ở `chon_ban`
+        # rồi mới join. Một nick kẹt ngoài sảnh chính là nick giữ tiền vào bàn
+        # rồi ngồi một mình với người lạ.
+        vong = 0
+        da_bao_ly_do = ""
+        while True:
+            vong += 1
+            lobby_results = await asyncio.gather(
+                *[_prepare_lobby(p_name, p) for p_name, p in pages.items()]
+            )
+            if _should_stop():
+                return {"ok": False, "error": "Đã dừng chu trình gom bàn theo lệnh của bạn.", "stopped": True}
+            # XÁC MINH LẠI trên từng trang, không tin giá trị trả về của bước trước.
+            not_ready = []
+            for p_name, entered in lobby_results:
+                man = await man_hinh_hien_tai(pages.get(p_name)) if entered else "?"
+                if not entered or man != "chon_ban":
+                    not_ready.append(p_name)
+                else:
+                    log.info("find-and-match: %s đã đứng ở sảnh chọn bàn.", p_name)
+            if not not_ready:
+                break
+
             # Nói RÕ vì sao từng profile chưa vào được. Chỉ liệt kê tên thì
             # người dùng không biết phải làm gì — popup quảng cáo che màn khác
             # hẳn với đứng ở sảnh chính hay extension chưa nạp.
             ly_do = []
             for p_name in not_ready:
                 ly_do.append(f"{p_name} ({await ly_do_chua_o_sanh(pages.get(p_name))})")
-            err_msg = ("Chưa đưa được các profile vào sảnh chọn bàn Đếm Lá — "
-                       "KHÔNG chạy gom bàn: " + "; ".join(ly_do))
-            log.warning("find-and-match: %s", err_msg)
-            await _notify_all(getattr(request.app.state, "ext_hub", None), f"❌ {err_msg}", "error", "❌ Lỗi sảnh")
-            # Preflight ĐÃ bật cờ kích hoạt trên mọi trang -> phải tắt lại,
-            # nếu không extension vẫn tự động khi người dùng chơi tay.
-            await dong_luot_chay(pages, "không vào được sảnh")
-            return {"ok": False, "error": err_msg, "stopped": False}
+            mo_ta = "; ".join(ly_do)
+            log.warning("find-and-match: vòng %d — chưa vào được sảnh chọn bàn: %s", vong, mo_ta)
+            # Chỉ báo lên giao diện khi LÝ DO ĐỔI, không mỗi vòng một lần —
+            # lặp mãi cùng một dòng chỉ làm trôi mất thông tin khác.
+            if mo_ta != da_bao_ly_do:
+                da_bao_ly_do = mo_ta
+                await _notify_all(
+                    getattr(request.app.state, "ext_hub", None),
+                    f"⏳ Đang chờ đủ profile vào sảnh chọn bàn Đếm Lá (vòng {vong}) — "
+                    f"vẫn thử tiếp, bấm Dừng nếu muốn ngắt: {mo_ta}",
+                    "warn", "⏳ Chờ vào sảnh")
+            await asyncio.sleep(3.0)
+            if _should_stop():
+                return {"ok": False, "error": "Đã dừng chu trình gom bàn theo lệnh của bạn.", "stopped": True}
+
+        if vong > 1:
+            log.info("find-and-match: đủ profile vào sảnh chọn bàn sau %d vòng.", vong)
+            await _notify_all(getattr(request.app.state, "ext_hub", None),
+                              f"✅ Đủ profile ở sảnh chọn bàn sau {vong} vòng -> bắt đầu gom bàn.",
+                              "success", "✅ Sẵn sàng")
 
         # Anchor duy nhất là profile_a do UI/API chỉ định. Không suy đoán từ
         # tên để tránh đảo chiều: chính phải tìm/giữ bàn, phụ phải lắng nghe.

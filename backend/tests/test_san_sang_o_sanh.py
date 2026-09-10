@@ -44,7 +44,9 @@ def test_phat_hien_popup_dung_activeInHierarchy():
     đúng lỗi đã sửa ở chỗ nhận diện bàn trước đây.
     """
     src = EXT.read_text(encoding="utf-8")
-    khoi = src.split("function hasBlockingPopup()", 1)[1].split("function isAlreadyInTLDLLobby", 1)[0]
+    # Phép dò nằm trong `tenPopupDangChe` (trả TÊN node để truy được khi báo
+    # nhầm); `hasBlockingPopup` chỉ còn là lớp bọc trả boolean.
+    khoi = src.split("function tenPopupDangChe()", 1)[1].split("function isAlreadyInTLDLLobby", 1)[0]
     assert "isNodeVisible(node)" in khoi
     assert "node.active" not in khoi, "vẫn kiểm node.active thay vì activeInHierarchy"
 
@@ -83,7 +85,9 @@ def test_rao_chan_noi_ro_ly_do_tung_profile():
     """Chỉ liệt kê tên thì người dùng không biết phải làm gì."""
     src = (CTRL / "matching.py").read_text(encoding="utf-8")
     assert "ly_do_chua_o_sanh(pages.get(p_name))" in src
-    assert "KHÔNG chạy gom bàn" in src
+    # Thông điệp đổi từ "KHÔNG chạy gom bàn" (bỏ cuộc) sang "vẫn thử tiếp":
+    # tool không dừng nữa mà lặp lại tới khi đủ profile hoặc người dùng bấm Dừng.
+    assert "vẫn thử tiếp" in src
 
 
 def test_ly_do_phan_biet_ba_nguyen_nhan():
@@ -95,12 +99,19 @@ def test_ly_do_phan_biet_ba_nguyen_nhan():
 
 
 def test_rao_chan_van_chan_that_su():
-    """Rào chắn phải TRẢ VỀ, không được chỉ ghi log rồi chạy tiếp."""
+    """Rào chắn phải THẬT SỰ chặn, không được chỉ ghi log rồi chạy tiếp.
+
+    Trước đây chặn bằng cách trả `ok: False` và tắt lượt chạy. Nay chặn bằng
+    vòng lặp: chỉ `break` khi `not_ready` rỗng. Bất biến không đổi — chưa đủ
+    profile ở sảnh chọn bàn thì tuyệt đối không được chạy tới bước chọn anchor.
+    """
     src = (CTRL / "matching.py").read_text(encoding="utf-8")
-    khoi = src.split("not_ready = [", 1)[1][:1400]
-    assert 'return {"ok": False' in khoi
-    assert khoi.index('return {"ok": False') < khoi.index("first_name = profile_a") \
-        if "first_name = profile_a" in khoi else True
+    khoi = src.split("not_ready = [", 1)[1][:2500]
+    assert "if not not_ready:" in khoi and "break" in khoi, "không còn đường thoát vòng"
+    assert khoi.index("if not not_ready:") < khoi.index("break")
+    toan = src.split("not_ready = [", 1)[1]
+    assert toan.index("break") < toan.index("first_name = profile_a"), \
+        "chọn anchor trước khi đủ profile -> nick giữ tiền ngồi một mình với người lạ"
 
 
 def test_ham_bao_ly_do_duoc_xuat_ra_cho_python():

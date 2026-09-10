@@ -1477,9 +1477,16 @@
    * Cocos dựng sẵn UI rồi tắt bằng cách hạ cờ active của một node CHA, nên
    * kiểm `active` của chính node sẽ thấy "đang bật" ở những popup đã đóng.
    */
-  function hasBlockingPopup() {
+  /** Popup nào đang che — trả về TÊN node, hoặc "" nếu không có.
+   *
+   * Trả tên chứ không chỉ true/false: khi hàm này báo nhầm, cả lượt gom bàn
+   * đứng im 45 giây rồi báo "có popup/quảng cáo che màn hình" cho một profile
+   * mà người dùng đang nhìn thấy rõ là KHÔNG có popup nào. Không có tên node
+   * thì không có cách nào truy tiếp.
+   */
+  function tenPopupDangChe() {
     try {
-      if (typeof cc === "undefined" || !cc.director) return false;
+      if (typeof cc === "undefined" || !cc.director) return "";
       const scene = cc.director.getScene();
       if (!scene) return false;
       // Có NỘI DUNG nhìn thấy được không (nhãn chữ hoặc nút bấm).
@@ -1506,20 +1513,25 @@
         return co;
       };
 
-      let thay = false;
+      let thay = "";
       (function quet(node, depth) {
         if (!node || depth > 30 || thay) return;
         if (isNodeVisible(node)) {
           const name = (node.name || "").toLowerCase();
           const text = getCocosNodeText(node).toUpperCase();
           if (text === "BỎ QUA" || text === "CẢNH BÁO LỪA ĐẢO") {
-            thay = true;
+            thay = `${node.name || "?"} (chữ "${text}")`;
             return;
           }
           if ((/^(popup|dialog|quangcao|banner|announce|notice)/.test(name)
                || name.includes("popup") || name.includes("dialog"))
               && coNoiDung(node)) {
-            thay = true;
+            let co = "";
+            try {
+              const b = node.getBoundingBoxToWorld();
+              co = ` ${Math.round(b.width)}x${Math.round(b.height)}`;
+            } catch (e) {}
+            thay = `${node.name || "?"}${co}`;
             return;
           }
         }
@@ -1528,8 +1540,12 @@
       })(scene, 0);
       return thay;
     } catch (e) {
-      return false;
+      return "";
     }
+  }
+
+  function hasBlockingPopup() {
+    return !!tenPopupDangChe();
   }
 
   function isAlreadyInTLDLLobby() {
@@ -1692,6 +1708,7 @@
   G.__autotool_is_inside_table = isInsideGameTable;
   G.__autotool_is_in_tldl_lobby = isAlreadyInTLDLLobby;
   G.__autotool_has_popup = hasBlockingPopup;
+  G.__autotool_ten_popup = tenPopupDangChe;
   G.__autotool_auto_enter_tldl = autoEnterTLDLLobby;
   G.__autotool_join_table_by_bet = joinCocosTableByBet;
   G.__autotool_dismiss_popups = dismissPopupsAndBanners;

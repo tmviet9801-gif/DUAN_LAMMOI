@@ -209,11 +209,12 @@ async def ly_do_chua_o_sanh(p):
             if (typeof window.__autotool_is_in_tldl_lobby !== 'function') {
                 return 'extension chưa nạp — đóng và mở lại profile';
             }
-            if (typeof window.__autotool_has_popup === 'function'
-                    && window.__autotool_has_popup()) {
-                return 'có popup/quảng cáo che màn hình';
-            }
-            // Nói rõ đang KẸT Ở ĐÂU, không chỉ "chưa vào được".
+            // MÀN HÌNH là sự thật chính, popup chỉ là ghi chú kèm.
+            //
+            // Bản trước trả về 'có popup' NGAY khi thấy popup và thoát luôn, nên
+            // lý do thật bị giấu mất: người dùng nhìn màn hình thấy rõ không có
+            // popup nào mà log vẫn báo popup, và không biết profile đang kẹt ở
+            // đâu. Nếu bộ dò popup báo nhầm thì thông điệp cũ sai hoàn toàn.
             const man = (typeof window.__autotool_man_hinh === 'function')
                 ? window.__autotool_man_hinh() : '?';
             const mo_ta = {
@@ -223,7 +224,15 @@ async def ly_do_chua_o_sanh(p):
                 tldl_khac: 'đang ở khu Đếm Lá nhưng không phải màn chọn bàn',
                 chon_ban: 'đã ở sảnh chọn bàn',
             };
-            return mo_ta[man] || (window.__autotool_ly_do_chua_o_sanh || 'chưa rõ');
+            let ly_do = mo_ta[man] || (window.__autotool_ly_do_chua_o_sanh || 'chưa rõ');
+            // Kèm TÊN node bị coi là popup. Không có tên thì không truy được vì
+            // sao nó báo nhầm.
+            try {
+                const ten = (typeof window.__autotool_ten_popup === 'function')
+                    ? window.__autotool_ten_popup() : '';
+                if (ten) ly_do += ' + đang bị chặn bởi node "' + ten + '"';
+            } catch (e) {}
+            return ly_do;
         }""") or "chưa rõ"
     except Exception as e:
         return f"không đọc được trạng thái ({type(e).__name__})"

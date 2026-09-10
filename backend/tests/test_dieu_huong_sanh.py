@@ -224,7 +224,7 @@ def test_lop_phu_rong_khong_bi_coi_la_popup():
     sẵn sàng ở sảnh. Đây là lỗi do chính bản vá popup trước đó gây ra.
     """
     src = EXT.read_text(encoding="utf-8")
-    khoi = src.split("function hasBlockingPopup", 1)[1][:2600]
+    khoi = src.split("function tenPopupDangChe", 1)[1][:2600]
     assert "coNoiDung" in khoi, "chưa kiểm popup có nội dung hay không"
     assert "&& coNoiDung(node)" in khoi, "vẫn nhận popup chỉ theo tên"
 
@@ -239,7 +239,7 @@ def test_popup_co_noi_dung_nghia_la_co_nhan_hoac_nut():
 def test_van_bat_duoc_banh_bao_lua_dao_theo_CHU():
     """Banner "CẢNH BÁO LỪA ĐẢO" nhận theo CHỮ nên không phụ thuộc tên node."""
     src = EXT.read_text(encoding="utf-8")
-    khoi = src.split("function hasBlockingPopup", 1)[1][:2600]
+    khoi = src.split("function tenPopupDangChe", 1)[1][:2600]
     assert 'text === "CẢNH BÁO LỪA ĐẢO"' in khoi
     assert 'text === "BỎ QUA"' in khoi
     # nhánh theo chữ phải đứng TRƯỚC nhánh theo tên (không cần coNoiDung)

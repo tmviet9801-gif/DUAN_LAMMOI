@@ -136,4 +136,6 @@ def test_xac_minh_vai_tro_sau_khi_gan():
 
 def test_moi_duong_thoat_van_dong_luot_chay():
     code = _code(MATCHING)
-    assert code.count("await dong_luot_chay(pages") >= 5
+    # 4 đường ra: vai trò, không gom được bàn, không bắt đầu được ván, hết ván.
+    # Đường "không vào được sảnh" đã bỏ — nay lặp lại thay vì thoát.
+    assert code.count("await dong_luot_chay(pages") >= 4

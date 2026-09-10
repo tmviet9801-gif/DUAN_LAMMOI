@@ -3,7 +3,7 @@
 - Key dạng AUTO-<sig>-<base64(payload)>.
 - payload = machine_id|expiry_ts|max_tabs|features, ký HMAC-SHA256.
 - Bind máy (MachineGuid), có hạn, giới hạn số tab.
-- Owner dùng tools/make_license.py để sinh key cho từng máy khách.
+- Owner sinh key bằng dự án quản trị riêng; app KHÔNG tự sinh được key.
 
 Kiểm tra online (tuỳ chọn, bật bằng LICENSE_SERVER_URL):
     Chữ ký HMAC tự chứa hạn dùng nên key vẫn xác thực được khi không có mạng —
