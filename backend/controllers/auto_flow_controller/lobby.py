@@ -238,6 +238,23 @@ async def ly_do_chua_o_sanh(p):
         return f"không đọc được trạng thái ({type(e).__name__})"
 
 
+def _bo_do_node_vo_dung(ly_do) -> bool:
+    """Bộ dò node Cocos có vô dụng ở cảnh này không -> nhường OpenCV ngay.
+
+    ĐO TRỰC TIẾP trên cảnh thật (`LobbyNew`, khung 1560x870): các ô game nằm
+    trong một ScrollView rộng 13042, đặt tên theo MÃ GAME (`vgmn_100`,
+    `vgcg_15`, `chan`, `lcvv_10011_evo`...). KHÔNG node nào có tên hay sprite
+    chứa "demla", và tab GAME BÀI cũng không có node nào khớp chữ.
+
+    Nên hai lý do dưới đây không phải trục trặc nhất thời — chúng có nghĩa là
+    phép dò theo tên/sprite không áp dụng được cho cảnh này, và thử lại thêm
+    hai vòng chỉ lặp lại đúng kết quả đó (đo được: ~5-9 giây mỗi profile).
+    Đường OpenCV nhận ra cả hai mốc chắc chắn (khớp 0.96 và 1.00).
+    """
+    t = str(ly_do or "")
+    return "không thấy mục đang hiển thị" in t or "ngoài khung nhìn" in t
+
+
 def _match_template_cv(screenshot_bytes, template_path, threshold=0.75):
     try:
         import cv2
@@ -264,21 +281,35 @@ def _match_template_cv(screenshot_bytes, template_path, threshold=0.75):
         best_loc = None
         best_scale = 1.0
 
-        # Dải tỉ lệ RỘNG. `cv2.matchTemplate` không bất biến theo tỉ lệ, mà kích
-        # thước cửa sổ thì người dùng đổi được (800x600 -> 1280x800 -> có thêm
-        # tỉ lệ hiển thị). Ảnh mẫu cắt ở khung 1264 rộng: cửa sổ 800 cần ~0.63,
-        # cửa sổ 1920 cần ~1.52 — dải 0.7–1.3 cũ không phủ nổi cả hai.
-        for scale in np.linspace(0.4, 2.0, 33):
-            nw, nh = int(tw * scale), int(th * scale)
-            if nw >= img.shape[1] or nh >= img.shape[0] or nw < 10 or nh < 10:
-                continue
-            resized = cv2.resize(tpl, (nw, nh), interpolation=cv2.INTER_AREA)
-            res = cv2.matchTemplate(img, resized, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(res)
-            if max_val > best_val:
-                best_val = max_val
-                best_loc = max_loc
-                best_scale = scale
+        # THỬ TỈ LỆ DỰ ĐOÁN TRƯỚC.
+        #
+        # Ảnh mẫu cắt ở khung rộng 1264, nên tỉ lệ đúng gần bằng
+        # (rộng ảnh chụp / 1264). Quét thẳng 33 tỉ lệ tốn ~6 giây một ảnh mẫu —
+        # đo được 18 giây cho ba mốc. Thử đúng dải hẹp quanh giá trị dự đoán thì
+        # gần như luôn trúng ngay, và chỉ quét rộng khi trượt.
+        RONG_MAU_GOC = 1264.0
+        du_doan = img.shape[1] / RONG_MAU_GOC
+        dai_thu = [np.linspace(max(0.4, du_doan * 0.9), min(2.0, du_doan * 1.1), 5),
+                   np.linspace(0.4, 2.0, 33)]
+
+        # Dải tỉ lệ RỘNG làm lớp lùi. `cv2.matchTemplate` không bất biến theo tỉ
+        # lệ, mà kích thước cửa sổ thì người dùng đổi được (800x600 -> 1280x800
+        # -> có thêm tỉ lệ hiển thị). Cửa sổ 800 cần ~0.63, cửa sổ 1920 cần
+        # ~1.52 — dải 0.7–1.3 cũ không phủ nổi cả hai.
+        for cac_ti_le in dai_thu:
+            for scale in cac_ti_le:
+                nw, nh = int(tw * scale), int(th * scale)
+                if nw >= img.shape[1] or nh >= img.shape[0] or nw < 10 or nh < 10:
+                    continue
+                resized = cv2.resize(tpl, (nw, nh), interpolation=cv2.INTER_AREA)
+                res = cv2.matchTemplate(img, resized, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val > best_val:
+                    best_val = max_val
+                    best_loc = max_loc
+                    best_scale = scale
+            if best_val >= threshold:
+                break          # dải hẹp đã trúng, khỏi quét rộng
 
         if best_val >= threshold and best_loc:
             nw, nh = int(tw * best_scale), int(th * best_scale)
@@ -356,6 +387,10 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
             ok, ly_do = await bam_muc(p, "tab_game_bai", name)
             if not ok:
                 log.warning("%s: chưa bấm được tab GAME BÀI — %s", name, ly_do)
+                if _bo_do_node_vo_dung(ly_do):
+                    log.info("%s: bộ dò node không dùng được ở cảnh này "
+                             "-> sang OpenCV ngay, không thử lại.", name)
+                    break
             await asyncio.sleep(1.0)
             man = await man_hinh_hien_tai(p)
 
@@ -363,6 +398,22 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
             ok, ly_do = await bam_muc(p, "o_dem_la", name)
             if not ok:
                 log.warning("%s: chưa bấm được ô TIẾN LÊN ĐẾM LÁ — %s", name, ly_do)
+                # BỎ CUỘC NGAY, không thử lại hai vòng nữa.
+                #
+                # Đo trực tiếp trên cảnh thật (`LobbyNew`, khung 1560x870): các ô
+                # game nằm trong một ScrollView rộng 13042, tên theo MÃ GAME
+                # (`vgmn_100`, `vgcg_15`, `chan`, `lcvv_10011_evo`...) và KHÔNG
+                # node nào có tên hay sprite chứa "demla". Bộ dò theo sprite vì
+                # thế luôn vớ phải một ô đang ẩn nằm xa ngoài màn hình — đo được
+                # nx=-2.97. Thử lại thêm hai vòng chỉ lặp lại đúng kết quả đó,
+                # tốn khoảng 9 giây mỗi profile trước khi sang OpenCV.
+                #
+                # Đường OpenCV nhận ra ô này chắc chắn (khớp 1.000), nên nhường
+                # sớm là đúng.
+                if _bo_do_node_vo_dung(ly_do):
+                    log.info("%s: bộ dò node không thấy ô Đếm Lá trong khung "
+                             "-> sang OpenCV ngay, không thử lại.", name)
+                    break
             await asyncio.sleep(2.0)
             man = await man_hinh_hien_tai(p)
 
@@ -495,6 +546,49 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
             log.warning("%s: lỗi khi từ chối lời mời: %s", name, e)
         return False
 
+    async def _tim_moc(tpl, nhan, lan=3):
+        """Tìm một mốc trên màn hình; trượt thì dẹp popup rồi thử lại.
+
+        Vì sao cần: luồng cũ chạy MỘT MẠCH đóng-popup -> dò tab -> dò ô. Đo
+        được trên máy thật: lúc chụp ảnh bước đóng popup thì popup CHƯA hiện,
+        tới lúc dò tab nó mới che lên -> tab chỉ khớp 0.50 và cả lượt bỏ cuộc,
+        dù nút X khớp 1.000 nếu kiểm rời. Popup cảnh báo của game tự hiện lại
+        theo nhịp riêng, nên một lần dẹp là không đủ.
+        """
+        diem_cao = 0.0
+        for i in range(lan):
+            anh = await p.screenshot(type="png")
+            loc, diem = _match_template_cv(anh, tpl, threshold=0.75)
+            diem_cao = max(diem_cao, diem)
+            if loc:
+                return loc, diem
+            # Trượt -> có thứ gì che không? Dẹp rồi thử lại, KHÔNG click mò.
+            if await _tu_choi_moi(anh):
+                continue
+            loc_x, _ = _match_template_cv(anh, tpl_close, threshold=0.75)
+            if loc_x:
+                # XÁC MINH LẠI NGAY TRƯỚC KHI BẤM.
+                #
+                # Popup cảnh báo tự đóng theo nhịp riêng. Bấm theo một ảnh chụp
+                # cũ vài trăm mili-giây là bấm vào chỗ popup KHÔNG CÒN ở đó —
+                # đo được: toạ độ nút X (1076, 128) chỉ cách tab KHÁC
+                # (1098, 151) đúng 33px, nên cú bấm muộn đã chuyển sang sảnh
+                # mini game và cả lượt hỏng.
+                anh2 = await p.screenshot(type="png")
+                loc_x2, _ = _match_template_cv(anh2, tpl_close, threshold=0.75)
+                if not loc_x2:
+                    log.info("%s: popup tự đóng trước khi kịp bấm -> dò lại, "
+                             "KHÔNG bấm vào chỗ cũ.", name)
+                    continue
+                log.info("%s: %s bị che -> đóng popup tại %s rồi dò lại.",
+                         name, nhan, loc_x2)
+                await p.mouse.click(loc_x2[0], loc_x2[1])
+                await asyncio.sleep(0.5)
+                continue
+            # Không che mà vẫn không thấy: có thể đang tải, chờ một nhịp.
+            await asyncio.sleep(0.7)
+        return None, diem_cao
+
     try:
         # Bước 0: Từ chối lời mời vào bàn (nếu có). Phải làm TRƯỚC nút X: đóng
         # bằng X thì lời mời còn nguyên và popup hiện lại ở bước sau.
@@ -504,6 +598,10 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
         shot1 = await p.screenshot(type="png")
         loc_close, score_close = _match_template_cv(shot1, tpl_close, threshold=0.75)
         if loc_close:
+            # Xác minh lại: popup có thể đã tự đóng giữa lúc chụp và lúc bấm.
+            shot1b = await p.screenshot(type="png")
+            loc_close, _ = _match_template_cv(shot1b, tpl_close, threshold=0.75)
+        if loc_close:
             log.info("%s phát hiện nút [X] đóng popup tại %s (độ khớp %.2f) -> click đóng!", name, loc_close, score_close)
             await p.mouse.click(loc_close[0], loc_close[1])
             await asyncio.sleep(0.4)
@@ -511,8 +609,7 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
         # Bước 2: Tìm và click tab [ GAME BÀI ].
         # Không nhận ra thì DỪNG chứ không click theo toạ độ: sai vài chục pixel
         # là rơi vào ô game khác, và người dùng thấy tool vào sảnh Tài/Xỉu.
-        shot2 = await p.screenshot(type="png")
-        loc_gb, score_gb = _match_template_cv(shot2, tpl_gb, threshold=0.75)
+        loc_gb, score_gb = await _tim_moc(tpl_gb, "tab GAME BÀI")
         if loc_gb:
             log.info("%s phát hiện tab [GAME BÀI] tại %s (độ khớp %.2f) -> click chọn Game Bài!", name, loc_gb, score_gb)
             await p.mouse.click(loc_gb[0], loc_gb[1])
@@ -533,12 +630,14 @@ async def _ensure_in_tldl_lobby_util(p, name="Profile", target_mu=2):
             shot3 = await p.screenshot(type="png")
         loc_close2, _ = _match_template_cv(shot3, tpl_close, threshold=0.75)
         if loc_close2:
+            shot3b = await p.screenshot(type="png")
+            loc_close2, _ = _match_template_cv(shot3b, tpl_close, threshold=0.75)
+        if loc_close2:
             await p.mouse.click(loc_close2[0], loc_close2[1])
             await asyncio.sleep(0.3)
 
         # Bước 4: Tìm và click icon [ TIẾN LÊN ĐẾM LÁ ] (Chống nhầm lẫn 100% với Liêng / Poker)
-        shot4 = await p.screenshot(type="png")
-        loc_tldl, score_tldl = _match_template_cv(shot4, tpl_tldl, threshold=0.75)
+        loc_tldl, score_tldl = await _tim_moc(tpl_tldl, "ô TIẾN LÊN ĐẾM LÁ")
         if loc_tldl:
             log.info("%s phát hiện icon [TIẾN LÊN ĐẾM LÁ] tại %s (độ khớp %.2f) -> click vào sảnh Đếm Lá!", name, loc_tldl, score_tldl)
             await p.mouse.click(loc_tldl[0], loc_tldl[1])
