@@ -30,6 +30,7 @@ async def _clear_hunt_state(p):
             // __target_hunt_bet thì lần sau người dùng chơi tay, vào bàn khác
             // mức cược sẽ bị extension tự out.
             window.__AUTOTOOL_ENGAGED = false;
+            window.__AUTOTOOL_GIU_BAN = false;
             window.__AUTOTOOL_AUTO_DISCARD = false;
             window.__auto_start_guest_ss = false;
             window.__target_hunt_bet = 0;
@@ -103,6 +104,7 @@ async def dong_luot_chay(pages, ly_do=""):
     """
     js = """() => {
         window.__AUTOTOOL_ENGAGED = false;
+        window.__AUTOTOOL_GIU_BAN = false;
         window.__AUTOTOOL_ARMED = false;
         window.__AUTOTOOL_AUTO_HUNT = false;
         window.__AUTOTOOL_AUTO_DISCARD = false;

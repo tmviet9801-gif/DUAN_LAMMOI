@@ -285,6 +285,7 @@
     G.__AUTOTOOL_SUB_JOIN_TICKET = null;
     G.__active_room_invite = null;
     G.__leave_after_round = false;
+    G.__AUTOTOOL_GIU_BAN = false;
   }
 
   // Vai trò ghép bàn do backend ấn định cho từng lượt chạy.  Không suy đoán
@@ -302,6 +303,9 @@
    * số họ ngồi xuống bàn này.
    */
   function dangChoDongDoi() {
+    // GIỮ BÀN (phụ đã out): không còn ai để chờ. Hub có thể đồng bộ lại danh
+    // sách đồng đội bất cứ lúc nào, nên không dựa vào "danh sách rỗng".
+    if (G.__AUTOTOOL_GIU_BAN) return false;
     try {
       const ds = G.__autotool_partners || [];
       if (!ds.length) return false;
@@ -312,6 +316,28 @@
       return true;   // không chắc thì coi như đang chờ — hỏng an toàn
     }
   }
+
+  // Bàn theo rid, lấy từ khung server đẩy về: cmd 305 `ri` (từng bàn) và
+  // cmd 300 `rs[]` (dự phòng). `uC` = số người đang ngồi. Controller hỏi số
+  // này TRƯỚC KHI vào bàn — bàn đang có khách thì đứng ở sảnh chờ, không
+  // "vào rồi mới nhìn": khách ngồi sẵn thường đã bấm Bắt đầu, nhảy vào là
+  // server chia bài ngay, lệnh rời không kịp (10/09/2026 16:04:27).
+  G.__ban_theo_rid = G.__ban_theo_rid || {};
+  function ghiBanTheoRid(r) {
+    const rid = Number(r && r.rid);
+    if (!(rid > 0)) return;
+    G.__ban_theo_rid[rid] = {
+      rid: rid,
+      uC: (r.uC === undefined || r.uC === null) ? null : Number(r.uC),
+      b: Number(r.b || 0),
+      Mu: Number(r.Mu || 0),
+      rn: r.rn || "",
+      ts: Date.now(),
+    };
+  }
+  G.__autotool_ban_theo_rid = function (rid) {
+    return G.__ban_theo_rid[Number(rid)] || null;
+  };
 
   // Vai trò CHỈ đọc từ giá trị do controller đặt — xem vai_tro_ban.js.
   //
@@ -2198,6 +2224,15 @@
               }
             }
 
+            // cmd 305 / 300: thông tin từng bàn (uC = số người) -> ghi theo rid
+            // để controller hỏi trước khi vào bàn.
+            if (p.cmd === 305 && p.ri && Number(p.ri.rid) > 0) {
+              ghiBanTheoRid(p.ri);
+            }
+            if (p.cmd === 300 && Array.isArray(p.rs)) {
+              for (const r of p.rs) ghiBanTheoRid(r);
+            }
+
             // (cleanUid, isMe, isPartner, triggerVerifiedMatchReadyAndStart đã được khai báo ở top-level scope)
             // cmd 200: Người chơi mới bước vào bàn (t: 1) hoặc rời bàn (t: 2)
             if (p.cmd === 200 && p.p) {
@@ -2221,6 +2256,11 @@
                     // ĐỒNG ĐỘI VỪA BƯỚC VÀO BÀN!
                     console.log(`[AutoTool V3] [cmd 200] ĐỒNG ĐỘI ${player.dn || player.u} VỪA BƯỚC VÀO BÀN!`);
                     triggerVerifiedMatchReadyAndStart(player.dn || player.u, "cmd:200 Join");
+                  } else if (G.__AUTOTOOL_GIU_BAN) {
+                    // GIỮ BÀN: khách lạ vào bàn của chính là ĐÚNG MỤC ĐÍCH.
+                    // Không huỷ, không out — chờ khách Sẵn sàng (cmd 363/202)
+                    // rồi Bắt đầu, bộ xả hiện có tự đánh như thường.
+                    console.log(`[AutoTool V3] [GIỮ BÀN] Khách ${player.dn || player.u || "?"} vào bàn -> giữ nguyên, chờ khách Sẵn sàng.`);
                   } else {
                     // KHÁCH LẠ VÀO BÀN -> HỦY LỆNH CHO ĐỒNG ĐỘI & TỰ ĐỘNG OUT BÀN NGAY
                     const strangerName = player.dn || player.u || "Khách";
@@ -2418,6 +2458,20 @@
               } else if (hasStrangerOrFull) {
                 // 2. BÀN CÓ KHÁCH LẠ HOẶC BÀN FULL
                 const guestSS = strangers.some((x) => x && (x.aRd === true || x.aRd === "true" || x.ss === true || x.ready === true));
+
+                // GIỮ BÀN (sau khi phụ đã out): khách lạ ngồi vào chính là mục
+                // đích. KHÔNG rời, không "chờ 3s rồi out". Khách Sẵn sàng ->
+                // Bắt đầu (nếu bật) và bộ xả hiện có tự đánh, không sửa gì thêm.
+                if (G.__AUTOTOOL_GIU_BAN && !isSubProfile) {
+                  if (guestSS && G.__auto_start_guest_ss && !G.__game_in_progress) {
+                    console.log("[AutoTool V3] [GIỮ BÀN] Khách lạ đã Sẵn sàng -> BẮT ĐẦU, xả như thường.");
+                    G.__is_matched_locked = true;
+                    G.__autotool_exec_start();
+                  } else {
+                    console.log("[AutoTool V3] [GIỮ BÀN] Có khách lạ trong bàn, chờ khách Sẵn sàng.");
+                  }
+                  return;
+                }
 
                 // ĐANG CHỜ ĐỒNG ĐỘI -> LUÔN OUT, không bao giờ bắt đầu với khách lạ.
                 // Guard cũ đọc __AUTOTOOL_AUTO_HUNT, mà luồng gom bàn đặt cờ đó
@@ -3195,6 +3249,8 @@
    * ván hợp lệ.
    */
   function khongDuocBatDauVoiNguoiLa() {
+    // GIỮ BÀN: chính chủ động chơi với khách lạ bằng bộ xả hiện có.
+    if (G.__AUTOTOOL_GIU_BAN) return false;
     const partner = (G.__room_players || []).find(isPartner);
     const matchingPair = G.__AUTOTOOL_MATCH_ROLE === "anchor" || G.__AUTOTOOL_MATCH_ROLE === "sub";
     return !partner && G.__room_players && G.__room_players.length > 1

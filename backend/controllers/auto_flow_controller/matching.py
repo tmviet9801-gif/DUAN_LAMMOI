@@ -17,7 +17,8 @@ from .context import (
     resolve_profile_name,
 )
 from .thong_ke_pha import ghi_moc, tom_tat
-from .kich_hoat import bao_dam_kich_hoat
+from .kich_hoat import bao_dam_kich_hoat, js_giu_ban
+from .ban_trong import JS_SO_NGUOI_BAN, so_nguoi_trong_ban
 from .preflight import loc_profile_du_dieu_kien, so_du_toi_thieu
 from game_sim import room_catalog
 from .deps import _build_adapter, _notify_all
@@ -300,6 +301,13 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
     target_mu = ctx.target_mu
     bet_val = ctx.bet_val
     requested_rid = ctx.requested_rid
+    # Khung hỏi danh sách bàn (cmd 300) — dùng để đọc `uC` bàn đích TRƯỚC khi
+    # vào. `so_nguoi_truoc` chỉ để log khi số người đổi, không lặp mỗi 2 giây.
+    try:
+        req_ds_ban = adapter.proto.build_room_list_msg(gid)
+    except Exception:
+        req_ds_ban = ""
+    so_nguoi_truoc = None
     auto_xa = ctx.auto_xa
     auto_start_guest_ss = ctx.auto_start_guest_ss
     auto_leave_after = ctx.auto_leave_after
@@ -688,9 +696,10 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         })"""
         for p_n, p in pages.items():
             try:
-                await eval_page(p, 
+                await eval_page(p,
                     f"() => {{ window.__autotool_exec_join = {server_join_fn};"
                     f" window.__autotool_leave_then_join = {leave_then_join_fn};"
+                    f" window.__autotool_so_nguoi_ban = {JS_SO_NGUOI_BAN};"
                     f" window.__last_join_ts = 0; }}"
                 )
                 log.info("find-and-match: Đã cài đè hàm join chuẩn (b/Mu đầy đủ) cho %s", p_n)
@@ -801,6 +810,28 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
             if hasattr(first_page, "is_closed") and first_page.is_closed():
                 log.info("find-and-match: Trình duyệt Account 1 đã đóng. Dừng chu trình.")
                 return {"ok": False, "error": "Trình duyệt Account 1 đã bị đóng.", "stopped": True}
+
+            # 0. HỎI SỐ NGƯỜI TRONG BÀN TRƯỚC KHI VÀO. Bàn $100 Solo chỉ có một
+            # rid (#2); khách ngồi sẵn thường đã bấm Bắt đầu chờ người — nhảy
+            # vào là server chia bài ngay trong giây đó, lệnh rời không kịp và
+            # Account chính bị kéo vào một ván tiền thật (16:04:27 10/09/2026).
+            # Server đẩy `uC` từng bàn qua cmd 305, nên hỏi trước rồi đứng ở
+            # sảnh chờ bàn trống. Không đọc được thì vào kiểm như cũ (ban_trong.py).
+            so_nguoi = await so_nguoi_trong_ban(first_page, requested_rid, req_ds_ban)
+            if so_nguoi is not None and so_nguoi >= 1:
+                if so_nguoi != so_nguoi_truoc:
+                    log.info("find-and-match: bàn #%s đang có %d người -> đứng ở sảnh chờ trống, KHÔNG vào.",
+                             requested_rid, so_nguoi)
+                    await _set_hud_status(first_page, f"Bàn #{requested_rid} đang có {so_nguoi} người — đứng chờ trống, không vào...")
+                so_nguoi_truoc = so_nguoi
+                await asyncio.sleep(2.0)
+                continue
+            if so_nguoi is None:
+                if so_nguoi_truoc != -1:
+                    log.info("find-and-match: không đọc được số người bàn #%s (cmd 305) -> vào kiểm như cũ.", requested_rid)
+                so_nguoi_truoc = -1
+            else:
+                so_nguoi_truoc = None
 
             # 1. Rời bàn cũ (nếu còn) rồi JOIN đúng RID trong cùng một nhịp, ngay
             # khi server ack — không để hở cửa sổ cho game tự rejoin bàn $500.
@@ -1618,7 +1649,19 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
                             s.room_id = -1
                             s.log = "Đã hoàn tất xả bài, đang ở sảnh chọn bàn"
             else:
-                await _set_hud_status(first_page, "Đã xả bài xong — Account phụ đã out, Account chính giữ phòng chờ khách ngoài.")
+                # CHẾ ĐỘ GIỮ BÀN: chính ở lại, cổng kích hoạt vẫn mở, auto-xả
+                # vẫn bật. Khách lạ ngồi vào và Sẵn sàng -> tự Bắt đầu (nếu bật)
+                # và bộ xả hiện có tự đánh với khách — không đổi gì ở luật chọn
+                # nước. Khối kill ở trên đã tắt ARMED/AUTO_DISCARD, nên phải bật
+                # lại ở đây; nếu không chính ngồi im, khách Sẵn sàng cũng không
+                # ai bấm Bắt đầu.
+                try:
+                    await eval_page(anchor_page, js_giu_ban(auto_xa, auto_start_guest_ss, bet_val, target_mu))
+                    log.info("find-and-match: GIỮ BÀN: %s ở lại bàn #%s; khách lạ Sẵn sàng là tự Bắt đầu và xả (auto_xa=%s, bắt đầu nếu khách SS=%s).",
+                             anchor_name, selected_rid, auto_xa, auto_start_guest_ss)
+                except Exception as e:
+                    log.warning("find-and-match: không bật được chế độ GIỮ BÀN cho %s: %s", anchor_name, e)
+                await _set_hud_status(first_page, "GIỮ BÀN — Account phụ đã out; chờ khách lạ, khách Sẵn sàng là tự Bắt đầu và xả bài.")
         elif not _should_stop():
             # Hết hạn theo dõi mà chưa thấy ván kết thúc. Trước đây giữ nguyên
             # bàn "để kiểm tra" — thực tế là phụ ngồi lì, khách ngoài không vào
@@ -1642,8 +1685,12 @@ async def autoplay_find_and_match_ws(body: dict, request: Request):
         # chỉ RA LỆNH rời (được hoãn nếu còn giữa ván) — ván CÓ THỂ VẪN ĐANG
         # CHẠY, tắt AUTO_DISCARD/ENGAGED lúc này là nick phụ ngưng đánh, và lệnh
         # rời đã hoãn cũng không được thực hiện ở cmd 252 (cần isAutoEngaged).
+        # GIỮ BÀN: trang CHÍNH phải còn "đang chạy" (cổng mở, auto-xả bật) để
+        # đánh với khách lạ -> chỉ đóng lượt trên trang phụ. Chính chỉ đóng khi
+        # người dùng bấm Dừng (_clear_hunt_state) hoặc bật "chính cũng out".
+        pages_dong = pages if auto_leave_after else {t: p for t, p in pages.items() if t != anchor_name}
         if game_completed:
-            await dong_luot_chay(pages, "ván đã kết thúc")
+            await dong_luot_chay(pages_dong, "ván đã kết thúc" + ("" if auto_leave_after else " — chính GIỮ BÀN"))
 
         shot_a = None
         try:

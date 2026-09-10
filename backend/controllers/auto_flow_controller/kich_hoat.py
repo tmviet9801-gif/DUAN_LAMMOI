@@ -51,6 +51,7 @@ def js_kich_hoat(vai_tro, auto_xa, dong_doi, bet, mu):
         try {{ localStorage.removeItem('AUTOTOOL_STOPPED'); }} catch (e) {{}}
         window.__AUTOTOOL_ENGAGED = true;
         window.__AUTOTOOL_AUTO_HUNT = false;
+        window.__AUTOTOOL_GIU_BAN = false;
         window.__AUTOTOOL_ARMED = {json.dumps(la_anchor)};
         window.__is_hunt_initiator = {json.dumps(la_anchor)};
         window.__AUTOTOOL_MATCH_ROLE = {json.dumps(vai_tro)};
@@ -59,6 +60,40 @@ def js_kich_hoat(vai_tro, auto_xa, dong_doi, bet, mu):
         window.__AUTOTOOL_AUTO_DISCARD = {json.dumps(bool(auto_xa))};
         window.__target_hunt_bet = {json.dumps(bet)};
         window.__target_hunt_mu = {json.dumps(mu)};
+    }}"""
+
+
+def js_giu_ban(auto_xa, auto_start_guest_ss, bet, mu):
+    """JS đưa trang CHÍNH vào chế độ GIỮ BÀN sau khi phụ đã out.
+
+    Chính ở lại bàn, cổng kích hoạt vẫn MỞ, auto-xả vẫn BẬT: khách lạ ngồi vào
+    và Sẵn sàng thì tự Bắt đầu (nếu bật) và bộ xả hiện có tự đánh — không đổi
+    một dòng nào của luật chọn nước. Không còn đồng đội để chờ, nên xoá danh
+    sách đồng đội: các lớp gác "đang chờ đồng đội -> rời bàn khi thấy khách
+    lạ" không được phép nổ trong chế độ này (extension kiểm `__AUTOTOOL_GIU_BAN`).
+    """
+    return f"""() => {{
+        try {{ localStorage.removeItem('AUTOTOOL_STOPPED'); }} catch (e) {{}}
+        window.__AUTOTOOL_ENGAGED = true;
+        window.__AUTOTOOL_ARMED = true;
+        window.__AUTOTOOL_AUTO_HUNT = false;
+        window.__AUTOTOOL_GIU_BAN = true;
+        window.__AUTOTOOL_MATCH_ROLE = "anchor";
+        window.__AUTOTOOL_ROLE = "winner";
+        window.__is_hunt_initiator = true;
+        window.__is_matched_locked = false;
+        window.__AUTOTOOL_PARTNER_PROFILES = [];
+        window.__autotool_partners = [];
+        window.__partner_cards = null;
+        window.__AUTOTOOL_AUTO_DISCARD = {json.dumps(bool(auto_xa))};
+        window.__auto_start_guest_ss = {json.dumps(bool(auto_start_guest_ss))};
+        window.__target_hunt_bet = {json.dumps(bet)};
+        window.__target_hunt_mu = {json.dumps(mu)};
+        if (window.__hunt_retry_timer) {{ clearTimeout(window.__hunt_retry_timer); window.__hunt_retry_timer = null; }}
+        if (window.__hunt_wait_timer) {{ clearTimeout(window.__hunt_wait_timer); window.__hunt_wait_timer = null; }}
+        if (window.__start_retry_timer) {{ clearInterval(window.__start_retry_timer); window.__start_retry_timer = null; }}
+        if (window.__guest_ss_wait_timer) {{ clearTimeout(window.__guest_ss_wait_timer); window.__guest_ss_wait_timer = null; }}
+        if (window.__stranger_leave_timer) {{ clearTimeout(window.__stranger_leave_timer); window.__stranger_leave_timer = null; }}
     }}"""
 
 
