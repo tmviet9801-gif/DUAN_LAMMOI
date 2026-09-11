@@ -150,7 +150,7 @@ def test_tim_ban_giu_ban_khi_gap_ban_trong():
     assert "js_kich_hoat(" in code, "phải mở cổng trước khi dò"
     assert "_ghi_ban(request, ten, rid_that, bet, mu)" in code
     i = code.index("async def _do_va_giu")
-    khoi = code[i:i + 2500]
+    khoi = code[i:i + 4500]
     assert "js_giu_ban(auto_xa, bet, mu," in khoi, "ngồi được bàn trống thì phải GIỮ"
 
 
@@ -159,7 +159,7 @@ def test_ban_trong_xac_minh_theo_TEN_NHAN_VAT_khong_dem_dau_nguoi():
     rời). Đếm đầu người là không phân biệt được."""
     code = _code_py(AF / "ban_chung.py")
     i = code.index("async def _do_va_giu")
-    khoi = code[i:i + 2500]
+    khoi = code[i:i + 4500]
     assert 'tt.get("so_khach")' in khoi, "phải tách khách bằng isPartner"
     assert "roi_khi_co_khach=True" in khoi, "giữ bàn mà khách vào thì phải rời"
     js = (AF / "join_js.py").read_text(encoding="utf-8")
@@ -186,7 +186,7 @@ def test_vao_ban_kiem_TRUOC_va_xac_minh_SAU_bang_ten_nhan_vat():
     TRƯỚC khi join, và sau khi join phải thấy đúng TÊN NHÂN VẬT của nick đó."""
     code = _code_py(AF / "ban_chung.py")
     i = code.index("async def _chon_ban_de_vao")
-    truoc = code[i:i + 2500]
+    truoc = code[i:i + 4500]
     assert "_trang_dang_mo(request, chu)" in truoc, "phải hỏi trang của nick giữ bàn"
     assert 'tt.get("so_khach")' in truoc, "kiểm khách TRƯỚC khi join"
     assert 'ban.get("mu")' in truoc, "bàn đã đủ người thì không ghép nữa"
@@ -200,7 +200,7 @@ def test_canh_ban_do_lai_khi_khach_chen_vao():
     code = _code_py(AF / "ban_chung.py")
     assert "async def _canh_giu_ban" in code
     i = code.index("async def _canh_giu_ban")
-    khoi = code[i:i + 3000]
+    khoi = code[i:i + 4500]
     assert 'tt.get("so_dong_doi")' in khoi, "đồng đội vào rồi thì thôi canh"
     assert "_do_va_giu(" in khoi, "khách vào thì phải dò bàn khác"
     assert "gom_ban_stop_epoch" in khoi, "bấm Dừng là phải thôi canh"
@@ -507,3 +507,99 @@ def test_dung_va_dong_luot_deu_mo_lai_cong_bat_tay():
     src = _code_js(EXT / "content_main.js")
     i = src.index("function clearRunConfig()")
     assert "G.__AUTOTOOL_CHO_BAT_TAY = true;" in src[i:i + 1200]
+
+
+# ============ 9. Hai nick cùng TÌM BÀN gặp nhau: ghép lại, không nhảy bàn ============
+#
+# Bản bắt WS 06:00 ngày 11/09/2026 (sau khi đã chặn tự bắt đầu): hai nick nhảy
+# bàn 1,3 giây một lần suốt 60 giây rồi bỏ cuộc. Hai nguyên nhân: (1) server
+# HIT xếp người mới vào ghế trống sẵn có, nên nick 1 luôn bị xếp vào bàn nick 2
+# đang ngồi một mình (hoặc bàn khách lạ ngồi một mình); (2) hub gom-bàn cũ:
+# nick rơi vào bàn có khách phát CANCEL_ROOM_INVITE -> hub ép MỌI profile khác
+# LEAVE_ROOM -> nick 2 bị đá khỏi bàn trống nó vừa giữ được.
+
+
+def test_xe_le_khong_phat_cancel_va_bo_lenh_dieu_phoi_cua_hub():
+    src = _code_js(EXT / "content_main.js")
+    i = src.index("Phát hiện bàn có người lạ / Full")
+    assert "!isSubProfile && !G.__AUTOTOOL_XE_LE" in src[i:i + 1200], \
+        "xé lẻ mà phát CANCEL là hub ép nick khác rời bàn đang giữ"
+    j = src.index('if (event.data.type !== "AUTOTOOL_EXEC_COMMAND") return;')
+    khoi = src[j:j + 1200]
+    assert "G.__AUTOTOOL_XE_LE" in khoi
+    for lenh in ('"LEAVE_ROOM"', '"JOIN_ROOM"', '"CONFIRM_MATCH"', '"READY"', '"START"'):
+        assert lenh in khoi, f"phải bỏ qua lệnh hub {lenh} khi xé lẻ"
+    k = src.index("function clearRunConfig()")
+    assert "G.__AUTOTOOL_XE_LE = false;" in src[k:k + 1200]
+
+
+def test_chuan_bi_bat_xe_le_va_dung_tat():
+    code = _code_py(AF / "ban_chung.py")
+    i = code.index("async def _chuan_bi")
+    assert "window.__AUTOTOOL_XE_LE = true;" in code[i:i + 4500]
+    lobby = _code_py(AF / "lobby.py")
+    assert lobby.count("window.__AUTOTOOL_XE_LE = false;") >= 2, \
+        "Dừng và hết lượt đều phải tắt chế độ xé lẻ"
+
+
+def test_hub_van_giu_cancel_cho_luong_gom_ban():
+    """Chặn ở extension, không ở hub: luồng GOM BÀN cũ vẫn cần CANCEL -> LEAVE_ROOM."""
+    hub = (BE / "services" / "extension_hub.py").read_text(encoding="utf-8")
+    assert '"LEAVE_ROOM"' in hub
+
+
+def test_do_trung_dong_doi_thi_ghep_khong_do_tiep():
+    code = _code_py(AF / "ban_chung.py")
+    i = code.index("async def _do_va_giu")
+    j = code.index("async def _mo_cong_bat_tay")
+    than = code[i:j]
+    k = than.index('if int(tt.get("so_dong_doi") or 0) > 0:')
+    nhanh = than[k:k + 1200]
+    assert 'return "ghep"' in nhanh, "gặp đồng đội là ghép, không dò tiếp"
+    assert "cho_bat_tay=False" in nhanh, "ghép rồi vẫn KHÔNG được tự bắt đầu"
+    assert "_ghi_ghep(" in nhanh
+    assert than.index('tt.get("so_khach")') < k, "khách phải kiểm TRƯỚC đồng đội"
+    assert 'return "giu"' in than and 'return "khong"' in than
+
+
+def test_ghi_ghep_duoi_ten_chu_ban_that():
+    code = _code_py(AF / "ban_chung.py")
+    i = code.index("def _ghi_ghep(")
+    than = code[i:i + 1200]
+    assert "la_chu" in than and "_profile_theo_cn(" in than
+    assert "_ghi_ngoi_cung(" in than
+    js = (AF / "join_js.py").read_text(encoding="utf-8")
+    assert "la_chu:" in js, "JS_DOC_BAN phải đọc cờ C (chủ bàn) của khung 202"
+
+
+def test_vao_ban_khi_da_ngoi_san_khong_join_lai():
+    code = _code_py(AF / "ban_chung.py")
+    i = code.index("async def _chon_ban_de_vao")
+    assert "da_ngoi_san=True" in code[i:i + 3000], "phải nhận ra nick đã ngồi sẵn"
+    j = code.index("async def _mo_bat_tay_ban_da_ngoi")
+    k = code.index("async def vao_ban")
+    than = code[j:k]
+    assert "o_yen=True" in than, "đang ngồi trong bàn thì không được điều hướng về sảnh"
+    assert "__autotool_leave_then_join" not in than, "không join lại"
+    assert "_mo_cong_bat_tay(" in than
+    assert "_mo_bat_tay_ban_da_ngoi(request, ten, chu, ban" in code[k:k + 3000]
+    m = code.index("async def _chuan_bi")
+    assert "if not o_yen and not await _is_in_tldl_lobby_util(trang):" in code[m:m + 4500]
+
+
+def test_mo_cong_bat_tay_chu_ban_truoc():
+    """Mở người vào trước thì Sẵn sàng của họ có thể tới lúc chủ còn khoá."""
+    code = _code_py(AF / "ban_chung.py")
+    k = code.index("async def vao_ban")
+    khoi = code[k:k + 7000]
+    assert khoi.index("_mo_cong_bat_tay(trang_chu, chu") < khoi.index("_mo_cong_bat_tay(trang, ten")
+    j = code.index("async def _mo_bat_tay_ban_da_ngoi")
+    assert 'tt.get("la_chu")' in code[j:j + 3500]
+
+
+def test_ban_chung_bao_ai_dang_ngoi_cung():
+    code = _code_py(AF / "ban_chung.py")
+    i = code.index("async def xem_ban_chung")
+    assert '"ngoi_cung"' in code[i:i + 1200]
+    ui = (BE.parent / "app" / "renderer" / "js" / "autoplay.js").read_text(encoding="utf-8")
+    assert "ngoi_cung" in ui and "da_ghep" in ui and "da_ngoi_san" in ui

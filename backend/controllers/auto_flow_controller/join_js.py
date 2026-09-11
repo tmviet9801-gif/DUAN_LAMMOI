@@ -87,9 +87,14 @@ JS_DOC_BAN = """() => {
     const khac = pls.filter((x) => x && !laMinh(x));
     const dongDoi = khac.filter(laDongDoi);
     const khach = khac.filter((x) => !laDongDoi(x));
+    const minh = pls.find(laMinh) || null;
     return {
         co_thong_tin: !!info,
         so_nguoi: pls.length,
+        // Cờ `C` trong khung 202 = CHỦ BÀN. Cần cho lúc hai nick TÌM BÀN gặp
+        // nhau: ghi bàn ghép dưới tên đúng chủ bàn, và mở bắt tay cho chủ trước.
+        la_chu: !!(minh && (minh.C === true || minh.C === "true")),
+        ten_minh: ten(minh),
         so_dong_doi: dongDoi.length,
         so_khach: khach.length,
         ten_dong_doi: dongDoi.map(ten).filter(Boolean),

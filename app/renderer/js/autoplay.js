@@ -338,7 +338,14 @@
         // Nhiều nick giữ bàn song song được — liệt kê hết, nick nào bấm "Vào
         // bàn" sẽ được ghép vào bàn giữ lâu nhất còn ghế.
         chu.textContent = `Đang giữ ${r.so_ban} bàn: ` + (r.ban || [])
-          .map((b) => `#${b.rid} ($${Number(b.bet).toLocaleString()}) — ${b.chu}`)
+          .map((b) => {
+            // Hai nick cùng "Tìm bàn" mà gặp nhau thì ngồi lại chờ lệnh, KHÔNG
+            // tự bắt đầu — người dùng bấm "Vào bàn" ở nick nào cũng được.
+            const cung = (b.ngoi_cung || []).length
+              ? ` 🤝 ${b.ngoi_cung.join(", ")} đã ngồi cùng — bấm "Vào bàn" để bắt đầu`
+              : "";
+            return `#${b.rid} ($${Number(b.bet).toLocaleString()}) — ${b.chu}${cung}`;
+          })
           .join(" | ");
       } else {
         hop.style.display = "none";
@@ -360,7 +367,10 @@
         method: "POST",
         body: JSON.stringify({ profile_name: ten, bet, mu, auto_xa: autoXa }),
       });
-      if (r && r.ok) {
+      if (r && r.ok && r.da_ghep) {
+        setStatus(`🤝 ${r.profile} đã ngồi cùng ${r.cung_voi} ở bàn #${r.rid} ($${Number(r.bet).toLocaleString()}). Chưa bắt đầu — bấm "Vào bàn" (ở nick nào cũng được) để xả.`, "success");
+        App.toast(`Gặp đồng đội ở bàn #${r.rid} — bấm Vào bàn để bắt đầu`, "success");
+      } else if (r && r.ok) {
         setStatus(`🎯 ${r.profile} đang GIỮ bàn #${r.rid} ($${Number(r.bet).toLocaleString()}) sau ${r.so_lan_do} lần dò. Bấm "Vào bàn" ở nick khác.`, "success");
         App.toast(`Đã giữ bàn #${r.rid}`, "success");
       } else {
@@ -382,7 +392,10 @@
         method: "POST",
         body: JSON.stringify({ profile_name: ten, auto_xa: autoXa }),
       });
-      if (r && r.ok) {
+      if (r && r.ok && r.da_ngoi_san) {
+        setStatus(`✅ ${r.profile} đã ngồi sẵn cùng ${r.cung_voi} ở bàn #${r.rid} — đã mở bắt tay, ván sẽ bắt đầu.`, "success");
+        App.toast(`Bàn #${r.rid}: đã mở bắt tay`, "success");
+      } else if (r && r.ok) {
         const canhBao = r.co_khach_la
           ? " ⚠️ Bàn có người ngoài — tool sẽ KHÔNG tự đánh."
           : "";

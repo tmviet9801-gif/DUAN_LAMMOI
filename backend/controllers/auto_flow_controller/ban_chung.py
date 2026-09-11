@@ -20,6 +20,21 @@ Nay có hai lớp:
 XÁC MINH BẰNG TÊN NHÂN VẬT, không đếm đầu người: bàn 2 người có thể là
 "mình + đồng đội" (đúng) hoặc "mình + khách" (phải rời). `JS_DOC_BAN` tách hai
 loại bằng chính `isPartner` của extension — khớp CHÍNH XÁC theo `character_name`.
+
+HAI NICK CÙNG TÌM BÀN THÌ GẶP NHAU LÀ CHUYỆN CHẮC CHẮN (bản bắt WS 06:00 ngày
+11/09/2026): server HIT xếp người mới vào BẤT KỲ ghế trống sẵn có, chỉ mở bàn
+mới khi không còn ghế nào. Nick 2 ngồi một mình là còn một ghế trống, nên nick
+1 dò kiểu gì cũng bị xếp vào đó (hoặc vào bàn khách lạ đang ngồi một mình).
+Hai nick nhảy bàn 1,3 giây một lần suốt 60 giây rồi bỏ cuộc. Vì thế dò trúng
+bàn có ĐỒNG ĐỘI thì coi là ĐÃ GHÉP: ngồi lại, không dò tiếp, và KHÔNG tự bắt
+đầu — bấm VÀO BÀN ở nick nào cũng được là mở bắt tay. Cũng vì lẽ đó, ở một
+mức cược chỉ giữ được MỘT bàn trống tại một thời điểm; muốn nhiều bàn thì
+phải khác mức cược.
+
+Cùng lần đó còn lộ ra hub gom-bàn cũ phá luồng này: nick rơi vào bàn có khách
+phát CANCEL_ROOM_INVITE, hub ép MỌI profile khác LEAVE_ROOM, nick đang giữ bàn
+trống bị đá ra. Extension ở chế độ xé lẻ (`__AUTOTOOL_XE_LE`) không phát CANCEL
+và bỏ qua các lệnh điều phối bàn của hub.
 """
 import asyncio
 import logging
@@ -117,6 +132,46 @@ def _ten_dong_doi(ten_minh):
     return ra
 
 
+def _profile_theo_cn(cn):
+    """Tên profile có `character_name` này (ngược với `_character_name`)."""
+    cn = str(cn or "").strip().lower()
+    if not cn:
+        return None
+    for a in load_accounts() or []:
+        if isinstance(a, dict) and str(a.get("character_name") or "").strip().lower() == cn:
+            return str(a.get("name") or "").strip() or None
+    return None
+
+
+def _ghi_ngoi_cung(request, chu, ten_khac):
+    """Ghi vào bàn của `chu` những nick đồng đội đang ngồi cùng, chờ VÀO BÀN."""
+    ban = _lay_ban_cua(request, chu)
+    if not ban:
+        return
+    cu = [str(x) for x in (ban.get("ngoi_cung") or [])]
+    for t in ten_khac:
+        if t and t != chu and t not in cu:
+            cu.append(t)
+    ban["ngoi_cung"] = cu
+
+
+def _ghi_ghep(request, ten, rid, bet, mu, dong_doi_cn, la_chu):
+    """Dò trúng bàn đang có ĐỒNG ĐỘI: ghi thành bàn ghép dưới tên đúng CHỦ BÀN.
+
+    Chủ = mình nếu cờ `C` của khung 202 nói vậy, không thì là đồng đội (bàn
+    Solo 2 chỗ chỉ có một). Bàn của mình (nếu từng giữ) xoá đi: mình không còn
+    giữ bàn trống nào nữa. Trả tên profile chủ bàn.
+    """
+    ten_dd = [p for p in (_profile_theo_cn(cn) for cn in dong_doi_cn) if p]
+    chu = ten if (la_chu or not ten_dd) else ten_dd[0]
+    if not _lay_ban_cua(request, chu):
+        _ghi_ban(request, chu, rid, bet, mu)
+    if chu != ten:
+        _xoa_ban(request, ten)
+    _ghi_ngoi_cung(request, chu, [ten] + ten_dd)
+    return chu
+
+
 def _kiem_tham_so(bet, mu):
     bet = int(bet or 100)
     if bet not in BET_RATIOS:
@@ -133,13 +188,16 @@ def _kiem_tham_so(bet, mu):
     return bet, mu, int(rid)
 
 
-async def _chuan_bi(request, ten, bet, mu, auto_xa):
+async def _chuan_bi(request, ten, bet, mu, auto_xa, o_yen=False):
     """Đưa profile về đúng tư thế dò bàn — dùng lại nguyên luồng của gom bàn.
 
     Chưa mở Chrome thì MỞ (không bắt người dùng tự mở), nạp lại bộ script
     extension, dẹp popup và điều hướng vào sảnh Tiến Lên Đếm Lá, rồi mới mở
     cổng kích hoạt và cài hàm join. Không nạp script thì `__ws_get_simms` và
     `__autotool_is_inside_table` không tồn tại, hàm join trả `no_socket`.
+
+    `o_yen=True`: nick ĐANG NGỒI SẴN trong bàn cùng đồng đội (VÀO BÀN chỉ để mở
+    bắt tay) — bỏ bước điều hướng về sảnh, vì bước đó làm rời bàn đang tốt.
     """
     from .deps import _build_adapter
 
@@ -167,7 +225,7 @@ async def _chuan_bi(request, ten, bet, mu, auto_xa):
     await noi_extension(request, ten)
 
     # Dẹp popup + vào sảnh bàn Đếm Lá (đường chính bằng node, dự phòng OpenCV).
-    if not await _is_in_tldl_lobby_util(trang):
+    if not o_yen and not await _is_in_tldl_lobby_util(trang):
         log.info("TÌM BÀN: %s chưa ở sảnh Đếm Lá -> điều hướng vào sảnh...", ten)
         vao = False
         for _ in range(3):
@@ -193,7 +251,10 @@ async def _chuan_bi(request, ten, bet, mu, auto_xa):
     # KHOÁ BẮT TAY trong suốt lúc dò. Mỗi mức cược chỉ có đúng một rid công
     # cộng, nên hai nick cùng dò là chắc chắn có lúc rơi trúng bàn của nhau;
     # không khoá thì extension bắt tay và vào ván tiền thật ngay.
-    await eval_page(trang, "() => { window.__AUTOTOOL_CHO_BAT_TAY = false; }")
+    # XE_LE: extension không phát CANCEL_ROOM_INVITE và bỏ qua lệnh điều phối
+    # bàn của hub (LEAVE_ROOM/JOIN_ROOM/...) — đó là đồ của luồng gom bàn cũ.
+    await eval_page(trang, "() => { window.__AUTOTOOL_CHO_BAT_TAY = false;"
+                           " window.__AUTOTOOL_XE_LE = true; }")
     return trang
 
 
@@ -208,7 +269,11 @@ async def _doc_ban(trang):
 async def _do_va_giu(request, trang, ten, bet, mu, rid, auto_xa, so_lan):
     """Dò tới khi ngồi được bàn TRỐNG rồi giữ bàn + ghi vào bảng bàn đang giữ.
 
-    Trả `(ok, rid_that, so_lan_da_do, ly_do)`.
+    Trả `(trang_thai, rid_that, so_lan_da_do, chi_tiet)` với trang_thai:
+      - "giu"  : ngồi được bàn trống một mình, đã bật GIỮ BÀN;
+      - "ghep" : dò trúng bàn đang có ĐỒNG ĐỘI -> ngồi lại, không dò tiếp,
+                 KHÔNG tự bắt đầu (chi_tiet = tên nhân vật đồng đội);
+      - "khong": hết lượt dò hoặc lỗi (chi_tiet = lý do).
     """
     ly_do = "chưa dò xong"
     for lan in range(1, so_lan + 1):
@@ -216,7 +281,7 @@ async def _do_va_giu(request, trang, ten, bet, mu, rid, auto_xa, so_lan):
             kq = await eval_page(
                 trang, f"() => window.__autotool_leave_then_join({rid}, {bet}, {mu})") or {}
         except Exception as e:
-            return False, None, lan, f"lỗi gửi lệnh vào bàn: {e}"
+            return "khong", None, lan, f"lỗi gửi lệnh vào bàn: {e}"
         if not kq.get("ok"):
             ly_do = str(kq.get("reason") or "join_that_bai")
             await asyncio.sleep(1.2)
@@ -239,7 +304,27 @@ async def _do_va_giu(request, trang, ten, bet, mu, rid, auto_xa, so_lan):
             log.info("TÌM BÀN: [%s] lần %d — %s, dò tiếp.", ten, lan, ly_do)
             await asyncio.sleep(1.0)
             continue
+        if int(tt.get("so_dong_doi") or 0) > 0:
+            # ĐỒNG ĐỘI đang ở đây (nick kia cũng bấm TÌM BÀN, hoặc người dùng
+            # tự đưa vào). Đây chính là đích của cả công cụ: đã tìm thấy nhau.
+            # Dò tiếp là vô nghĩa — server xếp mình quay lại đúng đây (xem
+            # docstring module). Ngồi lại, KHOÁ bắt tay, chờ người dùng bấm
+            # VÀO BÀN. Trước đây nhánh này là "bàn đã có người ngồi sẵn, dò
+            # tiếp" -> hai nick nhảy bàn 60 giây rồi bỏ cuộc (06:00 11/09/2026).
+            rid_that = int(tt.get("rid") or rid)
+            dd = [str(x) for x in (tt.get("ten_dong_doi") or [])]
+            await eval_page(trang, js_giu_ban(auto_xa, bet, mu,
+                                              dong_doi=_ten_dong_doi(ten),
+                                              roi_khi_co_khach=False,
+                                              cho_bat_tay=False))
+            chu = _ghi_ghep(request, ten, rid_that, bet, mu, dd, bool(tt.get("la_chu")))
+            log.info("TÌM BÀN: 🤝 %s dò trúng bàn #%s ($%s) đang có đồng đội %s (chủ bàn: %s) "
+                     "-> NGỒI LẠI, không dò tiếp, KHÔNG tự bắt đầu. Bấm VÀO BÀN để xả.",
+                     ten, rid_that, bet, ", ".join(dd) or "?", chu)
+            return "ghep", rid_that, lan, ", ".join(dd)
         if int(tt.get("so_nguoi") or 0) > 1:
+            # Người chưa nhận diện được (không phải mình, không rõ đồng đội hay
+            # khách) — hỏng an toàn: coi như có người, dò tiếp.
             ly_do = "bàn đã có người ngồi sẵn"
             log.info("TÌM BÀN: [%s] lần %d — %s, dò tiếp.", ten, lan, ly_do)
             await asyncio.sleep(1.0)
@@ -255,9 +340,9 @@ async def _do_va_giu(request, trang, ten, bet, mu, rid, auto_xa, so_lan):
         _ghi_ban(request, ten, rid_that, bet, mu)
         log.info("TÌM BÀN: >>> %s ĐÃ GIỮ BÀN TRỐNG #%s ($%s) sau %d lần dò. <<<",
                  ten, rid_that, bet, lan)
-        return True, rid_that, lan, ""
+        return "giu", rid_that, lan, ""
 
-    return False, None, so_lan, ly_do
+    return "khong", None, so_lan, ly_do
 
 
 async def _mo_cong_bat_tay(trang, ten, bet, mu, auto_xa):
@@ -326,6 +411,9 @@ async def _canh_giu_ban(request, ten, bet, mu, rid, auto_xa):
             # cũng đang dò và rơi trúng đây). TUYỆT ĐỐI không mở cổng bắt tay —
             # mở là vào ván TIỀN THẬT ngoài ý muốn, đúng lỗi 11/09/2026. Cứ
             # ngồi yên; nick kia thấy "bàn đã có người" sẽ tự đi dò chỗ khác.
+            # Ghi lại để VÀO BÀN ở nick nào cũng nhận ra "đã ngồi sẵn".
+            _ghi_ngoi_cung(request, ten, [p for p in (
+                _profile_theo_cn(cn) for cn in (tt.get("ten_dong_doi") or [])) if p])
             if not da_bao_dong_doi:
                 da_bao_dong_doi = True
                 log.info("CANH BÀN: %s — đồng đội %s đang ở cùng bàn #%s nhưng chưa "
@@ -344,10 +432,14 @@ async def _canh_giu_ban(request, ten, bet, mu, rid, auto_xa):
             if co_khach else "đã rơi khỏi bàn"
         log.warning("CANH BÀN: %s — %s -> dò bàn khác.", ten, vi_sao)
         _xoa_ban(request, ten)
-        ok, rid_moi, lan, ly_do = await _do_va_giu(
+        trang_thai, rid_moi, lan, chi_tiet = await _do_va_giu(
             request, trang, ten, bet, mu, rid, auto_xa, so_lan=40)
-        if not ok:
-            log.warning("CANH BÀN: %s dò lại không được (%s), thôi canh.", ten, ly_do)
+        if trang_thai == "ghep":
+            log.info("CANH BÀN: %s dò lại thì gặp đồng đội %s ở bàn #%s -> đã ghép, thôi canh.",
+                     ten, chi_tiet, rid_moi)
+            return
+        if trang_thai != "giu":
+            log.warning("CANH BÀN: %s dò lại không được (%s), thôi canh.", ten, chi_tiet)
             return
         log.info("CANH BÀN: %s đã chuyển sang giữ bàn #%s.", ten, rid_moi)
 
@@ -395,12 +487,30 @@ async def tim_ban(body: dict, request: Request):
     trang = await _chuan_bi(request, ten, bet, mu, auto_xa)
     log.info("TÌM BÀN: %s bắt đầu dò bàn trống $%s (%s chỗ, rid=%s).", ten, bet, mu, rid)
 
-    ok, rid_that, lan, ly_do = await _do_va_giu(
+    trang_thai, rid_that, lan, chi_tiet = await _do_va_giu(
         request, trang, ten, bet, mu, rid, auto_xa, so_lan)
-    if not ok:
-        log.warning("TÌM BÀN: %s dò %d lần chưa gặp bàn trống (%s).", ten, lan, ly_do)
+    if trang_thai == "khong":
+        log.warning("TÌM BÀN: %s dò %d lần chưa gặp bàn trống (%s).", ten, lan, chi_tiet)
         return {"ok": False, "profile": ten,
-                "error": f"Dò {lan} lần chưa gặp bàn trống ({ly_do}).", "so_lan_do": lan}
+                "error": f"Dò {lan} lần chưa gặp bàn trống ({chi_tiet}).", "so_lan_do": lan}
+
+    if trang_thai == "ghep":
+        # Đã ngồi cùng đồng đội: không canh bàn (bàn đầy, không ai chen được),
+        # không tự bắt đầu. Người dùng bấm VÀO BÀN ở nick nào cũng được.
+        hub = getattr(request.app.state, "ext_hub", None)
+        if hub:
+            try:
+                await hub.send_command(ten, "TOAST", {
+                    "title": "🤝 Đã gặp đồng đội",
+                    "text": f"🤝 {ten} đang ngồi cùng {chi_tiet} ở bàn #{rid_that}. "
+                            f"Bấm VÀO BÀN để bắt đầu xả.",
+                    "type": "success", "source_profile": "server", "duration": 4000,
+                })
+            except Exception:
+                pass
+        return {"ok": True, "da_ghep": True, "profile": ten, "rid": rid_that,
+                "bet": bet, "mu": mu, "cung_voi": chi_tiet, "so_lan_do": lan,
+                "so_ban_dang_giu": len(_ds_ban(request))}
 
     _bat_canh(request, ten, bet, mu, rid, auto_xa)
 
@@ -429,6 +539,25 @@ async def _chon_ban_de_vao(request, ten_vao, chu_muon=None):
     ds = _ds_ban(request)
     if not ds:
         return None, None, "Chưa có nick nào đang giữ bàn. Bấm TÌM BÀN trước."
+
+    # ĐÃ NGỒI SẴN CÙNG ĐỒNG ĐỘI (hai nick cùng TÌM BÀN rồi gặp nhau, hoặc người
+    # dùng tự đưa vào): không join lại — chỉ cần mở bắt tay. Nhận diện bằng TÊN
+    # NHÂN VẬT của nick vào có trong danh sách đồng đội đọc trên trang chủ bàn;
+    # nếu nick vào chính là chủ bàn thì cần có đồng đội đang ngồi cùng.
+    cn_vao = _character_name(ten_vao).strip().lower()
+    for chu, ban in sorted(ds.items(), key=lambda x: float(x[1].get("luc") or 0)):
+        la_minh = chu.strip().lower() == ten_vao.strip().lower()
+        if chu_muon and not la_minh and chu.strip().lower() != chu_muon.strip().lower():
+            continue
+        trang_chu = _trang_dang_mo(request, chu)
+        if trang_chu is None:
+            continue
+        tt = await _doc_ban(trang_chu)
+        if not tt or not tt.get("co_thong_tin") or int(tt.get("so_khach") or 0) > 0:
+            continue
+        ten_dd = [str(x).strip().lower() for x in (tt.get("ten_dong_doi") or [])]
+        if (la_minh and ten_dd) or (cn_vao and cn_vao in ten_dd):
+            return chu, dict(ban, da_ngoi_san=True), ""
 
     ung = [(t, b) for t, b in ds.items() if t.strip().lower() != ten_vao.strip().lower()]
     if chu_muon:
@@ -459,6 +588,47 @@ async def _chon_ban_de_vao(request, ten_vao, chu_muon=None):
     return None, None, "Không bàn nào còn ghế — " + "; ".join(vuong)
 
 
+async def _mo_bat_tay_ban_da_ngoi(request, ten, chu, ban, bet, mu, rid, auto_xa):
+    """VÀO BÀN khi nick đã NGỒI SẴN cùng đồng đội: không join lại, chỉ mở bắt tay.
+
+    Xảy ra khi hai nick cùng TÌM BÀN rồi rơi vào một bàn (server xếp người mới
+    vào ghế trống sẵn có — xem docstring module), hoặc người dùng tự đưa hai
+    nick vào một bàn. Join lại lúc này là rời một bàn đang tốt.
+    """
+    # o_yen=True: KHÔNG điều hướng về sảnh — đang ngồi trong bàn rồi.
+    trang = await _chuan_bi(request, ten, bet, mu, auto_xa, o_yen=True)
+    tt = await _doc_ban(trang)
+    if not tt or not tt.get("co_thong_tin") or int(tt.get("so_dong_doi") or 0) == 0:
+        return {"ok": False, "profile": ten, "rid": rid,
+                "error": f"{ten} không còn ngồi cùng đồng đội ở bàn #{rid}. Bấm TÌM BÀN lại."}
+    if int(tt.get("so_khach") or 0) > 0:
+        return {"ok": False, "profile": ten, "rid": rid,
+                "error": (f"Bàn #{rid} có khách ({', '.join(tt.get('ten_khach') or [])}) "
+                          "— không bắt tay.")}
+    ten_dd = [str(x) for x in (tt.get("ten_dong_doi") or [])]
+    ho_so_dd = [p for p in (_profile_theo_cn(cn) for cn in ten_dd) if p]
+
+    # CHỦ BÀN mở trước: chủ mở rồi mới thấy Sẵn sàng của người kia mà Bắt đầu;
+    # mở người kia trước thì lệnh Sẵn sàng có thể tới lúc chủ còn khoá.
+    thu_tu = ([ten] + ho_so_dd) if tt.get("la_chu") else (ho_so_dd + [ten])
+    for t in thu_tu:
+        trang_t = trang if t == ten else _trang_dang_mo(request, t)
+        if trang_t is None:
+            log.warning("VÀO BÀN: %s không mở Chrome -> không mở được cổng bắt tay.", t)
+            continue
+        await _mo_cong_bat_tay(trang_t, t, bet, mu, auto_xa)
+
+    for t in {chu, ten, *ho_so_dd}:
+        _xoa_ban(request, t)
+        _dung_canh(request, t)
+    log.info("VÀO BÀN: 🤝 %s đã ngồi sẵn cùng %s ở bàn #%s ($%s) -> mở bắt tay, không join lại. "
+             "Còn %d bàn đang giữ.", ten, ", ".join(ten_dd) or "?", rid, bet, len(_ds_ban(request)))
+    return {"ok": True, "da_ngoi_san": True, "profile": ten, "rid": rid, "bet": bet, "mu": mu,
+            "so_nguoi": int(tt.get("so_nguoi") or 0), "co_khach_la": False,
+            "chu_ban": chu, "chu_ban_cn": str(ban.get("chu_cn") or ""),
+            "cung_voi": ", ".join(ten_dd), "so_ban_dang_giu": len(_ds_ban(request))}
+
+
 @router.post("/api/autoplay/vao-ban")
 async def vao_ban(body: dict, request: Request):
     """MỘT account ghép vào MỘT trong các bàn đang được giữ.
@@ -483,6 +653,9 @@ async def vao_ban(body: dict, request: Request):
     bet, mu, rid = int(ban["bet"]), int(ban["mu"]), int(ban["rid"])
     chu_cn = str(ban.get("chu_cn") or "") or _character_name(chu)
     auto_xa = bool(body.get("auto_xa", True))
+
+    if ban.get("da_ngoi_san"):
+        return await _mo_bat_tay_ban_da_ngoi(request, ten, chu, ban, bet, mu, rid, auto_xa)
 
     trang = await _chuan_bi(request, ten, bet, mu, auto_xa)
     try:
@@ -525,11 +698,12 @@ async def vao_ban(body: dict, request: Request):
         }
 
     # ĐÂY là chỗ DUY NHẤT mở cổng bắt tay: người dùng đã chủ động bấm VÀO BÀN.
-    # Mở cho cả hai bên, vì cả hai đều đang bị khoá từ lúc dò bàn.
-    await _mo_cong_bat_tay(trang, ten, bet, mu, auto_xa)
+    # Mở cho cả hai bên, vì cả hai đều đang bị khoá từ lúc dò bàn. CHỦ BÀN mở
+    # TRƯỚC: mở người vào trước thì Sẵn sàng của họ tới lúc chủ còn khoá.
     trang_chu = _trang_dang_mo(request, chu)
     if trang_chu is not None:
         await _mo_cong_bat_tay(trang_chu, chu, bet, mu, auto_xa)
+    await _mo_cong_bat_tay(trang, ten, bet, mu, auto_xa)
 
     # Ghép xong thì bàn này không còn là chỗ trống để mời nữa.
     _xoa_ban(request, chu)
@@ -569,6 +743,7 @@ async def xem_ban_chung(request: Request):
     ds = _ds_ban(request)
     ban = [{"chu": t, "chu_cn": b.get("chu_cn") or "", "rid": b["rid"],
             "bet": b["bet"], "mu": b["mu"],
+            "ngoi_cung": list(b.get("ngoi_cung") or []),
             "tuoi_giay": round(time.time() - float(b["luc"]), 1)}
            for t, b in sorted(ds.items(), key=lambda x: float(x[1].get("luc") or 0))]
     return {"co": bool(ban), "so_ban": len(ban), "ban": ban}

@@ -33,6 +33,7 @@ async def _clear_hunt_state(p):
             window.__AUTOTOOL_GIU_BAN = false;
             window.__AUTOTOOL_ROI_KHI_CO_KHACH = false;
             window.__AUTOTOOL_CHO_BAT_TAY = true;
+            window.__AUTOTOOL_XE_LE = false;
             window.__AUTOTOOL_TU_DANH = false;
             window.__AUTOTOOL_AUTO_DISCARD = false;
             window.__target_hunt_bet = 0;
@@ -108,6 +109,7 @@ async def dong_luot_chay(pages, ly_do=""):
         window.__AUTOTOOL_GIU_BAN = false;
         window.__AUTOTOOL_ROI_KHI_CO_KHACH = false;
         window.__AUTOTOOL_CHO_BAT_TAY = true;
+        window.__AUTOTOOL_XE_LE = false;
         window.__AUTOTOOL_TU_DANH = false;
         window.__AUTOTOOL_ARMED = false;
         window.__AUTOTOOL_AUTO_HUNT = false;

@@ -117,6 +117,7 @@
     G.__AUTOTOOL_TU_DANH = false;
     G.__AUTOTOOL_ROI_KHI_CO_KHACH = false;
     G.__AUTOTOOL_CHO_BAT_TAY = true;
+    G.__AUTOTOOL_XE_LE = false;
   }
 
   // Vai trò ghép bàn do backend ấn định cho từng lượt chạy.  Không suy đoán
@@ -2169,7 +2170,7 @@
               const actualBet = Number(p.b || (G.__last_room_info && G.__last_room_info.b) || 0);
               if (expectedBet > 0 && actualBet > 0 && expectedBet !== actualBet) {
                 console.warn(`[AutoTool V3] Sai mức cược: bàn $${actualBet}, cấu hình $${expectedBet} -> rời bàn, không mời đồng đội.`);
-                if (!isSubProfile) {
+                if (!isSubProfile && !G.__AUTOTOOL_XE_LE) {
                   window.postMessage({
                     type: "AUTOTOOL_CANCEL_ROOM_INVITE",
                     profile_name: getProfileName(),
@@ -2244,7 +2245,14 @@
                 }
 
                 // Nếu là Anchor: Phát ngay tín hiệu CANCEL lên Hub để hủy lệnh cho B!
-                if (!isSubProfile) {
+                //
+                // KHÔNG phát ở chế độ XÉ LẺ (TÌM BÀN / VÀO BÀN từng nick). Hub nhận
+                // CANCEL là ép MỌI profile khác rời bàn (LEAVE_ROOM). Lỗi thật
+                // 06:00 ngày 11/09/2026: hai nick cùng TÌM BÀN, nick 1 rơi vào bàn
+                // có khách -> phát CANCEL -> hub ép nick 2 rời bàn TRỐNG nó vừa
+                // giữ được, lặp lại mỗi 1,3 giây suốt 60 giây, cả hai không bao
+                // giờ giữ được bàn nào.
+                if (!isSubProfile && !G.__AUTOTOOL_XE_LE) {
                   window.postMessage({
                     type: "AUTOTOOL_CANCEL_ROOM_INVITE",
                     profile_name: getProfileName(),
@@ -3211,6 +3219,17 @@
     if (event.data.type !== "AUTOTOOL_EXEC_COMMAND") return;
     const { action, data } = event.data;
     console.log(`[AutoTool V3] Nhận lệnh từ Hub qua Extension Bridge: action=${action}`, data);
+
+    // XÉ LẺ (TÌM BÀN / VÀO BÀN từng nick): backend điều khiển thẳng trang này
+    // bằng page.evaluate; các lệnh điều phối bàn của hub thuộc luồng GOM BÀN cũ.
+    // Nhận chúng là hỏng: LEAVE_ROOM do nick khác phát CANCEL làm mình rời bàn
+    // đang giữ (lỗi thật 06:00 ngày 11/09/2026); JOIN_ROOM/CONFIRM_MATCH/READY/
+    // START có thể kéo vào ván khi người dùng chưa bấm VÀO BÀN.
+    if (G.__AUTOTOOL_XE_LE
+        && ["LEAVE_ROOM", "JOIN_ROOM", "CONFIRM_MATCH", "READY", "START"].includes(action)) {
+      console.warn(`[AutoTool V3] Đang ở chế độ XÉ LẺ -> bỏ qua lệnh hub ${action}.`);
+      return;
+    }
 
     if (action === "CONFIRM_MATCH") {
       const partner = (data && (data.partner || data.source)) || "Đồng đội";
